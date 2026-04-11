@@ -13,6 +13,7 @@ env/
 
 # Env files
 .env
+.env.local
 
 # IDE
 .vscode/
@@ -27,6 +28,15 @@ env/
 # Coverage
 .coverage
 htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Docker
 *.pid
+
+# Build artifacts
+dist/
+build/
+.eggs/
+*.egg-info/
