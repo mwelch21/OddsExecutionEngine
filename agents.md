@@ -1,463 +1,286 @@
+# Agent Guide: Odds Execution Engine
 
-# Agent Guide: Best Lines Execution Platform
-# Event-Driven, AI-Assisted Market System (Codex Execution Plan)
+## Default Mode
 
----
+- Use caveman `full` by default.
+- Stay in caveman until user says `stop caveman` or `normal mode`.
+- Keep answers short, direct, technical.
 
-## Purpose
+## Mission
 
-Build a product-grade, backend-first sports market execution system that determines:
+Build backend-first sports market execution platform. System answers:
 
-- Whether a target betting price is currently fillable
-- The best available execution across sportsbooks
-- The nearest miss if not fillable
-- Market opportunities and monitoring signals
-- Optional AI-assisted explanations and action suggestions
+- Is target price fillable now?
+- What sportsbook gives best execution?
+- If not fillable, what is nearest miss?
+- What watch or opportunity signals should fire?
+- Optional: AI parse/explain/suggest, never AI decide pricing logic.
 
-This project is designed to:
-1. Demonstrate strong backend and systems engineering signal
-2. Align with real-world sports market infrastructure systems
+Optimize for backend/system design signal, not frontend polish.
 
-This system is not:
-- a UI-heavy betting app
-- a script or notebook project
-- a full exchange or order book
+## Product Scope
 
-This system is:
-- a deterministic, market-aware execution and monitoring platform
+User intent examples:
 
----
+- `Knicks moneyline +120 or better`
+- `Over 221.5 at -110 or better`
+- `Alert me when Celtics spread becomes -105 or better`
 
-## Product Definition
+Core flow:
 
-A user expresses intent such as:
+1. Parse or accept structured intent.
+2. Read latest quotes across books.
+3. Match correct market.
+4. Determine fillability.
+5. Rank best execution.
+6. Return nearest miss if needed.
+7. Persist latest and history.
+8. Emit workflow/domain events.
+9. Support watch intents.
+10. Add AI only as support layer.
 
-- "Knicks moneyline +120 or better"
-- "Over 221.5 at -110 or better"
-- "Alert me when Celtics spread becomes -105 or better"
+## Non-Negotiables
 
-The system must:
-
-1. Parse or receive structured intent
-2. Retrieve latest quotes across sportsbooks
-3. Match quotes to the requested market
-4. Determine fillability
-5. Rank best execution
-6. Return nearest miss if not fillable
-7. Persist latest and historical quote state
-8. Emit domain events for all important outcomes
-9. Support monitoring via watch intents
-10. Optionally generate AI explanations and action suggestions
-
----
-
-## Core Principles
-
-### Best-Line Optimization
-The backbone of the system is cross-book comparison using latest quotes.
-
-### Deterministic Core
-All core decisions must be deterministic and testable:
-- quote matching
-- odds comparison
-- fillability
-- ranking
-- nearest miss
-- monitoring triggers
-
-### Event-Driven Design
-The system must be event-driven in design, even if implemented synchronously at first.
-
-### AI as Decision Support
-AI is optional and layered on top:
-- allowed: parsing, explanation, suggestions
-- disallowed: pricing decisions, fillability, ranking
-
-### Controlled Iteration
-Build in small, testable stages without overengineering.
-
----
+- Deterministic core. Matching, comparison, ranking, nearest miss, watch logic must be pure/testable.
+- Event-driven design. Sync implementation OK first; event boundaries still explicit.
+- Clean architecture. Dependency direction: `api -> application -> domain`, infra behind ports.
+- Thin API. Business logic stays out of routes.
+- Postgres for persistence.
+- Constructor injection only. No heavy DI framework.
 
 ## Architecture
 
-### Dependency Direction
+Layers:
 
-api → application → domain  
-application → infrastructure (via ports)
+- `domain`: entities, value objects, policies, events
+- `application`: workflows, services, ports, orchestration
+- `engines`: deterministic decision engines
+- `infrastructure`: db, repositories, providers, publishers, AI adapters
+- `api`: transport, validation, response mapping
 
-### Layers
+Core domain objects:
 
-- Domain: entities, value objects, events, policies
-- Application: workflows, services, orchestration
-- Infrastructure: database, providers, messaging, AI
-- API: request/response and routing
+- `Event`
+- `Market`
+- `Quote`
+- `OrderIntent`
+- `WatchIntent`
+- `ExecutionRecommendation`
+- `OpportunitySignal`
+- `MarketSnapshot`
 
----
+Deterministic engines:
 
-## Domain Model
-
-Core entities:
-
-- Event
-- Market
-- Quote
-- OrderIntent
-- WatchIntent
-- ExecutionRecommendation
-- OpportunitySignal
-- MarketSnapshot
-
----
-
-## Deterministic Engines
-
-- normalization_engine
-- quote_matching_engine
-- price_comparison_engine
-- recommendation_engine
-- watch_evaluation_engine
-- opportunity_engine
-
----
+- `normalization_engine`
+- `quote_matching_engine`
+- `price_comparison_engine`
+- `recommendation_engine`
+- `watch_evaluation_engine`
+- `opportunity_engine`
 
 ## Event Model
 
-Events must be explicitly defined and emitted:
+Define and emit explicit events. Baseline set:
 
-- QuotesRefreshed
-- QuoteUpdated
-- MarketSnapshotCreated
-- OrderIntentSubmitted
-- ExecutionRecommendationGenerated
-- WatchIntentSubmitted
-- TargetPriceBecameFillable
-- TargetPriceStillUnfilled
-- MarketMovedAwayFromTarget
-- OpportunityDetected
-- AIExplanationGenerated
+- `QuotesRefreshed`
+- `QuoteUpdated`
+- `MarketSnapshotCreated`
+- `OrderIntentSubmitted`
+- `ExecutionRecommendationGenerated`
+- `WatchIntentSubmitted`
+- `TargetPriceBecameFillable`
+- `TargetPriceStillUnfilled`
+- `MarketMovedAwayFromTarget`
+- `OpportunityDetected`
+- `AIExplanationGenerated`
 
----
+## Storage
 
-## Project Structure
-
-backend/
-  app/
-    main.py
-    config.py
-    api/
-    domain/
-    application/
-    engines/
-    infrastructure/
-  tests/
-
----
-
-## Storage Strategy
-
-Use Postgres.
+Use Postgres. Keep separate latest-state and history.
 
 Tables:
 
-- events
-- markets
-- market_quotes_latest
-- market_quotes_history
-- order_intents
-- watch_intents
-- execution_recommendations
-- workflow_events
-- opportunity_signals
+- `events`
+- `markets`
+- `market_quotes_latest`
+- `market_quotes_history`
+- `order_intents`
+- `watch_intents`
+- `execution_recommendations`
+- `workflow_events`
+- `opportunity_signals`
 
-Latest-state drives recommendations.
-History supports audit and future features.
+Rule:
 
----
+- latest drives recommendation/read paths
+- history drives audit/future analytics
 
-## API Endpoints
+## API Surface
 
 Core:
 
-- POST /execution/recommendation
-- GET /events
-- GET /events/{event_id}/markets
-- GET /events/{event_id}/quotes
+- `POST /execution/recommendation`
+- `GET /events`
+- `GET /events/{event_id}/markets`
+- `GET /events/{event_id}/quotes`
 
 Monitoring:
 
-- POST /watch-intents
-- GET /watch-intents
-- GET /opportunities
+- `POST /watch-intents`
+- `GET /watch-intents`
+- `GET /opportunities`
 
-AI (later):
+AI later:
 
-- POST /ai/parse-intent
-- POST /ai/explain
-- POST /ai/suggest-actions
+- `POST /ai/parse-intent`
+- `POST /ai/explain`
+- `POST /ai/suggest-actions`
 
----
+## Build Order
 
-## Core Workflows
+### Stage 0: Foundation
 
-Recommendation Flow:
+- FastAPI + `uv` + Docker + Postgres
+- lint + typing + pytest
+- base structure + README
 
-Intent → Match Quotes → Compare Prices → Rank → Return Result → Emit Event
+Deliverable: runnable backend with DB and tests.
 
-Monitoring Flow:
+### Stage 1: Deterministic Core
 
-Quote Update → Evaluate Watch → Detect Fillability → Emit Event
+- define domain models
+- build matching/comparison/recommendation engines
+- add recommendation service
+- add endpoint
+- add unit tests
 
-Opportunity Flow:
+Deliverable: mock-data recommendation flow.
 
-Quote Update → Detect Improvement → Emit Opportunity
+### Stage 2: Persistence
 
----
+- schema
+- repositories
+- DB-backed recommendation flow
+- integration tests
 
-## Dependency Management
+Deliverable: latest/history persistence working.
 
-- Use constructor injection
-- Define interfaces in application/ports
-- Implement adapters in infrastructure
-- Use FastAPI dependencies only at API boundary
+### Stage 3: Event Layer
 
-Avoid:
-- hidden wiring
-- heavy DI frameworks
+- event classes
+- publisher port
+- in-memory/log publisher
+- workflow emission
 
----
+Deliverable: event boundary established.
 
-## Testing Requirements
+### Stage 4: Quote Ingestion
 
-Unit Tests:
+- provider port
+- mock provider
+- normalization
+- latest/history update flow
+
+Deliverable: ingestion pipeline working.
+
+### Stage 5: Monitoring + Opportunities
+
+- watch intent model
+- watch evaluation engine
+- opportunity engine
+- monitoring endpoints
+
+Deliverable: alerts and signals working.
+
+### Stage 6: AI Layer
+
+- parse intent
+- generate explanation
+- suggest actions
+
+Deliverable: AI support without deterministic leakage.
+
+### Stage 7: API Expansion
+
+- read endpoints
+- stronger response models
+
+### Stage 8: Observability
+
+- structured logging
+- audit trail
+
+### Stage 9: Later
+
+- WebSockets
+- Redis cache
+- event bus
+- Go ingestion service
+- backtesting engine
+
+## Tests Required
+
+Unit:
+
 - quote matching
 - odds comparison
 - ranking
 - nearest miss
 - monitoring logic
 
-Integration Tests:
+Integration:
+
 - recommendation endpoint
 - DB-backed flows
 
-Workflow Tests:
-- quote update → opportunity
-- watch intent → fillability event
-
----
-
-## Development Plan
-
----
-
-### Stage 0: Foundation
-
-Step 0.1:
-- Setup FastAPI
-- Setup uv
-- Setup Docker + Postgres
-
-Step 0.2:
-- Configure linting, typing, pytest
-
-Step 0.3:
-- Create base structure and README
-
-Deliverable:
-- runnable backend with DB and tests
-
----
-
-### Stage 1: Deterministic Core (No DB)
-
-Step 1.1:
-- Define domain models
-
-Step 1.2:
-- Implement engines:
-  - quote matching
-  - price comparison
-  - recommendation
-
-Step 1.3:
-- Implement recommendation service
-
-Step 1.4:
-- Add API endpoint
-
-Step 1.5:
-- Add unit tests
-
-Deliverable:
-- full recommendation flow using mock data
-
----
-
-### Stage 2: Persistence Layer
-
-Step 2.1:
-- Define schema
-
-Step 2.2:
-- Implement repositories
-
-Step 2.3:
-- Integrate DB into recommendation flow
-
-Step 2.4:
-- Add integration tests
-
-Deliverable:
-- DB-backed system with latest and history separation
-
----
-
-### Stage 3: Event Layer
-
-Step 3.1:
-- Define event classes
-
-Step 3.2:
-- Create publisher interface
-
-Step 3.3:
-- Implement in-memory/log publisher
-
-Step 3.4:
-- Emit events in workflows
-
-Deliverable:
-- event-driven architecture boundary established
-
----
-
-### Stage 4: Quote Ingestion
-
-Step 4.1:
-- Define provider interface
-
-Step 4.2:
-- Implement mock provider
-
-Step 4.3:
-- Normalize incoming data
-
-Step 4.4:
-- Update latest and history tables
-
-Deliverable:
-- ingestion pipeline working
-
----
-
-### Stage 5: Monitoring and Opportunities
-
-Step 5.1:
-- Define WatchIntent
-
-Step 5.2:
-- Implement watch evaluation engine
-
-Step 5.3:
-- Implement opportunity engine
-
-Step 5.4:
-- Add monitoring endpoints
-
-Deliverable:
-- system supports monitoring and alerts
-
----
-
-### Stage 6: AI Layer
-
-Step 6.1:
-- Implement intent parsing
-
-Step 6.2:
-- Implement explanation generation
-
-Step 6.3:
-- Implement action suggestions
-
-Deliverable:
-- AI enhances UX without affecting deterministic core
-
----
-
-### Stage 7: API Expansion
-
-Step 7.1:
-- Add read endpoints
-
-Step 7.2:
-- Improve response structure
-
-Deliverable:
-- product-ready API surface
-
----
-
-### Stage 8: Observability
-
-Step 8.1:
-- Add structured logging
-
-Step 8.2:
-- Add audit trail
-
-Deliverable:
-- system is inspectable and debuggable
-
----
-
-### Stage 9: Future Enhancements
-
-- WebSockets
-- Redis cache
-- Event bus
-- Go ingestion service
-- Backtesting engine
-
----
-
-## Code Quality Standards
-
-- use type hints
-- keep functions small
-- keep domain pure
-- keep API thin
-- keep logic deterministic
-- write clear tests
-
----
+Workflow:
+
+- quote update -> opportunity
+- watch intent -> fillability event
+
+## Context Management Rules
+
+Goal: minimize token burn and duplicate reading.
+
+- Read only files needed for current task.
+- Prefer targeted `rg`, `sed`, file slices. Avoid loading whole repo.
+- After reading large file, summarize it in working memory; do not reread unless file changed or summary insufficient.
+- Do not restate product vision unless task depends on it.
+- When editing, keep scope tight. Touch smallest valid set of files.
+- Prefer existing patterns over exploratory rewrites.
+- For follow-up turns, assume prior local findings still valid unless user or git state changed.
+- If task is narrow, do not inspect unrelated stages/roadmap sections.
+- If user asks implementation, execute after enough context; do not spend turns on broad planning unless blocked.
+- When blocked by ambiguity, inspect codebase first, ask user last.
+
+## Coding Rules
+
+- Use type hints.
+- Keep functions small.
+- Keep domain pure.
+- Keep logic deterministic.
+- Keep API thin.
+- Write tests for behavior, not internals.
+- Preserve user changes. Never revert unrelated work.
 
 ## Anti-Goals
 
-Do NOT:
-- overbuild frontend
-- add microservices early
-- add unnecessary infrastructure
-- replace logic with AI
-- expand into social features
+Do not:
 
----
+- build UI-heavy betting app
+- overbuild microservices/infrastructure early
+- replace deterministic logic with AI
+- add social/community features
+- optimize for novelty over system behavior
 
-## Deliverable Standard
+## Done Standard
 
-The repository must include:
+Repo should show:
 
 - clean architecture
 - working backend
 - passing tests
-- documentation
+- docs
 - clear system explanation
 
----
-
-## Final Guidance
-
-- prioritize system behavior over language
-- build in stages
-- keep logic deterministic
-- design for evolution
-- optimize for signal, not perfection
+Optimize for signal, not perfection.
