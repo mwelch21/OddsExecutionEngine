@@ -255,6 +255,10 @@ Goal: minimize token burn and duplicate reading.
 
 ## Coding Rules
 
+- Use shared Pydantic base model for domain entities and value objects. Do not use dataclasses for domain model types.
+- Separate API transport schemas from router modules. Do not define request/response models in same file as route handlers.
+- Implement deterministic engines as class-based services with injected dependencies when needed. Do not use standalone function-only engine modules.
+- Keep application services orchestrating injected collaborators, not imported free-function pipelines.
 - Use type hints.
 - Keep functions small.
 - Keep domain pure.

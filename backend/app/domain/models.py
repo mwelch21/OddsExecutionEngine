@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 from enum import StrEnum
+
+from backend.app.domain.base import DomainModel
 
 
 class MarketType(StrEnum):
@@ -8,8 +9,7 @@ class MarketType(StrEnum):
     TOTAL = "total"
 
 
-@dataclass(frozen=True, slots=True)
-class OrderIntent:
+class OrderIntent(DomainModel):
     event_id: str
     market_type: MarketType
     selection: str
@@ -17,8 +17,7 @@ class OrderIntent:
     line: float | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class Quote:
+class Quote(DomainModel):
     event_id: str
     sportsbook: str
     market_type: MarketType
@@ -27,8 +26,7 @@ class Quote:
     line: float | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class ExecutionRecommendation:
+class ExecutionRecommendation(DomainModel):
     intent: OrderIntent
     fillable: bool
     best_quote: Quote | None
