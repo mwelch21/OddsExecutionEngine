@@ -1,10 +1,6 @@
-from fastapi import APIRouter
 from pydantic import BaseModel, Field, model_validator
 
-from backend.app.application.recommendation_service import RecommendationService
 from backend.app.domain.models import ExecutionRecommendation, MarketType, OrderIntent, Quote
-
-router = APIRouter(tags=["execution"])
 
 
 class RecommendationRequest(BaseModel):
@@ -90,25 +86,3 @@ class RecommendationResponse(BaseModel):
             ),
             matched_quote_count=recommendation.matched_quote_count,
         )
-
-
-def create_recommendation_router(service: RecommendationService) -> APIRouter:
-    recommendation_router = APIRouter()
-
-    @recommendation_router.post(
-        "/execution/recommendation",
-        response_model=RecommendationResponse,
-    )
-    def get_recommendation(request: RecommendationRequest) -> RecommendationResponse:
-        intent = OrderIntent(
-            event_id=request.event_id,
-            market_type=request.market_type,
-            selection=request.selection,
-            line=request.line,
-            target_price=request.target_price,
-        )
-        recommendation = service.recommend(intent)
-        return RecommendationResponse.from_domain(recommendation)
-
-    recommendation_router.include_router(router)
-    return recommendation_router
