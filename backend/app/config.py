@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     app_env: Literal["development", "production"] = "development"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     postgres_db: str = "odds_execution"
     postgres_user: str = "app"

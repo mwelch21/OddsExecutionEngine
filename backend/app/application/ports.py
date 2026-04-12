@@ -1,5 +1,6 @@
 from typing import Protocol, Self
 
+from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import ExecutionRecommendation, OrderIntent, Quote
 
 
@@ -23,6 +24,15 @@ class RecommendationUnitOfWork(Protocol):
         recommendation: ExecutionRecommendation,
     ) -> str: ...
 
+    def stage_event(self, event: WorkflowEvent) -> None: ...
+
+    @property
+    def committed_events(self) -> tuple[WorkflowEvent, ...]: ...
+
 
 class RecommendationUnitOfWorkFactory(Protocol):
     def __call__(self) -> RecommendationUnitOfWork: ...
+
+
+class WorkflowEventPublisher(Protocol):
+    def publish(self, events: tuple[WorkflowEvent, ...]) -> None: ...

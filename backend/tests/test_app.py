@@ -15,6 +15,7 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_latest_table,
     markets_table,
     order_intents_table,
+    workflow_events_table,
 )
 from backend.app.infrastructure.persistence.seed import truncate_application_tables
 from backend.app.main import create_app
@@ -26,10 +27,19 @@ def test_healthcheck_returns_ok(sqlite_database_url: str) -> None:
         response = client.get("/health")
 
     assert response.status_code == 200
+    assert response.headers["X-Request-ID"]
     assert response.json() == {
         "status": "ok",
         "environment": "development",
     }
+
+
+def test_request_id_header_is_propagated(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.get("/health", headers={"X-Request-ID": "req-123"})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req-123"
 
 
 def test_recommendation_endpoint_returns_fillable_moneyline_result(
@@ -223,6 +233,13 @@ def test_recommendation_endpoint_persists_order_intent_and_recommendation(
         stored_recommendation = (
             session.execute(select(execution_recommendations_table)).mappings().one()
         )
+        stored_events = (
+            session.execute(
+                select(workflow_events_table).order_by(workflow_events_table.c.occurred_at)
+            )
+            .mappings()
+            .all()
+        )
 
     assert stored_intent["event_external_id"] == "nba-knicks-celtics-2026-04-11"
     assert stored_intent["market_type"] == "moneyline"
@@ -232,6 +249,13 @@ def test_recommendation_endpoint_persists_order_intent_and_recommendation(
     assert stored_recommendation["matched_quote_count"] == 3
     assert stored_recommendation["best_quote"]["sportsbook"] == "DraftKings"
     assert len(stored_recommendation["ranked_quotes"]) == 3
+    assert [event["event_type"] for event in stored_events] == [
+        "OrderIntentSubmitted",
+        "ExecutionRecommendationGenerated",
+    ]
+    assert stored_events[0]["workflow_id"] == stored_intent["id"]
+    assert stored_events[1]["workflow_id"] == stored_intent["id"]
+    assert stored_events[1]["aggregate_id"] == stored_recommendation["id"]
 
 
 def test_sqlite_smoke_setup_populates_demo_quotes_for_local_convenience(
@@ -271,6 +295,7 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
         "market_quotes_latest",
         "markets",
         "order_intents",
+        "workflow_events",
     ]
 
 

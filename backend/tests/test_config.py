@@ -30,6 +30,7 @@ def test_settings_does_not_expose_seed_toggle() -> None:
 
 def test_settings_reads_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("POSTGRES_DB", "env_markets")
     monkeypatch.setenv("POSTGRES_USER", "env_user")
     monkeypatch.setenv("POSTGRES_PASSWORD", "env_password")
@@ -39,6 +40,7 @@ def test_settings_reads_environment_variables(monkeypatch: pytest.MonkeyPatch) -
     settings = Settings()
 
     assert settings.app_env == "development"
+    assert settings.log_level == "DEBUG"
     assert settings.database_url == "postgresql+psycopg://env_user:env_password@env-db:5434/env_markets"
 
 
