@@ -6,14 +6,19 @@ from backend.app.config import Settings, get_settings
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
-from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
+from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.recommendation_uow import (
+    SqlAlchemyRecommendationUnitOfWork,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
+    session_factory = DatabaseSessionFactory(app_settings.database_url)
     app = FastAPI(title=app_settings.app_name)
+    app.state.session_factory = session_factory
     recommendation_service = RecommendationService(
-        quote_provider=InMemoryQuoteProvider(),
+        unit_of_work_factory=lambda: SqlAlchemyRecommendationUnitOfWork(session_factory),
         quote_matching_engine=QuoteMatchingEngine(),
         recommendation_engine=RecommendationEngine(PriceComparisonService()),
     )

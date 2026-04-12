@@ -5,6 +5,7 @@ description = "Backend-first sports market execution platform."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.16.0,<2.0.0",
     "fastapi>=0.116.0,<1.0.0",
     "pydantic-settings>=2.11.0,<3.0.0",
     "psycopg[binary]>=3.2.0,<4.0.0",
@@ -50,6 +51,10 @@ plugins = []
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[project.scripts]
+odds-db-upgrade = "backend.app.infrastructure.persistence.commands:odds_db_upgrade_main"
+odds-db-seed-demo = "backend.app.infrastructure.persistence.commands:odds_db_seed_demo_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]

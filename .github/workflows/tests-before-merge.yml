@@ -9,6 +9,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odds_execution
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d odds_execution"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      STAGE2_TEST_DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/odds_execution
 
     steps:
       - name: Check out repository
@@ -24,6 +41,12 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Run Mypy
+        run: uv run mypy backend
 
       - name: Run tests
         run: uv run pytest

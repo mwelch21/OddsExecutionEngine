@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("app")
     postgres_host: str = "postgres"
     postgres_port: int = 5432
+    database_url_override: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -47,6 +48,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if self.database_url_override is not None:
+            return self.database_url_override
         return (
             "postgresql+psycopg://"
             f"{self.postgres_user}:{self.postgres_password.get_secret_value()}"

@@ -5,6 +5,8 @@
 - Use caveman `full` by default.
 - Stay in caveman until user says `stop caveman` or `normal mode`.
 - Keep answers short, direct, technical.
+- Prefer the caveman plugin or repo hook when available. This repo should keep `.codex/hooks.json` aligned with that behavior.
+- If caveman is missing in a Codex environment, install from the Caveman plugin repo via Codex `/plugins` after cloning the plugin source locally.
 
 ## Mission
 
@@ -156,14 +158,17 @@ Deliverable: runnable backend with DB and tests.
 
 Deliverable: mock-data recommendation flow.
 
-### Stage 2: Persistence
+### Stage 2 Enhanced: Persistence Discipline
 
 - schema
-- repositories
+- versioned migrations in `backend/db/migrations`
+- repositories / unit of work / persistence adapters
 - DB-backed recommendation flow
-- integration tests
+- integration tests against migrated Postgres
+- explicit local-only seed flow for demo fixtures
+- no runtime schema creation in app startup
 
-Deliverable: latest/history persistence working.
+Deliverable: latest/history persistence working with explicit migrations and no hidden schema bootstrapping.
 
 ### Stage 3: Event Layer
 
@@ -252,12 +257,19 @@ Goal: minimize token burn and duplicate reading.
 - If task is narrow, do not inspect unrelated stages/roadmap sections.
 - If user asks implementation, execute after enough context; do not spend turns on broad planning unless blocked.
 - When blocked by ambiguity, inspect codebase first, ask user last.
+- Before changing architecture, migrations, persistence layout, or repo-wide rules, read `docs/architecture/decisions.md` and `docs/architecture/conventions.md`.
+- If a task changes a major architectural choice, update `docs/architecture/decisions.md` with what changed and why.
+- If a task introduces or changes a general standing rule, update `docs/architecture/conventions.md`.
 
 ## Coding Rules
 
 - Use shared Pydantic base model for domain entities and value objects. Do not use dataclasses for domain model types.
 - Separate API transport schemas from router modules. Do not define request/response models in same file as route handlers.
 - Implement deterministic engines as class-based services with injected dependencies when needed. Do not use standalone function-only engine modules.
+- Keep persistence code under `backend/app/infrastructure/persistence`.
+- Put migration files under `backend/db/migrations`.
+- Never rely on runtime `create_all()` or equivalent boot-time schema mutation.
+- Schema changes require a tracked migration file plus corresponding tests.
 - Keep application services orchestrating injected collaborators, not imported free-function pipelines.
 - Use type hints.
 - Keep functions small.
