@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Awaitable, Callable
 from time import perf_counter
 from uuid import uuid4
 
@@ -10,14 +11,14 @@ from backend.app.config import Settings, get_settings
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
-from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
-from backend.app.infrastructure.persistence.recommendation_uow import (
-    SqlAlchemyRecommendationUnitOfWork,
-)
 from backend.app.infrastructure.observability.logging import configure_logging
 from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
     set_request_id,
+)
+from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.recommendation_uow import (
+    SqlAlchemyRecommendationUnitOfWork,
 )
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
@@ -42,7 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def add_request_context(
         request: Request,
-        call_next: object,
+        call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         request_id = request.headers.get("X-Request-ID", str(uuid4()))
         context_token = set_request_id(request_id)

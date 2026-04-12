@@ -276,6 +276,8 @@ Goal: minimize token burn and duplicate reading.
 - Keep domain pure.
 - Keep logic deterministic.
 - Keep API thin.
+- Do not ignore Ruff import sorting errors. Fix import order unless there is a narrowly justified file-level exception.
+- Before completing implementation work, always run the relevant verification commands and report the result. Default backend verification is `pytest`, `ruff check .`, and `mypy backend`.
 - Write tests for behavior, not internals.
 - Preserve user changes. Never revert unrelated work.
 

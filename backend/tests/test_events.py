@@ -1,11 +1,7 @@
-import logging
-
 import pytest
 
 from backend.app.application.recommendation_service import RecommendationService
 from backend.app.domain.events import (
-    ExecutionRecommendationGenerated,
-    OrderIntentSubmitted,
     WorkflowEvent,
     build_execution_recommendation_generated_event,
     build_order_intent_submitted_event,
@@ -220,7 +216,9 @@ def test_recommendation_service_does_not_publish_events_on_rollback() -> None:
     assert unit_of_work.committed_events == ()
 
 
-def test_recommendation_service_logs_success_and_failure(caplog: pytest.LogCaptureFixture) -> None:
+def test_recommendation_service_logs_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     intent = OrderIntent(
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -234,6 +232,16 @@ def test_recommendation_service_logs_success_and_failure(caplog: pytest.LogCaptu
         selection="knicks",
         price=125,
     )
+    recorded_messages: list[str] = []
+
+    def record_info(message: str, *args: object, **kwargs: object) -> None:
+        recorded_messages.append(message)
+
+    def record_exception(message: str, *args: object, **kwargs: object) -> None:
+        recorded_messages.append(message)
+
+    monkeypatch.setattr(RecommendationService._logger, "info", record_info)
+    monkeypatch.setattr(RecommendationService._logger, "exception", record_exception)
 
     success_uow = RecordingRecommendationUnitOfWork(quotes=[quote])
     success_publisher = InMemoryWorkflowEventPublisher()
@@ -244,11 +252,10 @@ def test_recommendation_service_logs_success_and_failure(caplog: pytest.LogCaptu
         recommendation_engine=RecommendationEngine(PriceComparisonService()),
     )
 
-    with caplog.at_level(logging.INFO):
-        success_service.recommend(intent)
+    success_service.recommend(intent)
 
-    assert "recommendation.started" in caplog.text
-    assert "recommendation.completed" in caplog.text
+    assert "recommendation.started" in recorded_messages
+    assert "recommendation.completed" in recorded_messages
 
     failing_uow = RecordingRecommendationUnitOfWork(
         quotes=[quote],
@@ -261,8 +268,7 @@ def test_recommendation_service_logs_success_and_failure(caplog: pytest.LogCaptu
         recommendation_engine=RecommendationEngine(PriceComparisonService()),
     )
 
-    with caplog.at_level(logging.INFO):
-        with pytest.raises(RuntimeError, match="recommendation write failed"):
-            failing_service.recommend(intent)
+    with pytest.raises(RuntimeError, match="recommendation write failed"):
+        failing_service.recommend(intent)
 
-    assert "recommendation.failed" in caplog.text
+    assert "recommendation.failed" in recorded_messages
