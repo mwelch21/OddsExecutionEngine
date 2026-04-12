@@ -30,12 +30,19 @@
 - Tests must prepare schema through migrations, not through runtime bootstrapping.
 - Stage 3 event-layer work must start from migrated schema and explicit seed tooling, not transitional bootstrap helpers.
 
+## Observability
+
+- Service workflows should emit structured logs at start, success, and failure boundaries.
+- Request correlation should flow through application logs with a request id header/context.
+- Logging should stay in infrastructure and application orchestration layers, not deterministic domain models.
+
 ## Stage 3 landing zones
 
 - Domain event types should live in `backend/app/domain/events.py` or an adjacent `domain/events/` package.
 - Publisher ports should live in `backend/app/application/ports.py` or an adjacent application ports module.
 - Publisher adapters should live under `backend/app/infrastructure/publishers`.
 - `workflow_events` schema ownership belongs to stage 3 migrations under `backend/db/migrations`.
+- Workflow events must be staged inside the unit of work, persisted in the same transaction, and published only after commit succeeds.
 
 ## Decisions log policy
 

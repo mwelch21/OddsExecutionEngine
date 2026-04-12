@@ -14,8 +14,16 @@ Built with a focus on:
 - Deterministic logic
 - Event-driven architecture
 - Extensible system design
+- Structured service-level logging for request and workflow visibility
 
-## Stage 2 Enhanced
+## Stage 3 Event Layer
+
+The repository now includes the stage 3 event boundary for the recommendation workflow:
+- explicit domain workflow events
+- persisted `workflow_events` audit/outbox rows
+- synchronous post-commit publishing through infrastructure adapters
+
+## Stage 2 Enhanced Foundation
 
 The repository now includes a minimal FastAPI backend, Docker-based Postgres, and baseline lint/type/test tooling.
 

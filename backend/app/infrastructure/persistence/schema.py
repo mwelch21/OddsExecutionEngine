@@ -85,3 +85,15 @@ execution_recommendations_table = Table(
     Column("ranked_quotes", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
+
+workflow_events_table = Table(
+    "workflow_events",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("event_type", String(length=128), nullable=False),
+    Column("aggregate_id", String(length=36), nullable=False),
+    Column("workflow_id", String(length=36), nullable=False),
+    Column("payload", JSON, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
