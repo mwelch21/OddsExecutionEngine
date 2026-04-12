@@ -16,6 +16,18 @@ def test_settings_builds_database_url() -> None:
     assert settings.database_url == "postgresql+psycopg://user:password@db:5433/markets"
 
 
+def test_settings_prefers_database_url_override() -> None:
+    settings = Settings(database_url_override="sqlite+pysqlite:////tmp/override.db")
+
+    assert settings.database_url == "sqlite+pysqlite:////tmp/override.db"
+
+
+def test_settings_does_not_expose_seed_toggle() -> None:
+    settings = Settings()
+
+    assert "seed_demo_data" not in settings.model_dump()
+
+
 def test_settings_reads_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("POSTGRES_DB", "env_markets")

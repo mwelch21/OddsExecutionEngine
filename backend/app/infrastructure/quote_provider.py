@@ -10,13 +10,13 @@ class QuoteProvider(Protocol):
 
 class InMemoryQuoteProvider:
     def __init__(self, quotes: list[Quote] | None = None) -> None:
-        self._quotes = quotes or _build_fixture_quotes()
+        self._quotes = quotes or build_fixture_quotes()
 
     def list_quotes(self, event_id: str) -> list[Quote]:
         return [quote for quote in self._quotes if quote.event_id == event_id]
 
 
-def _build_fixture_quotes() -> list[Quote]:
+def build_fixture_quotes() -> list[Quote]:
     event_id = "nba-knicks-celtics-2026-04-11"
 
     return [
