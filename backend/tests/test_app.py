@@ -42,6 +42,107 @@ def test_request_id_header_is_propagated(sqlite_database_url: str) -> None:
     assert response.headers["X-Request-ID"] == "req-123"
 
 
+def test_quote_refresh_endpoint_ingests_quotes_and_persists_workflow(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["event_id"] == "nba-knicks-celtics-2026-04-11"
+    assert response.json()["ingested_quote_count"] == 10
+    assert response.json()["created_market_count"] == 6
+    assert response.json()["updated_latest_count"] == 10
+    assert response.json()["appended_history_count"] == 10
+    assert response.json()["emitted_event_types"].count("MarketSnapshotCreated") == 6
+    assert response.json()["emitted_event_types"].count("QuoteUpdated") == 10
+    assert response.json()["emitted_event_types"].count("QuotesRefreshed") == 1
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        event_count = session.execute(select(events_table)).all()
+        market_count = session.execute(select(markets_table)).all()
+        latest_count = session.execute(select(market_quotes_latest_table)).all()
+        history_count = session.execute(select(market_quotes_history_table)).all()
+        workflow_event_count = session.execute(select(workflow_events_table)).all()
+
+    assert len(event_count) == 1
+    assert len(market_count) == 6
+    assert len(latest_count) == 10
+    assert len(history_count) == 10
+    assert len(workflow_event_count) == 17
+
+
+def test_quote_refresh_endpoint_is_repeatable_without_duplicate_markets(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+        second_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["created_market_count"] == 0
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        market_count = session.execute(select(markets_table)).all()
+        latest_count = session.execute(select(market_quotes_latest_table)).all()
+        history_count = session.execute(select(market_quotes_history_table)).all()
+        workflow_event_count = session.execute(select(workflow_events_table)).all()
+
+    assert len(market_count) == 6
+    assert len(latest_count) == 10
+    assert len(history_count) == 20
+    assert len(workflow_event_count) == 28
+
+
+def test_quote_refresh_endpoint_validates_request(sqlite_database_url: str) -> None:
+    with TestClient(_build_empty_test_app(sqlite_database_url)) as client:
+        response = client.post("/ingestion/quotes/refresh", json={"event_id": ""})
+
+    assert response.status_code == 422
+
+
+def test_recommendation_endpoint_reads_quotes_ingested_by_stage4_flow(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        refresh_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+        recommendation_response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert refresh_response.status_code == 200
+    assert recommendation_response.status_code == 200
+    assert recommendation_response.json()["fillable"] is True
+    assert recommendation_response.json()["best_quote"]["sportsbook"] == "DraftKings"
+
+
 def test_recommendation_endpoint_returns_fillable_moneyline_result(
     sqlite_database_url: str,
 ) -> None:
@@ -358,5 +459,11 @@ def test_postgres_is_required_truth_path_for_persistence_correctness() -> None:
 
 def _build_test_app(database_url: str) -> FastAPI:
     prepare_test_database(database_url, seed_demo=True)
+    settings = Settings(database_url_override=database_url)
+    return create_app(settings)
+
+
+def _build_empty_test_app(database_url: str) -> FastAPI:
+    prepare_test_database(database_url, seed_demo=False)
     settings = Settings(database_url_override=database_url)
     return create_app(settings)

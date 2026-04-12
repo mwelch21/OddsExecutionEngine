@@ -44,6 +44,13 @@
 - `workflow_events` schema ownership belongs to stage 3 migrations under `backend/db/migrations`.
 - Workflow events must be staged inside the unit of work, persisted in the same transaction, and published only after commit succeeds.
 
+## Stage 4 landing zones
+
+- Quote ingestion orchestration should live in an application service, not in routers or seed helpers.
+- Provider abstractions should be application-facing ports with mock implementations under `backend/app/infrastructure`.
+- Quote normalization should stay deterministic and map into canonical `Quote` values before persistence.
+- Quote ingestion persistence should upsert `market_quotes_latest`, append `market_quotes_history`, and emit workflow events through the same post-commit publisher path.
+
 ## Decisions log policy
 
 - Add a decision entry when changing migration strategy, schema ownership, persistence layout, layer boundaries, event model boundaries, or other major architectural rules.

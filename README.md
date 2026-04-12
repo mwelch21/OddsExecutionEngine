@@ -23,6 +23,14 @@ The repository now includes the stage 3 event boundary for the recommendation wo
 - persisted `workflow_events` audit/outbox rows
 - synchronous post-commit publishing through infrastructure adapters
 
+## Stage 4 Quote Ingestion
+
+The repository now includes a first-cut quote ingestion workflow:
+- `POST /ingestion/quotes/refresh` triggers a single-event quote refresh
+- a mock quote provider feeds canonical quote normalization
+- ingestion maintains both `market_quotes_latest` and `market_quotes_history`
+- stage-4 workflow events are persisted and published after commit
+
 ## Stage 2 Enhanced Foundation
 
 The repository now includes a minimal FastAPI backend, Docker-based Postgres, and baseline lint/type/test tooling.

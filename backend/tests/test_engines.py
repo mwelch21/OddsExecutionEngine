@@ -1,8 +1,10 @@
 from backend.app.domain.models import MarketType, OrderIntent, Quote
+from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
 
+normalization_engine = NormalizationEngine()
 price_comparison_service = PriceComparisonService()
 quote_matching_engine = QuoteMatchingEngine()
 recommendation_engine = RecommendationEngine(price_comparison_service)
@@ -165,3 +167,58 @@ def test_generate_recommendation_handles_no_matches() -> None:
     assert recommendation.nearest_miss is None
     assert recommendation.ranked_quotes == []
     assert recommendation.matched_quote_count == 0
+
+
+def test_normalization_engine_keeps_valid_quotes_for_target_event() -> None:
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=120,
+        ),
+        Quote(
+            event_id="event-2",
+            sportsbook="BookB",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+
+    normalized = normalization_engine.normalize_quotes("event-1", quotes)
+
+    assert normalized == [quotes[0]]
+
+
+def test_normalization_engine_rejects_invalid_market_shape() -> None:
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=120,
+            line=1.5,
+        ),
+        Quote(
+            event_id="event-1",
+            sportsbook="BookB",
+            market_type=MarketType.TOTAL,
+            selection="knicks",
+            price=-110,
+            line=221.5,
+        ),
+        Quote(
+            event_id="event-1",
+            sportsbook="BookC",
+            market_type=MarketType.SPREAD,
+            selection="knicks",
+            price=-108,
+        ),
+    ]
+
+    normalized = normalization_engine.normalize_quotes("event-1", quotes)
+
+    assert normalized == []

@@ -1,11 +1,4 @@
-from typing import Protocol
-
 from backend.app.domain.models import MarketType, Quote
-
-
-class QuoteProvider(Protocol):
-    def list_quotes(self, event_id: str) -> list[Quote]:
-        ...
 
 
 class InMemoryQuoteProvider:

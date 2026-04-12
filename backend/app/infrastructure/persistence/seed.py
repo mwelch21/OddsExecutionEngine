@@ -15,6 +15,7 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_latest_table,
     markets_table,
     order_intents_table,
+    workflow_events_table,
 )
 from backend.app.infrastructure.quote_provider import build_fixture_quotes
 
@@ -39,6 +40,7 @@ def seed_demo_quotes(session_factory: DatabaseSessionFactory) -> None:
 def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None:
     with session_factory.create_session() as session:
         for table in (
+            workflow_events_table,
             execution_recommendations_table,
             order_intents_table,
             market_quotes_history_table,
