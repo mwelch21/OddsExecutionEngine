@@ -3,7 +3,13 @@ from typing import Literal
 from uuid import uuid4
 
 from backend.app.domain.base import DomainModel
-from backend.app.domain.models import ExecutionRecommendation, OrderIntent, Quote
+from backend.app.domain.models import (
+    ExecutionRecommendation,
+    OrderIntent,
+    PersistedQuote,
+    Quote,
+    QuoteRefreshPersistenceResult,
+)
 
 
 class WorkflowEvent(DomainModel):
@@ -37,6 +43,30 @@ class ExecutionRecommendationGeneratedPayload(DomainModel):
     nearest_miss: QuoteSnapshot | None
 
 
+class QuotesRefreshedPayload(DomainModel):
+    event_id: str
+    ingested_quote_count: int
+    created_market_count: int
+    updated_latest_count: int
+    appended_history_count: int
+
+
+class QuoteUpdatedPayload(DomainModel):
+    event_id: str
+    market_type: str
+    selection: str
+    sportsbook: str
+    price: int
+    line: float | None = None
+
+
+class MarketSnapshotCreatedPayload(DomainModel):
+    event_id: str
+    market_type: str
+    selection: str
+    line: float | None = None
+
+
 class OrderIntentSubmitted(WorkflowEvent):
     event_type: Literal["OrderIntentSubmitted"] = "OrderIntentSubmitted"
     payload: OrderIntentSubmittedPayload
@@ -47,6 +77,21 @@ class ExecutionRecommendationGenerated(WorkflowEvent):
         "ExecutionRecommendationGenerated"
     )
     payload: ExecutionRecommendationGeneratedPayload
+
+
+class QuotesRefreshed(WorkflowEvent):
+    event_type: Literal["QuotesRefreshed"] = "QuotesRefreshed"
+    payload: QuotesRefreshedPayload
+
+
+class QuoteUpdated(WorkflowEvent):
+    event_type: Literal["QuoteUpdated"] = "QuoteUpdated"
+    payload: QuoteUpdatedPayload
+
+
+class MarketSnapshotCreated(WorkflowEvent):
+    event_type: Literal["MarketSnapshotCreated"] = "MarketSnapshotCreated"
+    payload: MarketSnapshotCreatedPayload
 
 
 def build_order_intent_submitted_event(
@@ -85,6 +130,66 @@ def build_execution_recommendation_generated_event(
             matched_quote_count=recommendation.matched_quote_count,
             best_quote=_quote_snapshot(recommendation.best_quote),
             nearest_miss=_quote_snapshot(recommendation.nearest_miss),
+        ),
+    )
+
+
+def build_quotes_refreshed_event(
+    *,
+    refresh_id: str,
+    result: QuoteRefreshPersistenceResult,
+) -> QuotesRefreshed:
+    return QuotesRefreshed(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=refresh_id,
+        workflow_id=refresh_id,
+        payload=QuotesRefreshedPayload(
+            event_id=result.event_id,
+            ingested_quote_count=len(result.persisted_quotes),
+            created_market_count=result.created_market_count,
+            updated_latest_count=result.updated_latest_count,
+            appended_history_count=result.appended_history_count,
+        ),
+    )
+
+
+def build_quote_updated_event(
+    *,
+    refresh_id: str,
+    persisted_quote: PersistedQuote,
+) -> QuoteUpdated:
+    return QuoteUpdated(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=persisted_quote.market_id,
+        workflow_id=refresh_id,
+        payload=QuoteUpdatedPayload(
+            event_id=persisted_quote.quote.event_id,
+            market_type=persisted_quote.quote.market_type.value,
+            selection=persisted_quote.quote.selection,
+            sportsbook=persisted_quote.quote.sportsbook,
+            price=persisted_quote.quote.price,
+            line=persisted_quote.quote.line,
+        ),
+    )
+
+
+def build_market_snapshot_created_event(
+    *,
+    refresh_id: str,
+    persisted_quote: PersistedQuote,
+) -> MarketSnapshotCreated:
+    return MarketSnapshotCreated(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=persisted_quote.market_id,
+        workflow_id=refresh_id,
+        payload=MarketSnapshotCreatedPayload(
+            event_id=persisted_quote.quote.event_id,
+            market_type=persisted_quote.quote.market_type.value,
+            selection=persisted_quote.quote.selection,
+            line=persisted_quote.quote.line,
         ),
     )
 

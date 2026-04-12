@@ -1,7 +1,12 @@
 from typing import Protocol, Self
 
 from backend.app.domain.events import WorkflowEvent
-from backend.app.domain.models import ExecutionRecommendation, OrderIntent, Quote
+from backend.app.domain.models import (
+    ExecutionRecommendation,
+    OrderIntent,
+    Quote,
+    QuoteRefreshPersistenceResult,
+)
 
 
 class RecommendationUnitOfWork(Protocol):
@@ -36,3 +41,33 @@ class RecommendationUnitOfWorkFactory(Protocol):
 
 class WorkflowEventPublisher(Protocol):
     def publish(self, events: tuple[WorkflowEvent, ...]) -> None: ...
+
+
+class QuoteIngestionProvider(Protocol):
+    def list_quotes(self, event_id: str) -> list[Quote]: ...
+
+
+class QuoteIngestionUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def persist_quotes(
+        self,
+        event_id: str,
+        quotes: list[Quote],
+    ) -> QuoteRefreshPersistenceResult: ...
+
+    def stage_event(self, event: WorkflowEvent) -> None: ...
+
+    @property
+    def committed_events(self) -> tuple[WorkflowEvent, ...]: ...
+
+
+class QuoteIngestionUnitOfWorkFactory(Protocol):
+    def __call__(self) -> QuoteIngestionUnitOfWork: ...

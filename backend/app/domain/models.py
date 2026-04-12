@@ -26,6 +26,29 @@ class Quote(DomainModel):
     line: float | None = None
 
 
+class PersistedQuote(DomainModel):
+    quote: Quote
+    market_id: str
+    market_created: bool
+
+
+class QuoteRefreshPersistenceResult(DomainModel):
+    event_id: str
+    persisted_quotes: list[PersistedQuote]
+    created_market_count: int
+    updated_latest_count: int
+    appended_history_count: int
+
+
+class QuoteRefreshSummary(DomainModel):
+    event_id: str
+    ingested_quote_count: int
+    created_market_count: int
+    updated_latest_count: int
+    appended_history_count: int
+    emitted_event_types: list[str]
+
+
 class ExecutionRecommendation(DomainModel):
     intent: OrderIntent
     fillable: bool
