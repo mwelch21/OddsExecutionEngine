@@ -29,6 +29,7 @@
 - SQLite passing is never sufficient proof that Postgres persistence behavior is correct.
 - Tests must prepare schema through migrations, not through runtime bootstrapping.
 - Stage 3 event-layer work must start from migrated schema and explicit seed tooling, not transitional bootstrap helpers.
+- Full testing strategy, layer definitions, and maintenance instructions live in `docs/testing/README.md`.
 
 ## Observability
 
