@@ -105,6 +105,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_recommendation_router(recommendation_service))
     app.include_router(create_quote_ingestion_router(quote_ingestion_service))
 
+    if app_settings.app_env == "development":
+        from backend.app.api.test_ui_router import create_test_ui_router
+
+        app.include_router(create_test_ui_router())
+
     return app
 
 
