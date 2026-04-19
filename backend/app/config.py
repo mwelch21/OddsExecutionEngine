@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = 5432
     database_url_override: str | None = None
+    opportunity_ttl_minutes: int = 5
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -233,6 +233,10 @@ def _build_html() -> str:
       <select id="custom-method-endpoint">
         <option value="POST /execution/recommendation">POST /execution/recommendation</option>
         <option value="POST /ingestion/quotes/refresh">POST /ingestion/quotes/refresh</option>
+        <option value="POST /watch-intents">POST /watch-intents</option>
+        <option value="GET /watch-intents">GET /watch-intents</option>
+        <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
+        <option value="GET /opportunities">GET /opportunities</option>
         <option value="GET /health">GET /health</option>
       </select>
       <label>Request Body (JSON)</label>
@@ -340,6 +344,79 @@ const SCENARIOS = [
       line: 1.5,
       target_price: 120
     }
+  },
+  {
+    key: "create-watch-intent",
+    label: "Create Watch Intent",
+    desc: "Watch Knicks ML at -150 (should find opportunities)",
+    method: "POST",
+    endpoint: "/watch-intents",
+    body: {
+      event_id: "nba-knicks-celtics-2026-04-11",
+      market_type: "moneyline",
+      selection: "knicks",
+      target_price: -150
+    }
+  },
+  {
+    key: "create-watch-spread",
+    label: "Create Watch (Spread)",
+    desc: "Watch Knicks spread +5.5 at -110",
+    method: "POST",
+    endpoint: "/watch-intents",
+    body: {
+      event_id: "nba-knicks-celtics-2026-04-11",
+      market_type: "spread",
+      selection: "knicks",
+      line: 5.5,
+      target_price: -110
+    }
+  },
+  {
+    key: "list-watch-intents",
+    label: "List Watch Intents",
+    desc: "GET all active watch intents",
+    method: "GET",
+    endpoint: "/watch-intents",
+    body: null
+  },
+  {
+    key: "list-watch-intents-event",
+    label: "List Watch Intents (by event)",
+    desc: "Filter watch intents by event_id",
+    method: "GET",
+    endpoint: "/watch-intents?event_id=nba-knicks-celtics-2026-04-11",
+    body: null
+  },
+  {
+    key: "list-opportunities",
+    label: "List Opportunities",
+    desc: "GET all opportunities with computed validity",
+    method: "GET",
+    endpoint: "/opportunities",
+    body: null
+  },
+  {
+    key: "list-opportunities-event",
+    label: "List Opportunities (by event)",
+    desc: "Filter opportunities by event_id",
+    method: "GET",
+    endpoint: "/opportunities?event_id=nba-knicks-celtics-2026-04-11",
+    body: null
+  },
+  {
+    key: "validation-watch-ml-line",
+    label: "Watch Intent: ML with Line",
+    desc: "Expects 422 - moneyline must omit line",
+    method: "POST",
+    endpoint: "/watch-intents",
+    body: {
+      event_id: "nba-knicks-celtics-2026-04-11",
+      market_type: "moneyline",
+      selection: "knicks",
+      line: 1.5,
+      target_price: 120
+    }
   }
 ];
 
@@ -375,9 +452,14 @@ async function sendCustom() {
   const sel = document.getElementById("custom-method-endpoint").value;
   const parts = sel.split(" ");
   const method = parts[0];
-  const endpoint = parts.slice(1).join(" ");
+  let endpoint = parts.slice(1).join(" ");
   let body = null;
-  if (method !== "GET") {
+  if (method === "DELETE" && endpoint.includes("{id}")) {
+    const id = prompt("Enter watch intent ID to cancel:");
+    if (!id) return;
+    endpoint = endpoint.replace("{id}", id);
+  }
+  if (method !== "GET" && method !== "DELETE") {
     try {
       body = JSON.parse(document.getElementById("custom-body").value);
     } catch (e) {
@@ -396,7 +478,7 @@ async function sendRequest(method, endpoint, body) {
   let response, data, status;
   try {
     const opts = { method, headers: {} };
-    if (body !== null && method !== "GET") {
+    if (body !== null && method !== "GET" && method !== "DELETE") {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
@@ -411,13 +493,26 @@ async function sendRequest(method, endpoint, body) {
 
   let headerHtml = '';
 
-  const statusClass = status === 200 ? "status-200" : status === 422 ? "status-422" : "status-err";
+  const isSuccess = status >= 200 && status < 300;
+  const statusClass = isSuccess ? "status-200" : status === 422 ? "status-422" : "status-err";
   headerHtml += '<span class="status-pill ' + statusClass + '">' + status + '</span>';
 
   if (data && typeof data.fillable === "boolean") {
     const fillClass = data.fillable ? "fill-yes" : "fill-no";
     const fillText = data.fillable ? "FILLABLE" : "NOT FILLABLE";
     headerHtml += '<span class="fill-badge ' + fillClass + '">' + fillText + '</span>';
+  }
+
+  if (data && Array.isArray(data.watch_intents)) {
+    headerHtml += '<span class="fill-badge" style="background:#1e3a5f;color:#7dd3fc">'
+      + data.watch_intents.length + ' intent(s)</span>';
+  }
+  if (data && Array.isArray(data.opportunities)) {
+    const valid = data.opportunities.filter(o => o.is_valid).length;
+    const total = data.opportunities.length;
+    const color = valid > 0 ? "background:#14532d;color:var(--green)" : "background:#451a03;color:var(--orange)";
+    headerHtml += '<span class="fill-badge" style="' + color + '">'
+      + valid + '/' + total + ' valid</span>';
   }
 
   headerHtml += '<span class="timing">' + elapsed + 'ms</span>';
@@ -464,14 +559,14 @@ async function runAll() {
     const startTime = performance.now();
     try {
       const opts = { method: s.method, headers: {} };
-      if (s.body !== null && s.method !== "GET") {
+      if (s.body !== null && s.method !== "GET" && s.method !== "DELETE") {
         opts.headers["Content-Type"] = "application/json";
         opts.body = JSON.stringify(s.body);
       }
       const resp = await fetch(s.endpoint, opts);
       const elapsed = Math.round(performance.now() - startTime);
       const expectError = s.key.startsWith("validation-");
-      const ok = expectError ? resp.status === 422 : resp.status === 200;
+      const ok = expectError ? resp.status === 422 : (resp.status >= 200 && resp.status < 300);
 
       dot.className = "result-dot " + (ok ? "pass" : "fail");
       statusSpan.textContent = resp.status + " " + elapsed + "ms";

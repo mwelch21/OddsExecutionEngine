@@ -20,6 +20,7 @@ events_table = Table(
     metadata,
     Column("id", String(length=36), primary_key=True),
     Column("external_id", String(length=255), nullable=False, unique=True),
+    Column("starts_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
@@ -83,6 +84,36 @@ execution_recommendations_table = Table(
     Column("best_quote", JSON, nullable=True),
     Column("nearest_miss", JSON, nullable=True),
     Column("ranked_quotes", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+watch_intents_table = Table(
+    "watch_intents",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("event_external_id", String(length=255), nullable=False),
+    Column("market_type", String(length=32), nullable=False),
+    Column("selection", String(length=64), nullable=False),
+    Column("line", Float, nullable=True),
+    Column("target_price", Integer, nullable=False),
+    Column("status", String(length=16), nullable=False, server_default="active"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+opportunities_table = Table(
+    "opportunities",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column(
+        "watch_intent_id",
+        String(length=36),
+        ForeignKey("watch_intents.id"),
+        nullable=False,
+    ),
+    Column("event_external_id", String(length=255), nullable=False),
+    Column("market_id", String(length=36), ForeignKey("markets.id"), nullable=False),
+    Column("sportsbook", String(length=64), nullable=False),
+    Column("matched_price", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

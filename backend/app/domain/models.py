@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 
 from backend.app.domain.base import DomainModel
@@ -56,3 +57,39 @@ class ExecutionRecommendation(DomainModel):
     ranked_quotes: list[Quote]
     nearest_miss: Quote | None
     matched_quote_count: int
+
+
+class WatchIntent(DomainModel):
+    id: str
+    event_id: str
+    market_type: MarketType
+    selection: str
+    target_price: int
+    line: float | None = None
+    status: str = "active"
+    created_at: datetime | None = None
+
+
+class Opportunity(DomainModel):
+    id: str
+    watch_intent_id: str
+    event_id: str
+    market_id: str
+    market_type: MarketType
+    selection: str
+    target_price: int
+    sportsbook: str
+    matched_price: int
+    line: float | None = None
+    created_at: datetime | None = None
+
+
+class OpportunityWithValidity(DomainModel):
+    opportunity: Opportunity
+    is_valid: bool
+    reason: str | None = None
+
+
+class WatchEvaluationResult(DomainModel):
+    watch_intent: WatchIntent
+    opportunities: list[Opportunity]

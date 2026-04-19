@@ -4,9 +4,19 @@ from backend.app.application.recommendation_service import RecommendationService
 from backend.app.domain.events import (
     WorkflowEvent,
     build_execution_recommendation_generated_event,
+    build_opportunity_identified_event,
     build_order_intent_submitted_event,
+    build_watch_intent_cancelled_event,
+    build_watch_intent_created_event,
 )
-from backend.app.domain.models import ExecutionRecommendation, MarketType, OrderIntent, Quote
+from backend.app.domain.models import (
+    ExecutionRecommendation,
+    MarketType,
+    Opportunity,
+    OrderIntent,
+    Quote,
+    WatchIntent,
+)
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
@@ -272,3 +282,79 @@ def test_recommendation_service_logs_success_and_failure(
         failing_service.recommend(intent)
 
     assert "recommendation.failed" in recorded_messages
+
+
+def test_build_watch_intent_created_event_contains_deterministic_payload() -> None:
+    intent = WatchIntent(
+        id="wi-1",
+        event_id="event-1",
+        market_type=MarketType.SPREAD,
+        selection="knicks",
+        target_price=-110,
+        line=5.5,
+    )
+
+    event = build_watch_intent_created_event(watch_intent_id="wi-1", intent=intent)
+
+    assert event.event_type == "WatchIntentCreated"
+    assert event.aggregate_id == "wi-1"
+    assert event.workflow_id == "wi-1"
+    assert event.payload.model_dump() == {
+        "event_id": "event-1",
+        "market_type": "spread",
+        "selection": "knicks",
+        "target_price": -110,
+        "line": 5.5,
+    }
+
+
+def test_build_watch_intent_cancelled_event_contains_deterministic_payload() -> None:
+    intent = WatchIntent(
+        id="wi-1",
+        event_id="event-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+    )
+
+    event = build_watch_intent_cancelled_event(watch_intent_id="wi-1", intent=intent)
+
+    assert event.event_type == "WatchIntentCancelled"
+    assert event.aggregate_id == "wi-1"
+    assert event.payload.model_dump() == {
+        "event_id": "event-1",
+        "market_type": "moneyline",
+        "selection": "knicks",
+    }
+
+
+def test_build_opportunity_identified_event_contains_deterministic_payload() -> None:
+    opportunity = Opportunity(
+        id="opp-1",
+        watch_intent_id="wi-1",
+        event_id="event-1",
+        market_id="market-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+        sportsbook="DraftKings",
+        matched_price=125,
+    )
+
+    event = build_opportunity_identified_event(
+        watch_intent_id="wi-1", opportunity=opportunity
+    )
+
+    assert event.event_type == "OpportunityIdentified"
+    assert event.aggregate_id == "opp-1"
+    assert event.workflow_id == "wi-1"
+    assert event.payload.model_dump() == {
+        "watch_intent_id": "wi-1",
+        "event_id": "event-1",
+        "market_type": "moneyline",
+        "selection": "knicks",
+        "sportsbook": "DraftKings",
+        "matched_price": 125,
+        "target_price": 120,
+        "line": None,
+    }

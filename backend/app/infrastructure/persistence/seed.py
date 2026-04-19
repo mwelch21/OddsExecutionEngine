@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import insert, select
@@ -14,7 +14,9 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_history_table,
     market_quotes_latest_table,
     markets_table,
+    opportunities_table,
     order_intents_table,
+    watch_intents_table,
     workflow_events_table,
 )
 from backend.app.infrastructure.quote_provider import build_fixture_quotes
@@ -40,6 +42,8 @@ def seed_demo_quotes(session_factory: DatabaseSessionFactory) -> None:
 def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None:
     with session_factory.create_session() as session:
         for table in (
+            opportunities_table,
+            watch_intents_table,
             workflow_events_table,
             execution_recommendations_table,
             order_intents_table,
@@ -64,6 +68,7 @@ def _seed_fixture_quotes(session: Session, quotes: list[Quote]) -> None:
                 insert(events_table).values(
                     id=event_ids[quote.event_id],
                     external_id=quote.event_id,
+                    starts_at=now + timedelta(days=3),
                 )
             )
 

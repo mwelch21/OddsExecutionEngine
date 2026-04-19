@@ -25,11 +25,15 @@ class QuoteIngestionService:
         quote_provider: QuoteIngestionProvider,
         normalization_engine: NormalizationEngine,
         workflow_event_publisher: WorkflowEventPublisher,
+        watch_intent_service: object | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._quote_provider = quote_provider
         self._normalization_engine = normalization_engine
         self._workflow_event_publisher = workflow_event_publisher
+        # WatchIntentService typed as Any to avoid circular import.
+        # The service has an evaluate_for_event(event_id: str) method.
+        self._watch_intent_service: object | None = watch_intent_service
 
     def refresh_quotes(self, event_id: str) -> QuoteRefreshSummary:
         started_at = perf_counter()
@@ -96,6 +100,16 @@ class QuoteIngestionService:
             appended_history_count=persistence_result.appended_history_count,
             emitted_event_types=emitted_event_types,
         )
+
+        # Evaluate active watch intents after successful ingestion
+        if self._watch_intent_service is not None:
+            try:
+                self._watch_intent_service.evaluate_for_event(event_id)  # type: ignore[attr-defined]
+            except Exception:
+                self._logger.exception(
+                    "watch_evaluation.failed_after_refresh",
+                    extra={"event_id": event_id, "workflow_id": refresh_id},
+                )
 
         self._logger.info(
             "quote_ingestion.completed",
