@@ -233,6 +233,7 @@ def _build_html() -> str:
       <select id="custom-method-endpoint">
         <option value="POST /execution/recommendation">POST /execution/recommendation</option>
         <option value="POST /ingestion/quotes/refresh">POST /ingestion/quotes/refresh</option>
+        <option value="POST /ingestion/quotes/refresh-sport">POST /ingestion/quotes/refresh-sport</option>
         <option value="POST /watch-intents">POST /watch-intents</option>
         <option value="GET /watch-intents">GET /watch-intents</option>
         <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
@@ -417,6 +418,22 @@ const SCENARIOS = [
       line: 1.5,
       target_price: 120
     }
+  },
+  {
+    key: "refresh-nhl",
+    label: "Refresh NHL (Live)",
+    desc: "Fetch all NHL odds from The Odds API",
+    method: "POST",
+    endpoint: "/ingestion/quotes/refresh-sport",
+    body: { sport: "icehockey_nhl" }
+  },
+  {
+    key: "refresh-mlb",
+    label: "Refresh MLB (Live)",
+    desc: "Fetch all MLB odds from The Odds API",
+    method: "POST",
+    endpoint: "/ingestion/quotes/refresh-sport",
+    body: { sport: "baseball_mlb" }
   }
 ];
 
@@ -503,6 +520,10 @@ async function sendRequest(method, endpoint, body) {
     headerHtml += '<span class="fill-badge ' + fillClass + '">' + fillText + '</span>';
   }
 
+  if (data && typeof data.events_refreshed === "number") {
+    headerHtml += '<span class="fill-badge" style="background:#1e3a5f;color:#7dd3fc">'
+      + data.events_refreshed + ' event(s)</span>';
+  }
   if (data && Array.isArray(data.watch_intents)) {
     headerHtml += '<span class="fill-badge" style="background:#1e3a5f;color:#7dd3fc">'
       + data.watch_intents.length + ' intent(s)</span>';

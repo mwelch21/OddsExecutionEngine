@@ -392,6 +392,7 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
 
     assert sorted(inspector.get_table_names()) == [
         "alembic_version",
+        "event_participants",
         "events",
         "execution_recommendations",
         "market_quotes_history",
@@ -634,11 +635,11 @@ def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) 
 
 def _build_test_app(database_url: str) -> FastAPI:
     prepare_test_database(database_url, seed_demo=True)
-    settings = Settings(database_url_override=database_url)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
     return create_app(settings)
 
 
 def _build_empty_test_app(database_url: str) -> FastAPI:
     prepare_test_database(database_url, seed_demo=False)
-    settings = Settings(database_url_override=database_url)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
     return create_app(settings)

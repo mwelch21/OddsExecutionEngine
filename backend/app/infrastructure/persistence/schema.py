@@ -21,7 +21,22 @@ events_table = Table(
     Column("id", String(length=36), primary_key=True),
     Column("external_id", String(length=255), nullable=False, unique=True),
     Column("starts_at", DateTime(timezone=True), nullable=True),
+    Column("sport", String(length=64), nullable=True),
+    Column("league", String(length=64), nullable=True),
+    Column("status", String(length=16), nullable=False, server_default="upcoming"),
+    Column("provider", String(length=32), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+event_participants_table = Table(
+    "event_participants",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("event_id", String(length=36), ForeignKey("events.id"), nullable=False),
+    Column("participant_name", String(length=128), nullable=False),
+    Column("role", String(length=32), nullable=False),
+    Column("side", String(length=16), nullable=True),
+    Column("sort_order", Integer, nullable=False, server_default="0"),
 )
 
 markets_table = Table(

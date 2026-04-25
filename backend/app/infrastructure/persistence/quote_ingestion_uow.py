@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import Row, RowMapping, delete, insert, select
+from sqlalchemy import Row, RowMapping, delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.application.ports import QuoteIngestionUnitOfWork
@@ -11,6 +11,7 @@ from backend.app.domain.models import PersistedQuote, Quote, QuoteRefreshPersist
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
+    event_participants_table,
     events_table,
     market_quotes_history_table,
     market_quotes_latest_table,
@@ -68,10 +69,11 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         self,
         event_id: str,
         quotes: list[Quote],
+        event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshPersistenceResult:
         session = self._require_session()
         quoted_at = datetime.now(UTC)
-        event_row_id = self._ensure_event(event_id)
+        event_row_id = self._ensure_event(event_id, event_metadata)
         persisted_quotes: list[PersistedQuote] = []
         created_market_count = 0
 
@@ -131,22 +133,63 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
             raise RuntimeError("Quote ingestion unit of work must be entered before use.")
         return self._session
 
-    def _ensure_event(self, external_event_id: str) -> str:
+    def _ensure_event(
+        self,
+        external_event_id: str,
+        metadata: dict[str, object] | None = None,
+    ) -> str:
         session = self._require_session()
+        participants = (
+            metadata.pop("participants", []) if metadata else []
+        )
+
         row = session.execute(
             select(events_table.c.id).where(events_table.c.external_id == external_event_id)
         ).first()
         if row is not None:
-            return _row_value(row, "id")
+            row_id = _row_value(row, "id")
+            if metadata:
+                session.execute(
+                    update(events_table)
+                    .where(events_table.c.id == row_id)
+                    .values(**metadata)
+                )
+            if participants:
+                self._upsert_participants(row_id, participants)
+            return row_id
 
         event_row_id = str(uuid4())
+        values: dict[str, object] = {
+            "id": event_row_id,
+            "external_id": external_event_id,
+        }
+        if metadata:
+            values.update(metadata)
+        session.execute(insert(events_table).values(**values))
+        if participants:
+            self._upsert_participants(event_row_id, participants)
+        return event_row_id
+
+    def _upsert_participants(
+        self, event_row_id: str, participants: list[dict[str, object]]
+    ) -> None:
+        session = self._require_session()
         session.execute(
-            insert(events_table).values(
-                id=event_row_id,
-                external_id=external_event_id,
+            delete(event_participants_table).where(
+                event_participants_table.c.event_id == event_row_id
             )
         )
-        return event_row_id
+        for p in participants:
+            session.execute(
+                insert(event_participants_table).values(
+                    id=str(uuid4()),
+                    event_id=event_row_id,
+                    participant_name=p["participant_name"],
+                    role=p["role"],
+                    side=p.get("side"),
+                    sort_order=p.get("sort_order", 0),
+                )
+            )
 
     def _ensure_market(self, event_row_id: str, quote: Quote) -> tuple[str, bool]:
         session = self._require_session()

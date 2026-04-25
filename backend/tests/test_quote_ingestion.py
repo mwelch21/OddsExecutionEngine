@@ -21,6 +21,12 @@ class RecordingQuoteIngestionProvider:
     def list_quotes(self, event_id: str) -> list[Quote]:
         return list(self._quotes)
 
+    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]:
+        return {}
+
+    def get_event_info(self, event_id: str) -> None:
+        return None
+
 
 class RecordingQuoteIngestionUnitOfWork:
     def __init__(
@@ -55,6 +61,7 @@ class RecordingQuoteIngestionUnitOfWork:
         self,
         event_id: str,
         quotes: list[Quote],
+        event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshPersistenceResult:
         if self._fail_on_persist:
             raise RuntimeError("quote persistence failed")

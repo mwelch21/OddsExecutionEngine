@@ -9,6 +9,7 @@ from backend.app.domain.models import Quote
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
+    event_participants_table,
     events_table,
     execution_recommendations_table,
     market_quotes_history_table,
@@ -19,7 +20,7 @@ from backend.app.infrastructure.persistence.schema import (
     watch_intents_table,
     workflow_events_table,
 )
-from backend.app.infrastructure.quote_provider import build_fixture_quotes
+from backend.app.infrastructure.quote_provider import FIXTURE_EVENT_ID, build_fixture_quotes
 
 
 def seed_demo_database(database_url: str | None = None) -> None:
@@ -50,6 +51,7 @@ def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None
             market_quotes_history_table,
             market_quotes_latest_table,
             markets_table,
+            event_participants_table,
             events_table,
         ):
             session.execute(table.delete())
@@ -69,8 +71,25 @@ def _seed_fixture_quotes(session: Session, quotes: list[Quote]) -> None:
                     id=event_ids[quote.event_id],
                     external_id=quote.event_id,
                     starts_at=now + timedelta(days=3),
+                    sport="basketball",
+                    league="NBA",
                 )
             )
+            if quote.event_id == FIXTURE_EVENT_ID:
+                for p in [
+                    {"name": "Celtics", "role": "team", "side": "home", "sort_order": 1},
+                    {"name": "Knicks", "role": "team", "side": "away", "sort_order": 2},
+                ]:
+                    session.execute(
+                        insert(event_participants_table).values(
+                            id=str(uuid4()),
+                            event_id=event_ids[quote.event_id],
+                            participant_name=p["name"],
+                            role=p["role"],
+                            side=p["side"],
+                            sort_order=p["sort_order"],
+                        )
+                    )
 
         market_key = (
             quote.event_id,

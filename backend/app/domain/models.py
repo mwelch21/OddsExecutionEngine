@@ -93,3 +93,19 @@ class OpportunityWithValidity(DomainModel):
 class WatchEvaluationResult(DomainModel):
     watch_intent: WatchIntent
     opportunities: list[Opportunity]
+
+
+class EventParticipant(DomainModel):
+    name: str
+    role: str = "team"
+    side: str | None = None
+    sort_order: int = 0
+
+
+class EventInfo(DomainModel):
+    id: str
+    sport: str
+    league: str | None = None
+    status: str = "upcoming"
+    participants: list[EventParticipant] = []
+    commence_time: datetime | None = None

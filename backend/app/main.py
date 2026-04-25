@@ -37,6 +37,7 @@ from backend.app.infrastructure.persistence.watch_intent_uow import (
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
 )
+from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 
 
@@ -62,9 +63,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         opportunity_validity_engine=OpportunityValidityEngine(),
         opportunity_ttl_minutes=app_settings.opportunity_ttl_minutes,
     )
+    if app_settings.quote_provider == "odds_api":
+        quote_provider = TheOddsApiProvider(
+            api_key=app_settings.odds_api_key,
+            sports=[s.strip() for s in app_settings.odds_api_sports.split(",")],
+            regions=[r.strip() for r in app_settings.odds_api_regions.split(",")],
+            markets=[m.strip() for m in app_settings.odds_api_markets.split(",")],
+        )
+    else:
+        quote_provider = InMemoryQuoteProvider()
+
     quote_ingestion_service = QuoteIngestionService(
         unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(session_factory),
-        quote_provider=InMemoryQuoteProvider(),
+        quote_provider=quote_provider,
         normalization_engine=NormalizationEngine(),
         workflow_event_publisher=workflow_event_publisher,
         watch_intent_service=watch_intent_service,

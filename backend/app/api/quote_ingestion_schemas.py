@@ -7,6 +7,16 @@ class QuoteRefreshRequest(BaseModel):
     event_id: str = Field(min_length=1)
 
 
+class SportRefreshRequest(BaseModel):
+    sport: str = Field(min_length=1)
+
+
+class SportRefreshResponse(BaseModel):
+    sport: str
+    events_refreshed: int
+    results: list["QuoteRefreshResponse"]
+
+
 class QuoteRefreshResponse(BaseModel):
     event_id: str
     ingested_quote_count: int

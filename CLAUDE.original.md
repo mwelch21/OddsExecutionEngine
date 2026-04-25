@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-Sports market execution platform. Takes order intent (bet request w/ target odds), finds matching sportsbook quotes, recommends if fillable at desired price.
+Sports market execution platform. Takes an order intent (bet request with target odds), finds matching quotes from sportsbooks, and recommends whether the order is fillable at the desired price.
 
 **Stack:** Python 3.12 · FastAPI · PostgreSQL 16 · SQLAlchemy Core · psycopg3 · Alembic · Docker
-**Status:** Stages 0–6 done. Stage 7 (GET endpoints for browsing) next.
+**Status:** Stages 0–6 complete. Stage 7 (GET endpoints for browsing) is next.
 
 ## Architecture
 
-Strict layered. Dependency arrows one direction only:
+Strict layered architecture. Dependency arrows go one direction only:
 
 ```
 api/ → application/ → domain/ (pure, zero imports)
@@ -17,15 +17,15 @@ api/ → application/ → domain/ (pure, zero imports)
                     → infrastructure/ (DB, providers, publishers)
 ```
 
-**Invariant:** `domain/` zero external imports. `engines/` no DB/HTTP imports.
+**Invariant:** `domain/` has zero external imports. `engines/` has no DB/HTTP imports.
 
 ### Key Patterns
 
-- **Deterministic engines:** NormalizationEngine, QuoteMatchingEngine, PriceComparisonService, RecommendationEngine, WatchEvaluationEngine, OpportunityValidityEngine — all pure. Same input = same output. No I/O.
-- **Unit of Work + staged events:** Events staged during UoW, persisted same transaction as data, published only after commit. Rollback discards all.
+- **Deterministic engines:** NormalizationEngine, QuoteMatchingEngine, PriceComparisonService, RecommendationEngine, WatchEvaluationEngine, OpportunityValidityEngine — all pure functions. Same input = same output. No I/O ever.
+- **Unit of Work + staged events:** Events staged during UoW lifecycle, persisted in same transaction as data, published only after successful commit. Rollback discards all events.
 - **Domain models:** Frozen Pydantic (`extra="forbid"`) — immutable value objects.
-- **Ports & adapters:** Application depends on Protocol interfaces (`ports.py`). Infrastructure implements.
-- **Market identity:** Unique constraint `(event_id, market_type, selection, line_key)` via `build_line_key()` (solves NULL uniqueness in SQL).
+- **Ports & adapters:** Application layer depends on Protocol interfaces (`ports.py`). Infrastructure implements them.
+- **Market identity:** Unique constraint `(event_id, market_type, selection, line_key)` via `build_line_key()` helper (solves NULL uniqueness in SQL).
 - **Latest vs history:** `market_quotes_latest` (upsert via DELETE+INSERT) vs `market_quotes_history` (append-only).
 
 ## Package Structure
@@ -112,34 +112,34 @@ Migrations in `backend/db/migrations/versions/`.
 
 ## Domain Events
 
-8 types: `OrderIntentSubmitted`, `ExecutionRecommendationGenerated`, `QuotesRefreshed`, `QuoteUpdated`, `MarketSnapshotCreated`, `WatchIntentCreated`, `WatchIntentCancelled`, `OpportunityIdentified`
+8 event types: `OrderIntentSubmitted`, `ExecutionRecommendationGenerated`, `QuotesRefreshed`, `QuoteUpdated`, `MarketSnapshotCreated`, `WatchIntentCreated`, `WatchIntentCancelled`, `OpportunityIdentified`
 
-All follow staged-commit-then-publish pattern via UoW.
+All follow the staged-commit-then-publish pattern via UoW.
 
 ## Development Rules
 
-1. **Never add I/O to engines.** Pure functions. Need data → pass as args.
-2. **Never reverse dependency arrows.** domain/ imports nothing. engines/ imports only domain/. infrastructure/ imports domain/ never application/ or api/.
-3. **AI endpoints (Stage 6) advisory only.** Never affect fillability, ranking, matching.
-4. **All domain models frozen.** Use `DomainModel` base (Pydantic, `frozen=True`, `extra="forbid"`).
-5. **Events through UoW.** `stage_event()` during workflow. Persist same transaction. Publisher post-commit only.
-6. **Tests in `backend/tests/`.** Run `uv run pytest`. Integration tests need running Postgres (Docker).
-7. **Config:** pydantic-settings from env vars / `.env`. Production rejects default passwords.
-8. **Linting:** ruff (E, F, I, B) + mypy (strict). Line length 100.
+1. **Never add I/O to engines.** They are pure functions. If you need data, pass it in as arguments.
+2. **Never reverse dependency arrows.** domain/ imports nothing. engines/ imports only domain/. infrastructure/ imports domain/ but never application/ or api/.
+3. **AI endpoints (Stage 6) are advisory only.** They never affect fillability, ranking, or matching logic.
+4. **All domain models are frozen.** Use `DomainModel` base class (Pydantic, `frozen=True`, `extra="forbid"`).
+5. **Events go through UoW.** Call `stage_event()` during the workflow. Events persist in the same transaction as business data. Publisher runs post-commit only.
+6. **Tests live in `backend/tests/`.** Run with `uv run pytest`. Integration tests need a running Postgres (use Docker).
+7. **Config:** pydantic-settings loads from env vars / `.env`. Production rejects default passwords.
+8. **Linting:** ruff (E, F, I, B rules) + mypy (strict). Line length 100.
 
 ## Configuration
 
-Env vars (or `.env`):
+Environment variables (or `.env` file):
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `APP_ENV` | `development` | `production` enforces security |
+| `APP_ENV` | `development` | `production` enforces security constraints |
 | `POSTGRES_DB` | `odds_execution` | |
 | `POSTGRES_USER` | `app` | |
-| `POSTGRES_PASSWORD` | `app` | Must change in prod |
+| `POSTGRES_PASSWORD` | `app` | Must change in production |
 | `POSTGRES_HOST` | `localhost` | `postgres` inside Docker |
 | `POSTGRES_PORT` | `5432` | |
-| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities valid |
+| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities remain valid |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live data |
 | `ODDS_API_KEY` | `""` | The Odds API key |
 | `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
@@ -148,8 +148,8 @@ Env vars (or `.env`):
 
 ## Knowledge Base (claude-memory-compiler)
 
-Auto-compiling knowledge base in `claude-memory-compiler/`. Hooks auto:
-- **SessionStart:** Injects KB index into context
+This project includes an auto-compiling knowledge base in `claude-memory-compiler/`. Claude Code hooks automatically:
+- **SessionStart:** Injects knowledge base index into context
 - **PreCompact:** Captures context before auto-compaction
 - **SessionEnd:** Extracts conversation → daily log, spawns background flush
 
@@ -181,12 +181,12 @@ claude-memory-compiler/
 
 ### Knowledge base conventions
 
-- Articles use Obsidian-style `[[wikilinks]]` w/ paths relative to `knowledge/`
+- Articles use Obsidian-style `[[wikilinks]]` with paths relative to `knowledge/`
 - Every article has YAML frontmatter (title, sources, created, updated)
 - Encyclopedia style — factual, concise, self-contained
 - File naming: lowercase, hyphens for spaces
-- Prefer updating existing articles over near-duplicates
-- See `claude-memory-compiler/AGENTS.md` for full schema
+- Prefer updating existing articles over creating near-duplicates
+- See `claude-memory-compiler/AGENTS.md` for full schema reference
 
 ## Roadmap
 

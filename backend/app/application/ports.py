@@ -3,6 +3,7 @@ from typing import Protocol, Self
 
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventInfo,
     ExecutionRecommendation,
     MarketType,
     Opportunity,
@@ -50,6 +51,10 @@ class WorkflowEventPublisher(Protocol):
 class QuoteIngestionProvider(Protocol):
     def list_quotes(self, event_id: str) -> list[Quote]: ...
 
+    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]: ...
+
+    def get_event_info(self, event_id: str) -> EventInfo | None: ...
+
 
 class QuoteIngestionUnitOfWork(Protocol):
     def __enter__(self) -> Self: ...
@@ -65,6 +70,7 @@ class QuoteIngestionUnitOfWork(Protocol):
         self,
         event_id: str,
         quotes: list[Quote],
+        event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshPersistenceResult: ...
 
     def stage_event(self, event: WorkflowEvent) -> None: ...
