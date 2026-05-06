@@ -233,7 +233,9 @@ def _build_html() -> str:
       <select id="custom-method-endpoint">
         <option value="POST /execution/recommendation">POST /execution/recommendation</option>
         <option value="POST /ingestion/quotes/refresh">POST /ingestion/quotes/refresh</option>
-        <option value="POST /ingestion/quotes/refresh-sport">POST /ingestion/quotes/refresh-sport</option>
+        <option value="POST /ingestion/quotes/refresh-sport">
+          POST /ingestion/quotes/refresh-sport
+        </option>
         <option value="POST /watch-intents">POST /watch-intents</option>
         <option value="GET /watch-intents">GET /watch-intents</option>
         <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
@@ -531,7 +533,9 @@ async function sendRequest(method, endpoint, body) {
   if (data && Array.isArray(data.opportunities)) {
     const valid = data.opportunities.filter(o => o.is_valid).length;
     const total = data.opportunities.length;
-    const color = valid > 0 ? "background:#14532d;color:var(--green)" : "background:#451a03;color:var(--orange)";
+    const color = valid > 0
+      ? "background:#14532d;color:var(--green)"
+      : "background:#451a03;color:var(--orange)";
     headerHtml += '<span class="fill-badge" style="' + color + '">'
       + valid + '/' + total + ' valid</span>';
   }

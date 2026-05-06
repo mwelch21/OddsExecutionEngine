@@ -41,8 +41,8 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
     def cancel_watch_intent(watch_intent_id: str) -> WatchIntentResponse:
         try:
             intent = service.cancel_watch_intent(watch_intent_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Watch intent not found")
+        except ValueError as err:
+            raise HTTPException(status_code=404, detail="Watch intent not found") from err
         return WatchIntentResponse.from_domain(intent)
 
     return router

@@ -1,8 +1,11 @@
 import logging
 from datetime import datetime
+from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import RowMapping, delete, insert, select, update
+from sqlalchemy import RowMapping, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from backend.app.domain.events import WorkflowEvent
@@ -165,24 +168,27 @@ class SqlAlchemyWatchIntentUnitOfWork:
             for row in rows
         }
 
-    def create_opportunities(self, opportunities: list[Opportunity]) -> list[str]:
+    def create_opportunities(
+        self, opportunities: list[Opportunity]
+    ) -> list[Opportunity]:
         if not opportunities:
             return []
         session = self._require_session()
-        ids: list[str] = []
+        inserted_opportunities: list[Opportunity] = []
+        dialect_name = _dialect_name(session)
         for opp in opportunities:
-            session.execute(
-                insert(opportunities_table).values(
-                    id=opp.id,
-                    watch_intent_id=opp.watch_intent_id,
-                    event_external_id=opp.event_id,
-                    market_id=opp.market_id,
-                    sportsbook=opp.sportsbook,
-                    matched_price=opp.matched_price,
-                )
+            inserted_id = cast(
+                str | None,
+                session.execute(
+                    _build_opportunity_insert_statement(
+                        dialect_name=dialect_name,
+                        opportunity=opp,
+                    )
+                ).scalar_one_or_none(),
             )
-            ids.append(opp.id)
-        return ids
+            if inserted_id is not None:
+                inserted_opportunities.append(opp)
+        return inserted_opportunities
 
     def list_opportunities(
         self, event_id: str | None = None
@@ -324,3 +330,41 @@ def _row_to_opportunity(row: RowMapping) -> Opportunity:
         line=row["line"],
         created_at=row["created_at"],
     )
+
+
+def _dialect_name(session: Session) -> str:
+    if session.bind is None:
+        raise RuntimeError("Watch intent unit of work session is not bound to an engine.")
+    return session.bind.dialect.name
+
+
+def _build_opportunity_insert_statement(
+    *,
+    dialect_name: str,
+    opportunity: Opportunity,
+) -> Any:
+    values = {
+        "id": opportunity.id,
+        "watch_intent_id": opportunity.watch_intent_id,
+        "event_external_id": opportunity.event_id,
+        "market_id": opportunity.market_id,
+        "sportsbook": opportunity.sportsbook,
+        "matched_price": opportunity.matched_price,
+    }
+    conflict_columns = ["watch_intent_id", "market_id", "sportsbook"]
+
+    if dialect_name == "postgresql":
+        return postgresql_insert(opportunities_table).values(
+            **values
+        ).on_conflict_do_nothing(index_elements=conflict_columns).returning(
+            opportunities_table.c.id
+        )
+
+    if dialect_name == "sqlite":
+        return sqlite_insert(opportunities_table).values(
+            **values
+        ).on_conflict_do_nothing(index_elements=conflict_columns).returning(
+            opportunities_table.c.id
+        )
+
+    raise RuntimeError(f"Unsupported dialect for opportunity insert: {dialect_name}")

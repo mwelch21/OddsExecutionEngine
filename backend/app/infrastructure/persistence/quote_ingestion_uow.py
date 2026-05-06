@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 from sqlalchemy import Row, RowMapping, delete, insert, select, update
@@ -139,8 +140,10 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         metadata: dict[str, object] | None = None,
     ) -> str:
         session = self._require_session()
-        participants = (
-            metadata.pop("participants", []) if metadata else []
+        event_metadata = dict(metadata) if metadata else {}
+        participants = cast(
+            list[dict[str, object]],
+            event_metadata.pop("participants", []),
         )
 
         row = session.execute(
@@ -148,11 +151,11 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         ).first()
         if row is not None:
             row_id = _row_value(row, "id")
-            if metadata:
+            if event_metadata:
                 session.execute(
                     update(events_table)
                     .where(events_table.c.id == row_id)
-                    .values(**metadata)
+                    .values(**event_metadata)
                 )
             if participants:
                 self._upsert_participants(row_id, participants)
@@ -163,8 +166,8 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
             "id": event_row_id,
             "external_id": external_event_id,
         }
-        if metadata:
-            values.update(metadata)
+        if event_metadata:
+            values.update(event_metadata)
         session.execute(insert(events_table).values(**values))
         if participants:
             self._upsert_participants(event_row_id, participants)

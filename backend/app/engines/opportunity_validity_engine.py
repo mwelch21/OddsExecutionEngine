@@ -1,4 +1,5 @@
-from datetime import UTC, datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 from backend.app.domain.models import Opportunity, OpportunityWithValidity
 
@@ -46,7 +47,7 @@ class OpportunityValidityEngine:
 
     def check_validity_batch(
         self,
-        items: list[tuple[Opportunity, datetime | None]],
+        items: Sequence[tuple[Opportunity, datetime | None]],
         ttl_minutes: int,
         now: datetime,
     ) -> list[OpportunityWithValidity]:

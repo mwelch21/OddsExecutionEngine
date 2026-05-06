@@ -125,7 +125,11 @@ class TestListQuotes:
         assert len(ml_quotes) >= 2
         assert all(q.line is None for q in ml_quotes)
 
-        dk_bruins = [q for q in ml_quotes if q.sportsbook == "draftkings" and "bruins" in q.selection]
+        dk_bruins = [
+            q
+            for q in ml_quotes
+            if q.sportsbook == "draftkings" and "bruins" in q.selection
+        ]
         assert len(dk_bruins) == 1
         assert dk_bruins[0].price == -145
 

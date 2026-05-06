@@ -114,7 +114,9 @@ class WatchIntentUnitOfWork(Protocol):
         self, event_id: str
     ) -> dict[tuple[str, str, str, float | None], str]: ...
 
-    def create_opportunities(self, opportunities: list[Opportunity]) -> list[str]: ...
+    def create_opportunities(
+        self, opportunities: list[Opportunity]
+    ) -> list[Opportunity]: ...
 
     def list_opportunities(
         self, event_id: str | None = None

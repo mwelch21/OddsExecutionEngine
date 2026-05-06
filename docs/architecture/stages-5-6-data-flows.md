@@ -109,11 +109,11 @@ WatchIntentService.evaluate_for_event(event_id)    [POST-COMMIT HOOK]
   |         PriceComparisonService.is_price_fillable()          [PURE ENGINE]
   |           Rule: quote_price >= target_price (American odds)
   |         Dedup key: (watch_intent_id, market_id, sportsbook)
-  |         If fillable AND not duplicate -> create Opportunity
+  |         If fillable AND not duplicate -> create Opportunity candidate
   |     Returns: list[Opportunity] (new only)
   |
-  |-- INSERT opportunities (new ones)
-  |-- Stage events: OpportunityIdentified (per new opportunity)
+  |-- INSERT opportunities (idempotent, DB uniqueness final guard)
+  |-- Stage events: OpportunityIdentified (inserted rows only)
   |-- COMMIT -> PUBLISH
 ```
 
@@ -152,8 +152,8 @@ SqlAlchemyWatchIntentUnitOfWork (single transaction):
   |-- Immediate Evaluation (same logic as Flow A post-commit):
   |     SELECT market_quotes_latest for this event
   |     WatchEvaluationEngine.evaluate()
-  |     INSERT opportunities (if fillable quotes found)
-  |     Stage events: OpportunityIdentified (per opportunity)
+  |     INSERT opportunities (if fillable quotes found, duplicates ignored)
+  |     Stage events: OpportunityIdentified (inserted rows only)
   |
   |-- COMMIT -> PUBLISH
   |
@@ -387,7 +387,7 @@ On UoW.__exit__ (exception):
 | Engine | Purpose | Inputs | Output |
 |--------|---------|--------|--------|
 | **NormalizationEngine** | Filter/validate raw quotes | event_id, list[Quote] | list[Quote] (valid only) |
-| **WatchEvaluationEngine** | Match intents to quotes, produce opportunities | intents, quotes, market_lookup, existing_keys | list[Opportunity] (new, deduped) |
+| **WatchEvaluationEngine** | Match intents to quotes, produce opportunity candidates | intents, quotes, market_lookup, existing_keys | list[Opportunity] (candidate, prefiltered) |
 | **OpportunityValidityEngine** | TTL + quote freshness checks | opportunity, latest_quote_time, ttl, now | OpportunityWithValidity |
 | **PriceComparisonService** | Fillability check | quote_price, target_price | bool |
 

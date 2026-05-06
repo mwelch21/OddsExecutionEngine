@@ -1,7 +1,6 @@
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 
 from backend.app.domain.models import EventInfo, EventParticipant, MarketType, Quote
-
 
 FIXTURE_EVENT_ID = "nba-knicks-celtics-2026-04-11"
 FIXTURE_SPORT = "basketball_nba"

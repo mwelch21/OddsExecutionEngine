@@ -47,6 +47,7 @@ class WatchIntentService:
         line: float | None = None,
     ) -> WatchIntent:
         started_at = perf_counter()
+        inserted_opportunities: list[Opportunity] = []
 
         self._logger.info(
             "watch_intent.create.started",
@@ -85,8 +86,8 @@ class WatchIntentService:
                 )
 
                 if new_opportunities:
-                    uow.create_opportunities(new_opportunities)
-                    for opp in new_opportunities:
+                    inserted_opportunities = uow.create_opportunities(new_opportunities)
+                    for opp in inserted_opportunities:
                         uow.stage_event(
                             build_opportunity_identified_event(
                                 watch_intent_id=intent.id,
@@ -108,7 +109,7 @@ class WatchIntentService:
             "watch_intent.create.completed",
             extra={
                 "watch_intent_id": intent.id,
-                "opportunity_count": len(new_opportunities),
+                "opportunity_count": len(inserted_opportunities),
                 "event_count": len(uow.committed_events),
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
@@ -198,7 +199,7 @@ class WatchIntentService:
 
     def evaluate_for_event(self, event_id: str) -> list[Opportunity]:
         started_at = perf_counter()
-        new_opportunities: list[Opportunity] = []
+        inserted_opportunities: list[Opportunity] = []
 
         self._logger.info(
             "watch_evaluation.started",
@@ -238,8 +239,8 @@ class WatchIntentService:
                 )
 
                 if new_opportunities:
-                    uow.create_opportunities(new_opportunities)
-                    for opp in new_opportunities:
+                    inserted_opportunities = uow.create_opportunities(new_opportunities)
+                    for opp in inserted_opportunities:
                         uow.stage_event(
                             build_opportunity_identified_event(
                                 watch_intent_id=opp.watch_intent_id,
@@ -263,8 +264,8 @@ class WatchIntentService:
             "watch_evaluation.completed",
             extra={
                 "event_id": event_id,
-                "new_opportunity_count": len(new_opportunities),
+                "new_opportunity_count": len(inserted_opportunities),
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
-        return new_opportunities
+        return inserted_opportunities

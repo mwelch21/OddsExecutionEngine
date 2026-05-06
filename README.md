@@ -27,6 +27,11 @@ api/ --> application/ --> domain/         (pure, zero external imports)
 - **Unit of Work + staged events** -- Events are staged during a workflow, persisted in the same DB transaction as business data, and published only after successful commit. Rollback discards everything.
 - **Ports & adapters** -- Application layer depends on Protocol interfaces. Infrastructure implements them. Swap providers without touching business logic.
 
+**Architecture docs:**
+
+- `docs/architecture/system-state-data-flow.md` -- current end-to-end architecture, state ownership, bottlenecks, and scale considerations
+- `docs/architecture/stages-5-6-data-flows.md` -- detailed watch/opportunity and live-ingestion flow walkthrough
+
 ## Prerequisites
 
 - **Python 3.12+**
@@ -233,7 +238,7 @@ backend/
 
 10 tables managed via Alembic migrations:
 
-`events`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `execution_recommendations`, `workflow_events`, `watch_intents`, `opportunities`
+`events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `execution_recommendations`, `workflow_events`, `watch_intents`, `opportunities`
 
 ### Resetting the database
 

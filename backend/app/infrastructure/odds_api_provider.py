@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 import httpx
 
@@ -90,7 +91,7 @@ class TheOddsApiProvider:
         """Get cached event metadata. Call list_events_for_sport first."""
         return self._event_cache.get(event_id)
 
-    def _fetch_sport_odds(self, sport: str) -> list[dict]:
+    def _fetch_sport_odds(self, sport: str) -> list[dict[str, Any]]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         url = f"{ODDS_API_BASE}/{sport}/odds"
         params = {
@@ -117,7 +118,7 @@ class TheOddsApiProvider:
             },
         )
 
-        return response.json()
+        return cast(list[dict[str, Any]], response.json())
 
     def _cache_event(self, event: dict, sport_key: str) -> EventInfo:
         """Extract and cache event metadata."""

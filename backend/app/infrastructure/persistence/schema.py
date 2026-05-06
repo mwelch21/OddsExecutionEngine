@@ -130,6 +130,12 @@ opportunities_table = Table(
     Column("sportsbook", String(length=64), nullable=False),
     Column("matched_price", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint(
+        "watch_intent_id",
+        "market_id",
+        "sportsbook",
+        name="uq_opportunities_identity",
+    ),
 )
 
 workflow_events_table = Table(

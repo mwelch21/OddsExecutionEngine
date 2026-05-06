@@ -9,6 +9,7 @@ from backend.app.api.opportunity_router import create_opportunity_router
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
+from backend.app.application.ports import QuoteIngestionProvider
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.recommendation_service import RecommendationService
 from backend.app.application.watch_intent_service import WatchIntentService
@@ -24,6 +25,7 @@ from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
     set_request_id,
 )
+from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
@@ -37,7 +39,6 @@ from backend.app.infrastructure.persistence.watch_intent_uow import (
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
 )
-from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 
 
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         opportunity_validity_engine=OpportunityValidityEngine(),
         opportunity_ttl_minutes=app_settings.opportunity_ttl_minutes,
     )
+    quote_provider: QuoteIngestionProvider
     if app_settings.quote_provider == "odds_api":
         quote_provider = TheOddsApiProvider(
             api_key=app_settings.odds_api_key,

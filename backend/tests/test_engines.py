@@ -14,6 +14,7 @@ quote_matching_engine = QuoteMatchingEngine()
 recommendation_engine = RecommendationEngine(price_comparison_service)
 watch_evaluation_engine = WatchEvaluationEngine(price_comparison_service)
 opportunity_validity_engine = OpportunityValidityEngine()
+MarketLookup = dict[tuple[str, str, str, float | None], str]
 
 
 def test_match_quotes_filters_moneyline_selection() -> None:
@@ -259,7 +260,7 @@ def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
             price=115,
         ),
     ]
-    lookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
 
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
@@ -288,7 +289,7 @@ def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
             price=125,
         ),
     ]
-    lookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
 
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
@@ -314,7 +315,7 @@ def test_watch_evaluation_deduplicates_existing_opportunities() -> None:
             price=125,
         ),
     ]
-    lookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
     existing = {("wi-1", "market-1", "BookA")}
 
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup, existing)
@@ -351,7 +352,7 @@ def test_watch_evaluation_matches_on_line() -> None:
             line=4.5,
         ),
     ]
-    lookup = {
+    lookup: MarketLookup = {
         ("event-1", "spread", "knicks", 5.5): "market-1",
         ("event-1", "spread", "knicks", 4.5): "market-2",
     }
@@ -383,7 +384,7 @@ def test_watch_evaluation_skips_cancelled_intents() -> None:
             price=125,
         ),
     ]
-    lookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
 
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
@@ -467,7 +468,7 @@ def test_opportunity_validity_batch_handles_mixed_results() -> None:
         created_at=now - timedelta(minutes=10),
     )
 
-    items = [
+    items: list[tuple[Opportunity, datetime | None]] = [
         (valid_opp, now - timedelta(minutes=3)),
         (expired_opp, now - timedelta(minutes=11)),
     ]
