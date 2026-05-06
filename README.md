@@ -1,186 +1,297 @@
 # OddsExecutionEngine
 
-A backend system for evaluating fillability and executing best available odds across fragmented sportsbook markets.
+A sports market execution platform that evaluates fillability and identifies best-available odds across fragmented sportsbook markets. Submit an order intent with target odds, and the system finds matching quotes, recommends whether the order is fillable, and monitors markets for favorable opportunities.
 
-## Overview
+## What It Does
 
-This project simulates a real-time market execution system:
-- Cross-book odds comparison
-- Fillability evaluation
-- Best execution selection
-- Monitoring and opportunity detection
+- **Cross-book odds comparison** -- Ingests quotes from multiple sportsbooks (DraftKings, FanDuel, BetMGM, etc.) and normalizes them into a unified market view
+- **Fillability evaluation** -- Given a target price, determines whether any sportsbook can fill the order and ranks all matching quotes
+- **Watch intents & opportunity detection** -- Set a target price on a market and the system continuously evaluates incoming quotes, creating immutable opportunity snapshots when a fillable match is found
+- **Live data integration** -- Connects to [The Odds API](https://the-odds-api.com) for real-time sportsbook odds across NHL, MLB, and other sports
+- **Event-driven architecture** -- All state changes produce domain events, persisted atomically alongside business data
 
-Built with a focus on:
-- Deterministic logic
-- Event-driven architecture
-- Extensible system design
-- Structured service-level logging for request and workflow visibility
+## Architecture
 
-## Stage 3 Event Layer
+Strict layered architecture with one-way dependency arrows:
 
-The repository now includes the stage 3 event boundary for the recommendation workflow:
-- explicit domain workflow events
-- persisted `workflow_events` audit/outbox rows
-- synchronous post-commit publishing through infrastructure adapters
+```
+api/ --> application/ --> domain/         (pure, zero external imports)
+                      --> engines/        (pure functions, zero I/O)
+                      --> infrastructure/ (DB, HTTP providers, publishers)
+```
 
-## Stage 4 Quote Ingestion
+**Key design principles:**
 
-The repository now includes a first-cut quote ingestion workflow:
-- `POST /ingestion/quotes/refresh` triggers a single-event quote refresh
-- a mock quote provider feeds canonical quote normalization
-- ingestion maintains both `market_quotes_latest` and `market_quotes_history`
-- stage-4 workflow events are persisted and published after commit
+- **Deterministic engines** -- All matching, comparison, and evaluation logic lives in pure functions. Same input = same output. No I/O ever.
+- **Immutable domain models** -- Frozen Pydantic models (`extra="forbid"`). Value objects, not entities.
+- **Unit of Work + staged events** -- Events are staged during a workflow, persisted in the same DB transaction as business data, and published only after successful commit. Rollback discards everything.
+- **Ports & adapters** -- Application layer depends on Protocol interfaces. Infrastructure implements them. Swap providers without touching business logic.
 
-## Stage 2 Enhanced Foundation
+**Architecture docs:**
 
-The repository now includes a minimal FastAPI backend, Docker-based Postgres, and baseline lint/type/test tooling.
+- `docs/architecture/system-state-data-flow.md` -- current end-to-end architecture, state ownership, bottlenecks, and scale considerations
+- `docs/architecture/stages-5-6-data-flows.md` -- detailed watch/opportunity and live-ingestion flow walkthrough
 
-### Prerequisites
+## Prerequisites
 
-- Python 3.12
-- `uv`
-- Docker Desktop
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/)** -- Python package manager
+- **Docker Desktop** -- For PostgreSQL 16
 
-### First Run
+Optional:
+- **The Odds API key** -- For live sportsbook data ([free tier: 500 requests/month](https://the-odds-api.com))
 
-Install local dependencies:
+## Getting Started
+
+### 1. Clone and install dependencies
 
 ```bash
+git clone https://github.com/mwelch21/OddsExecutionEngine.git
+cd OddsExecutionEngine
 uv sync --group dev
 ```
 
-Run the test and quality checks locally:
+### 2. Configure environment
+
+Create a `.env` file in the project root:
+
+```env
+POSTGRES_HOST=localhost
+POSTGRES_DB=odds_execution
+POSTGRES_USER=app
+POSTGRES_PASSWORD=app
+POSTGRES_PORT=5433
+```
+
+> **Port note:** Docker maps the container's internal port 5432 to host port 5433 by default. This avoids conflicts if you have a local PostgreSQL instance running on 5432. If port 5432 is free on your machine, you can change the mapping in `docker-compose.yml` and set `POSTGRES_PORT=5432` here.
+
+To enable live odds data, add:
+
+```env
+QUOTE_PROVIDER=odds_api
+ODDS_API_KEY=your_api_key_here
+ODDS_API_SPORTS=icehockey_nhl,baseball_mlb
+ODDS_API_REGIONS=us,us2
+ODDS_API_MARKETS=h2h,spreads,totals
+```
+
+Without these, the system uses built-in fixture data (NBA Knicks vs Celtics).
+
+### 3. Start PostgreSQL
 
 ```bash
+docker compose up -d
+```
+
+### 4. Run database migrations and seed demo data
+
+```bash
+uv run odds-db-upgrade
+uv run odds-db-seed-demo
+```
+
+### 5. Start the API
+
+The API runs inside the Docker container automatically. Access it at:
+
+```
+http://localhost:8000
+```
+
+To run locally instead (e.g., for debugging):
+
+```bash
+docker compose stop api
+uv run uvicorn backend.app.main:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+### 6. Verify it works
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Open the testing dashboard (development mode only)
+open http://localhost:8000/test-ui
+```
+
+The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
+
+## Common Commands
+
+```bash
+# Start services
+docker compose up -d
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Run database migrations
+uv run odds-db-upgrade
+
+# Seed demo data
+uv run odds-db-seed-demo
+
+# Run tests
 uv run pytest
-uv run ruff check .
-uv run mypy backend
-```
 
-Or run them inside the API container:
+# Lint and type check
+uv run ruff check backend/
+uv run mypy backend/
 
-```bash
-docker compose exec api uv run pytest
-docker compose exec api uv run ruff check .
-docker compose exec api uv run mypy backend
-```
-
-Start the full local stack with Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-The API will be available at `http://localhost:8000`, and the health endpoint is:
-
-```text
-GET /health
-```
-
-Postgres is available to the API on the internal Docker network at `postgres:5432`. It is not exposed to your host by default, which avoids conflicts with any local Postgres instance already using port `5432`.
-
-## Database Workflow
-
-Schema changes are managed through versioned migrations in `backend/db/migrations`. The app does not create tables on startup.
-
-Recommended local sequence:
-
-1. Start containers:
-
-```bash
-docker compose up --build -d
-```
-
-2. Run migrations from inside the API container:
-
-```bash
-docker compose exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
-```
-
-3. Optionally seed demo quotes from inside the API container:
-
-```bash
-docker compose exec -T api uv run odds-db-seed-demo
-```
-
-4. Run the app or tests:
-
-```bash
-docker compose exec -T api uv run pytest
-```
-
-5. Inspect data with `psql`:
-
-```bash
+# Inspect the database
 docker compose exec postgres psql -U app -d odds_execution
+
+# View logs
+docker compose logs -f api
 ```
 
-SQLite is kept only for lightweight local smoke/convenience coverage in tests. Postgres is the required persistence truth path.
+## API Endpoints
 
-If you want to run migration or seed commands directly on your host instead of inside the API container, you must point them at a reachable Postgres instance first. The default settings use `postgres:5432`, which is only resolvable on the Docker network.
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/execution/recommendation` | Evaluate fillability for an order intent |
+| `POST` | `/ingestion/quotes/refresh` | Refresh quotes for a single event |
+| `POST` | `/ingestion/quotes/refresh-sport` | Refresh all events for a sport (live data) |
+| `POST` | `/watch-intents` | Create a watch intent (monitors for target price) |
+| `GET` | `/watch-intents?event_id=` | List active watch intents |
+| `DELETE` | `/watch-intents/{id}` | Cancel a watch intent |
+| `GET` | `/opportunities?event_id=` | List opportunities with computed validity |
+| `GET` | `/test-ui` | Interactive testing dashboard (dev only) |
 
-Example host-side override:
+### Example: Get a recommendation
 
 ```bash
-POSTGRES_HOST=localhost POSTGRES_PORT=5432 uv run alembic -c backend/db/alembic.ini upgrade head
-POSTGRES_HOST=localhost POSTGRES_PORT=5432 uv run odds-db-seed-demo
+curl -X POST http://localhost:8000/execution/recommendation \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "event_id": "nba-knicks-celtics-2026-04-11",
+    "market_type": "moneyline",
+    "selection": "knicks",
+    "target_price": 121
+  }'
 ```
 
-Those host-side commands require Postgres to be exposed to your host, or an equivalent reachable DB hostname.
-
-## Verification Script
-
-Run the current end-to-end manual verification flow with:
+### Example: Refresh live NHL odds
 
 ```bash
-./scripts/verify_stage2_5.sh
+curl -X POST http://localhost:8000/ingestion/quotes/refresh-sport \
+  -H 'Content-Type: application/json' \
+  -d '{"sport": "icehockey_nhl"}'
 ```
 
-The script:
-- starts the local stack
-- runs migrations
-- seeds demo quotes
-- verifies health and recommendation endpoint behavior
-- checks validation failures
-- verifies persisted row counts in Postgres
-
-Architecture decisions and standing implementation rules live in:
-
-- `docs/architecture/decisions.md`
-- `docs/architecture/conventions.md`
-
-### Environment
-
-Copy `.env.example` to `.env` if you want local overrides. Keep `.env` uncommitted and treat environment variables as the source of truth for production deployment.
-
-For security:
-- never commit real secrets
-- use a unique `POSTGRES_PASSWORD` in production
-- `production` will fail startup if `POSTGRES_PASSWORD` is left at a known default value
-
-### Postgres Persistence
-
-Postgres uses the named Docker volume `postgres_data`, so data survives normal container shutdowns and `docker compose down`.
-
-Data is removed only if you explicitly delete the volume, for example:
+### Example: Create a watch intent
 
 ```bash
-docker compose down -v
+curl -X POST http://localhost:8000/watch-intents \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "event_id": "EVENT_ID_FROM_REFRESH",
+    "market_type": "moneyline",
+    "selection": "boston bruins",
+    "target_price": -140
+  }'
 ```
 
-### Project Layout
+### Request validation rules
 
-```text
+- `moneyline` -- `line` must be absent or null
+- `spread` / `total` -- `line` is required
+- `total` -- `selection` must be `"over"` or `"under"`
+
+## Project Structure
+
+```
 backend/
-  app/
-    main.py
-    config.py
-    api/
-    domain/
-    application/
-    engines/
-    infrastructure/
-  db/
-    migrations/
-  tests/
+├── app/
+│   ├── main.py                          # App factory, middleware, DI wiring
+│   ├── config.py                        # pydantic-settings, env vars
+│   ├── api/                             # Routers + request/response schemas
+│   ├── domain/
+│   │   ├── models.py                    # Immutable value objects
+│   │   └── events.py                    # 8 domain event types
+│   ├── application/
+│   │   ├── ports.py                     # Protocol interfaces
+│   │   ├── recommendation_service.py
+│   │   ├── quote_ingestion_service.py
+│   │   └── watch_intent_service.py
+│   ├── engines/                         # Pure deterministic logic (NO I/O)
+│   │   ├── normalization_engine.py
+│   │   ├── quote_matching_engine.py
+│   │   ├── price_comparison_engine.py
+│   │   ├── recommendation_engine.py
+│   │   ├── watch_evaluation_engine.py
+│   │   └── opportunity_validity_engine.py
+│   └── infrastructure/
+│       ├── quote_provider.py            # InMemoryQuoteProvider (fixtures)
+│       ├── odds_api_provider.py         # TheOddsApiProvider (live data)
+│       ├── publishers/                  # Event publishers
+│       ├── observability/               # Structured logging
+│       └── persistence/                 # DB session, schema, UoWs, migrations
+├── db/
+│   └── migrations/                      # Alembic migrations
+└── tests/                               # Unit + integration tests
 ```
+
+## Database
+
+10 tables managed via Alembic migrations:
+
+`events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `execution_recommendations`, `workflow_events`, `watch_intents`, `opportunities`
+
+### Resetting the database
+
+```bash
+docker compose down -v        # removes the volume (all data lost)
+docker compose up -d
+uv run odds-db-upgrade
+uv run odds-db-seed-demo
+```
+
+## Configuration Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_ENV` | `development` | `production` enforces security constraints |
+| `POSTGRES_DB` | `odds_execution` | Database name |
+| `POSTGRES_USER` | `app` | Database user |
+| `POSTGRES_PASSWORD` | `app` | Database password (must change in production) |
+| `POSTGRES_HOST` | `postgres` | `localhost` when running outside Docker |
+| `POSTGRES_PORT` | `5432` | Host port is 5433 by default in docker-compose |
+| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities remain valid |
+| `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
+| `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
+| `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
+| `ODDS_API_REGIONS` | `us,us2` | Comma-separated regions |
+| `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types |
+
+## Running Tests
+
+```bash
+# Full suite (unit + integration)
+uv run pytest
+
+# Verbose output
+uv run pytest -v
+
+# Specific test file
+uv run pytest backend/tests/test_engines.py
+
+# With coverage
+uv run pytest --cov=backend
+```
+
+Integration tests use SQLite for speed. The Docker PostgreSQL instance is used for the running application and manual testing.
+
+## Roadmap
+
+| Stage | Status | Focus |
+|-------|--------|-------|
+| 0-6 | Done | Foundation, engines, persistence, events, ingestion, watch intents, opportunities, Odds API |
+| 7 | Next | GET endpoints for browsing events/markets/quotes |
+| 8 | Planned | Structured logging + audit trail |
+| 9 | Planned | AI layer (advisory -- parse intent, explain, suggest) |
+| 10 | Planned | Frontend (React/Next.js) |
+| 11 | Planned | Deploy + CI/CD |
+| 12 | Future | WebSockets, Redis, event bus, Go ingestion service |

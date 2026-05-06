@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = 5432
     database_url_override: str | None = None
+    opportunity_ttl_minutes: int = 5
+
+    quote_provider: str = "in_memory"
+    odds_api_key: str = ""
+    odds_api_sports: str = "icehockey_nhl"
+    odds_api_regions: str = "us"
+    odds_api_markets: str = "h2h,spreads,totals"
 
     model_config = SettingsConfigDict(
         env_file=".env",

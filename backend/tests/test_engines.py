@@ -1,13 +1,20 @@
-from backend.app.domain.models import MarketType, OrderIntent, Quote
+from datetime import UTC, datetime, timedelta
+
+from backend.app.domain.models import MarketType, Opportunity, OrderIntent, Quote, WatchIntent
 from backend.app.engines.normalization_engine import NormalizationEngine
+from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
+from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
 
 normalization_engine = NormalizationEngine()
 price_comparison_service = PriceComparisonService()
 quote_matching_engine = QuoteMatchingEngine()
 recommendation_engine = RecommendationEngine(price_comparison_service)
+watch_evaluation_engine = WatchEvaluationEngine(price_comparison_service)
+opportunity_validity_engine = OpportunityValidityEngine()
+MarketLookup = dict[tuple[str, str, str, float | None], str]
 
 
 def test_match_quotes_filters_moneyline_selection() -> None:
@@ -222,3 +229,252 @@ def test_normalization_engine_rejects_invalid_market_shape() -> None:
     normalized = normalization_engine.normalize_quotes("event-1", quotes)
 
     assert normalized == []
+
+
+# ── WatchEvaluationEngine ─────────────────────────────────────────────
+
+
+def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=120,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+        Quote(
+            event_id="event-1",
+            sportsbook="BookB",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=115,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert len(opportunities) == 1
+    assert opportunities[0].sportsbook == "BookA"
+    assert opportunities[0].matched_price == 125
+    assert opportunities[0].watch_intent_id == "wi-1"
+
+
+def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=130,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert opportunities == []
+
+
+def test_watch_evaluation_deduplicates_existing_opportunities() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=120,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+    existing = {("wi-1", "market-1", "BookA")}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup, existing)
+
+    assert opportunities == []
+
+
+def test_watch_evaluation_matches_on_line() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.SPREAD,
+            selection="knicks",
+            target_price=-110,
+            line=5.5,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.SPREAD,
+            selection="knicks",
+            price=-108,
+            line=5.5,
+        ),
+        Quote(
+            event_id="event-1",
+            sportsbook="BookB",
+            market_type=MarketType.SPREAD,
+            selection="knicks",
+            price=-105,
+            line=4.5,
+        ),
+    ]
+    lookup: MarketLookup = {
+        ("event-1", "spread", "knicks", 5.5): "market-1",
+        ("event-1", "spread", "knicks", 4.5): "market-2",
+    }
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert len(opportunities) == 1
+    assert opportunities[0].sportsbook == "BookA"
+    assert opportunities[0].line == 5.5
+
+
+def test_watch_evaluation_skips_cancelled_intents() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=120,
+            status="cancelled",
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert opportunities == []
+
+
+# ── OpportunityValidityEngine ──────────────────────────────────────────
+
+
+def _make_opportunity(created_at: datetime) -> Opportunity:
+    return Opportunity(
+        id="opp-1",
+        watch_intent_id="wi-1",
+        event_id="event-1",
+        market_id="market-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+        sportsbook="BookA",
+        matched_price=125,
+        created_at=created_at,
+    )
+
+
+def test_opportunity_valid_within_ttl_and_no_newer_quote() -> None:
+    now = datetime.now(UTC)
+    opp = _make_opportunity(now - timedelta(minutes=2))
+    quote_time = now - timedelta(minutes=3)
+
+    result = opportunity_validity_engine.check_validity(opp, quote_time, ttl_minutes=5, now=now)
+
+    assert result.is_valid is True
+    assert result.reason is None
+
+
+def test_opportunity_invalid_when_expired() -> None:
+    now = datetime.now(UTC)
+    opp = _make_opportunity(now - timedelta(minutes=10))
+    quote_time = now - timedelta(minutes=11)
+
+    result = opportunity_validity_engine.check_validity(opp, quote_time, ttl_minutes=5, now=now)
+
+    assert result.is_valid is False
+    assert result.reason == "expired"
+
+
+def test_opportunity_invalid_when_quote_superseded() -> None:
+    now = datetime.now(UTC)
+    opp = _make_opportunity(now - timedelta(minutes=2))
+    quote_time = now - timedelta(minutes=1)
+
+    result = opportunity_validity_engine.check_validity(opp, quote_time, ttl_minutes=5, now=now)
+
+    assert result.is_valid is False
+    assert result.reason == "quote_superseded"
+
+
+def test_opportunity_invalid_when_quote_removed() -> None:
+    now = datetime.now(UTC)
+    opp = _make_opportunity(now - timedelta(minutes=2))
+
+    result = opportunity_validity_engine.check_validity(opp, None, ttl_minutes=5, now=now)
+
+    assert result.is_valid is False
+    assert result.reason == "quote_removed"
+
+
+def test_opportunity_validity_batch_handles_mixed_results() -> None:
+    now = datetime.now(UTC)
+    valid_opp = _make_opportunity(now - timedelta(minutes=2))
+    expired_opp = Opportunity(
+        id="opp-2",
+        watch_intent_id="wi-1",
+        event_id="event-1",
+        market_id="market-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+        sportsbook="BookB",
+        matched_price=122,
+        created_at=now - timedelta(minutes=10),
+    )
+
+    items: list[tuple[Opportunity, datetime | None]] = [
+        (valid_opp, now - timedelta(minutes=3)),
+        (expired_opp, now - timedelta(minutes=11)),
+    ]
+
+    results = opportunity_validity_engine.check_validity_batch(items, ttl_minutes=5, now=now)
+
+    assert len(results) == 2
+    assert results[0].is_valid is True
+    assert results[1].is_valid is False

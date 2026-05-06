@@ -14,7 +14,9 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_history_table,
     market_quotes_latest_table,
     markets_table,
+    opportunities_table,
     order_intents_table,
+    watch_intents_table,
     workflow_events_table,
 )
 from backend.app.infrastructure.persistence.seed import truncate_application_tables
@@ -390,12 +392,15 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
 
     assert sorted(inspector.get_table_names()) == [
         "alembic_version",
+        "event_participants",
         "events",
         "execution_recommendations",
         "market_quotes_history",
         "market_quotes_latest",
         "markets",
+        "opportunities",
         "order_intents",
+        "watch_intents",
         "workflow_events",
     ]
 
@@ -457,13 +462,184 @@ def test_postgres_is_required_truth_path_for_persistence_correctness() -> None:
         truncate_application_tables(session_factory)
 
 
+def test_create_watch_intent_returns_201_and_persists(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["event_id"] == "nba-knicks-celtics-2026-04-11"
+    assert response.json()["market_type"] == "moneyline"
+    assert response.json()["status"] == "active"
+    assert response.json()["id"]
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored = session.execute(select(watch_intents_table)).mappings().one()
+        events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "WatchIntentCreated"
+            )
+        ).mappings().all()
+
+    assert stored["event_external_id"] == "nba-knicks-celtics-2026-04-11"
+    assert stored["status"] == "active"
+    assert len(events) == 1
+
+
+def test_create_watch_intent_validates_market_shape(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+                "line": 1.5,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_list_watch_intents_filters_by_event_id(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        response = client.get(
+            "/watch-intents",
+            params={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["watch_intents"]) == 1
+
+
+def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        watch_id = create_response.json()["id"]
+        cancel_response = client.delete(f"/watch-intents/{watch_id}")
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored = session.execute(
+            select(watch_intents_table).where(watch_intents_table.c.id == watch_id)
+        ).mappings().one()
+        cancel_events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "WatchIntentCancelled"
+            )
+        ).mappings().all()
+
+    assert stored["status"] == "cancelled"
+    assert len(cancel_events) == 1
+
+
+def test_cancel_nonexistent_watch_intent_returns_404(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.delete("/watch-intents/nonexistent-id")
+
+    assert response.status_code == 404
+
+
+def test_create_watch_intent_triggers_immediate_evaluation(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 201
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        opps = session.execute(select(opportunities_table)).mappings().all()
+        opp_events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "OpportunityIdentified"
+            )
+        ).mappings().all()
+
+    # Knicks moneyline has DraftKings@125 and FanDuel@125 both >= 121
+    assert len(opps) == 2
+    assert len(opp_events) == 2
+
+
+def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        response = client.get(
+            "/opportunities",
+            params={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    opps = response.json()["opportunities"]
+    assert len(opps) == 2
+    for opp in opps:
+        assert "is_valid" in opp
+        assert "invalid_reason" in opp
+
+
 def _build_test_app(database_url: str) -> FastAPI:
     prepare_test_database(database_url, seed_demo=True)
-    settings = Settings(database_url_override=database_url)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
     return create_app(settings)
 
 
 def _build_empty_test_app(database_url: str) -> FastAPI:
     prepare_test_database(database_url, seed_demo=False)
-    settings = Settings(database_url_override=database_url)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
     return create_app(settings)

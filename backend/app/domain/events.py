@@ -5,10 +5,12 @@ from uuid import uuid4
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import (
     ExecutionRecommendation,
+    Opportunity,
     OrderIntent,
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
+    WatchIntent,
 )
 
 
@@ -190,6 +192,107 @@ def build_market_snapshot_created_event(
             market_type=persisted_quote.quote.market_type.value,
             selection=persisted_quote.quote.selection,
             line=persisted_quote.quote.line,
+        ),
+    )
+
+
+class WatchIntentCreatedPayload(DomainModel):
+    event_id: str
+    market_type: str
+    selection: str
+    target_price: int
+    line: float | None = None
+
+
+class WatchIntentCancelledPayload(DomainModel):
+    event_id: str
+    market_type: str
+    selection: str
+
+
+class OpportunityIdentifiedPayload(DomainModel):
+    watch_intent_id: str
+    event_id: str
+    market_type: str
+    selection: str
+    sportsbook: str
+    matched_price: int
+    target_price: int
+    line: float | None = None
+
+
+class WatchIntentCreated(WorkflowEvent):
+    event_type: Literal["WatchIntentCreated"] = "WatchIntentCreated"
+    payload: WatchIntentCreatedPayload
+
+
+class WatchIntentCancelled(WorkflowEvent):
+    event_type: Literal["WatchIntentCancelled"] = "WatchIntentCancelled"
+    payload: WatchIntentCancelledPayload
+
+
+class OpportunityIdentified(WorkflowEvent):
+    event_type: Literal["OpportunityIdentified"] = "OpportunityIdentified"
+    payload: OpportunityIdentifiedPayload
+
+
+def build_watch_intent_created_event(
+    *,
+    watch_intent_id: str,
+    intent: WatchIntent,
+) -> WatchIntentCreated:
+    return WatchIntentCreated(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent_id,
+        workflow_id=watch_intent_id,
+        payload=WatchIntentCreatedPayload(
+            event_id=intent.event_id,
+            market_type=intent.market_type.value,
+            selection=intent.selection,
+            target_price=intent.target_price,
+            line=intent.line,
+        ),
+    )
+
+
+def build_watch_intent_cancelled_event(
+    *,
+    watch_intent_id: str,
+    intent: WatchIntent,
+) -> WatchIntentCancelled:
+    return WatchIntentCancelled(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent_id,
+        workflow_id=watch_intent_id,
+        payload=WatchIntentCancelledPayload(
+            event_id=intent.event_id,
+            market_type=intent.market_type.value,
+            selection=intent.selection,
+        ),
+    )
+
+
+def build_opportunity_identified_event(
+    *,
+    watch_intent_id: str,
+    opportunity: Opportunity,
+) -> OpportunityIdentified:
+    return OpportunityIdentified(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=opportunity.id,
+        workflow_id=watch_intent_id,
+        payload=OpportunityIdentifiedPayload(
+            watch_intent_id=watch_intent_id,
+            event_id=opportunity.event_id,
+            market_type=opportunity.market_type.value,
+            selection=opportunity.selection,
+            sportsbook=opportunity.sportsbook,
+            matched_price=opportunity.matched_price,
+            target_price=opportunity.target_price,
+            line=opportunity.line,
         ),
     )
 
