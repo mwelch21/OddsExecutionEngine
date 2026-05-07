@@ -1,15 +1,645 @@
+import os
+
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import inspect, select
 
-from backend.app.main import app
+from backend.app.config import Settings
+from backend.app.infrastructure.persistence.commands import odds_db_seed_demo_main
+from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.schema import (
+    events_table,
+    execution_recommendations_table,
+    market_quotes_history_table,
+    market_quotes_latest_table,
+    markets_table,
+    opportunities_table,
+    order_intents_table,
+    watch_intents_table,
+    workflow_events_table,
+)
+from backend.app.infrastructure.persistence.seed import truncate_application_tables
+from backend.app.main import create_app
+from backend.tests.db_helpers import prepare_test_database
 
 
-def test_healthcheck_returns_ok() -> None:
-    client = TestClient(app)
-
-    response = client.get("/health")
+def test_healthcheck_returns_ok(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.get("/health")
 
     assert response.status_code == 200
+    assert response.headers["X-Request-ID"]
     assert response.json() == {
         "status": "ok",
         "environment": "development",
     }
+
+
+def test_request_id_header_is_propagated(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.get("/health", headers={"X-Request-ID": "req-123"})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req-123"
+
+
+def test_quote_refresh_endpoint_ingests_quotes_and_persists_workflow(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["event_id"] == "nba-knicks-celtics-2026-04-11"
+    assert response.json()["ingested_quote_count"] == 10
+    assert response.json()["created_market_count"] == 6
+    assert response.json()["updated_latest_count"] == 10
+    assert response.json()["appended_history_count"] == 10
+    assert response.json()["emitted_event_types"].count("MarketSnapshotCreated") == 6
+    assert response.json()["emitted_event_types"].count("QuoteUpdated") == 10
+    assert response.json()["emitted_event_types"].count("QuotesRefreshed") == 1
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        event_count = session.execute(select(events_table)).all()
+        market_count = session.execute(select(markets_table)).all()
+        latest_count = session.execute(select(market_quotes_latest_table)).all()
+        history_count = session.execute(select(market_quotes_history_table)).all()
+        workflow_event_count = session.execute(select(workflow_events_table)).all()
+
+    assert len(event_count) == 1
+    assert len(market_count) == 6
+    assert len(latest_count) == 10
+    assert len(history_count) == 10
+    assert len(workflow_event_count) == 17
+
+
+def test_quote_refresh_endpoint_is_repeatable_without_duplicate_markets(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+        second_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["created_market_count"] == 0
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        market_count = session.execute(select(markets_table)).all()
+        latest_count = session.execute(select(market_quotes_latest_table)).all()
+        history_count = session.execute(select(market_quotes_history_table)).all()
+        workflow_event_count = session.execute(select(workflow_events_table)).all()
+
+    assert len(market_count) == 6
+    assert len(latest_count) == 10
+    assert len(history_count) == 20
+    assert len(workflow_event_count) == 28
+
+
+def test_quote_refresh_endpoint_validates_request(sqlite_database_url: str) -> None:
+    with TestClient(_build_empty_test_app(sqlite_database_url)) as client:
+        response = client.post("/ingestion/quotes/refresh", json={"event_id": ""})
+
+    assert response.status_code == 422
+
+
+def test_recommendation_endpoint_reads_quotes_ingested_by_stage4_flow(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        refresh_response = client.post(
+            "/ingestion/quotes/refresh",
+            json={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+        recommendation_response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert refresh_response.status_code == 200
+    assert recommendation_response.status_code == 200
+    assert recommendation_response.json()["fillable"] is True
+    assert recommendation_response.json()["best_quote"]["sportsbook"] == "DraftKings"
+
+
+def test_recommendation_endpoint_returns_fillable_moneyline_result(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "request": {
+            "event_id": "nba-knicks-celtics-2026-04-11",
+            "market_type": "moneyline",
+            "selection": "knicks",
+            "line": None,
+            "target_price": 121,
+        },
+        "fillable": True,
+        "best_quote": {
+            "sportsbook": "DraftKings",
+            "selection": "knicks",
+            "price": 125,
+            "line": None,
+        },
+        "ranked_quotes": [
+            {
+                "sportsbook": "DraftKings",
+                "selection": "knicks",
+                "price": 125,
+                "line": None,
+            },
+            {
+                "sportsbook": "FanDuel",
+                "selection": "knicks",
+                "price": 125,
+                "line": None,
+            },
+            {
+                "sportsbook": "BetMGM",
+                "selection": "knicks",
+                "price": 120,
+                "line": None,
+            },
+        ],
+        "nearest_miss": None,
+        "matched_quote_count": 3,
+    }
+
+
+def test_recommendation_endpoint_returns_nearest_miss_when_unfillable(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "total",
+                "selection": "over",
+                "line": 221.5,
+                "target_price": -105,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "request": {
+            "event_id": "nba-knicks-celtics-2026-04-11",
+            "market_type": "total",
+            "selection": "over",
+            "line": 221.5,
+            "target_price": -105,
+        },
+        "fillable": False,
+        "best_quote": {
+            "sportsbook": "FanDuel",
+            "selection": "over",
+            "price": -108,
+            "line": 221.5,
+        },
+        "ranked_quotes": [
+            {
+                "sportsbook": "FanDuel",
+                "selection": "over",
+                "price": -108,
+                "line": 221.5,
+            },
+            {
+                "sportsbook": "DraftKings",
+                "selection": "over",
+                "price": -112,
+                "line": 221.5,
+            },
+        ],
+        "nearest_miss": {
+            "sportsbook": "FanDuel",
+            "selection": "over",
+            "price": -108,
+            "line": 221.5,
+        },
+        "matched_quote_count": 2,
+    }
+
+
+def test_recommendation_endpoint_returns_empty_result_for_unmatched_line(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "spread",
+                "selection": "knicks",
+                "line": 6.5,
+                "target_price": -110,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["fillable"] is False
+    assert response.json()["best_quote"] is None
+    assert response.json()["nearest_miss"] is None
+    assert response.json()["ranked_quotes"] == []
+    assert response.json()["matched_quote_count"] == 0
+
+
+def test_recommendation_endpoint_validates_total_selection(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "total",
+                "selection": "knicks",
+                "line": 221.5,
+                "target_price": -110,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_recommendation_endpoint_validates_moneyline_line_omission(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "line": 1.5,
+                "target_price": 120,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_recommendation_endpoint_persists_order_intent_and_recommendation(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/execution/recommendation",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 200
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored_intent = session.execute(select(order_intents_table)).mappings().one()
+        stored_recommendation = (
+            session.execute(select(execution_recommendations_table)).mappings().one()
+        )
+        stored_events = (
+            session.execute(
+                select(workflow_events_table).order_by(workflow_events_table.c.occurred_at)
+            )
+            .mappings()
+            .all()
+        )
+
+    assert stored_intent["event_external_id"] == "nba-knicks-celtics-2026-04-11"
+    assert stored_intent["market_type"] == "moneyline"
+    assert stored_intent["selection"] == "knicks"
+    assert stored_intent["target_price"] == 121
+    assert stored_recommendation["fillable"] is True
+    assert stored_recommendation["matched_quote_count"] == 3
+    assert stored_recommendation["best_quote"]["sportsbook"] == "DraftKings"
+    assert len(stored_recommendation["ranked_quotes"]) == 3
+    assert [event["event_type"] for event in stored_events] == [
+        "OrderIntentSubmitted",
+        "ExecutionRecommendationGenerated",
+    ]
+    assert stored_events[0]["workflow_id"] == stored_intent["id"]
+    assert stored_events[1]["workflow_id"] == stored_intent["id"]
+    assert stored_events[1]["aggregate_id"] == stored_recommendation["id"]
+
+
+def test_sqlite_smoke_setup_populates_demo_quotes_for_local_convenience(
+    sqlite_database_url: str,
+) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=True)
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        history_count = session.execute(select(market_quotes_history_table.c.id)).all()
+
+    assert len(history_count) == 10
+
+
+def test_app_startup_does_not_create_schema(sqlite_database_url: str) -> None:
+    app = create_app(Settings(database_url_override=sqlite_database_url))
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+
+    inspector = inspect(DatabaseSessionFactory(sqlite_database_url).engine)
+    assert inspector.get_table_names() == []
+
+
+def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: str) -> None:
+    session_factory = prepare_test_database(sqlite_database_url, seed_demo=False)
+
+    inspector = inspect(session_factory.engine)
+
+    assert sorted(inspector.get_table_names()) == [
+        "alembic_version",
+        "event_participants",
+        "events",
+        "execution_recommendations",
+        "market_quotes_history",
+        "market_quotes_latest",
+        "markets",
+        "opportunities",
+        "order_intents",
+        "watch_intents",
+        "workflow_events",
+    ]
+
+
+def test_seed_demo_cli_populates_expected_quote_tables(
+    sqlite_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=False)
+    monkeypatch.setenv("DATABASE_URL_OVERRIDE", sqlite_database_url)
+
+    odds_db_seed_demo_main()
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        latest_count = session.execute(select(market_quotes_latest_table)).all()
+        history_count = session.execute(select(market_quotes_history_table)).all()
+        event_count = session.execute(select(events_table)).all()
+        market_count = session.execute(select(markets_table)).all()
+
+    assert len(latest_count) == 10
+    assert len(history_count) == 10
+    assert len(event_count) == 1
+    assert len(market_count) == 6
+
+
+def test_postgres_is_required_truth_path_for_persistence_correctness() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    session_factory = prepare_test_database(database_url, seed_demo=True, drop_existing=True)
+    app = create_app(Settings(database_url_override=database_url))
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/execution/recommendation",
+                json={
+                    "event_id": "nba-knicks-celtics-2026-04-11",
+                    "market_type": "moneyline",
+                    "selection": "knicks",
+                    "target_price": 121,
+                },
+            )
+
+        assert response.status_code == 200
+
+        with session_factory.create_session() as session:
+            stored_intent = session.execute(select(order_intents_table)).mappings().all()
+            stored_recommendations = session.execute(
+                select(execution_recommendations_table)
+            ).mappings().all()
+
+        assert len(stored_intent) == 1
+        assert len(stored_recommendations) == 1
+        assert stored_recommendations[0]["best_quote"]["sportsbook"] == "DraftKings"
+    finally:
+        truncate_application_tables(session_factory)
+
+
+def test_create_watch_intent_returns_201_and_persists(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["event_id"] == "nba-knicks-celtics-2026-04-11"
+    assert response.json()["market_type"] == "moneyline"
+    assert response.json()["status"] == "active"
+    assert response.json()["id"]
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored = session.execute(select(watch_intents_table)).mappings().one()
+        events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "WatchIntentCreated"
+            )
+        ).mappings().all()
+
+    assert stored["event_external_id"] == "nba-knicks-celtics-2026-04-11"
+    assert stored["status"] == "active"
+    assert len(events) == 1
+
+
+def test_create_watch_intent_validates_market_shape(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+                "line": 1.5,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_list_watch_intents_filters_by_event_id(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        response = client.get(
+            "/watch-intents",
+            params={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["watch_intents"]) == 1
+
+
+def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        watch_id = create_response.json()["id"]
+        cancel_response = client.delete(f"/watch-intents/{watch_id}")
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored = session.execute(
+            select(watch_intents_table).where(watch_intents_table.c.id == watch_id)
+        ).mappings().one()
+        cancel_events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "WatchIntentCancelled"
+            )
+        ).mappings().all()
+
+    assert stored["status"] == "cancelled"
+    assert len(cancel_events) == 1
+
+
+def test_cancel_nonexistent_watch_intent_returns_404(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.delete("/watch-intents/nonexistent-id")
+
+    assert response.status_code == 404
+
+
+def test_create_watch_intent_triggers_immediate_evaluation(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+
+    assert response.status_code == 201
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        opps = session.execute(select(opportunities_table)).mappings().all()
+        opp_events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "OpportunityIdentified"
+            )
+        ).mappings().all()
+
+    # Knicks moneyline has DraftKings@125 and FanDuel@125 both >= 121
+    assert len(opps) == 2
+    assert len(opp_events) == 2
+
+
+def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    with TestClient(app) as client:
+        client.post(
+            "/watch-intents",
+            json={
+                "event_id": "nba-knicks-celtics-2026-04-11",
+                "market_type": "moneyline",
+                "selection": "knicks",
+                "target_price": 121,
+            },
+        )
+        response = client.get(
+            "/opportunities",
+            params={"event_id": "nba-knicks-celtics-2026-04-11"},
+        )
+
+    assert response.status_code == 200
+    opps = response.json()["opportunities"]
+    assert len(opps) == 2
+    for opp in opps:
+        assert "is_valid" in opp
+        assert "invalid_reason" in opp
+
+
+def _build_test_app(database_url: str) -> FastAPI:
+    prepare_test_database(database_url, seed_demo=True)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
+    return create_app(settings)
+
+
+def _build_empty_test_app(database_url: str) -> FastAPI:
+    prepare_test_database(database_url, seed_demo=False)
+    settings = Settings(database_url_override=database_url, quote_provider="in_memory")
+    return create_app(settings)

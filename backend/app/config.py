@@ -10,12 +10,21 @@ class Settings(BaseSettings):
     app_env: Literal["development", "production"] = "development"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     postgres_db: str = "odds_execution"
     postgres_user: str = "app"
     postgres_password: SecretStr = SecretStr("app")
     postgres_host: str = "postgres"
     postgres_port: int = 5432
+    database_url_override: str | None = None
+    opportunity_ttl_minutes: int = 5
+
+    quote_provider: str = "in_memory"
+    odds_api_key: str = ""
+    odds_api_sports: str = "icehockey_nhl"
+    odds_api_regions: str = "us"
+    odds_api_markets: str = "h2h,spreads,totals"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -47,6 +56,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if self.database_url_override is not None:
+            return self.database_url_override
         return (
             "postgresql+psycopg://"
             f"{self.postgres_user}:{self.postgres_password.get_secret_value()}"
