@@ -43,3 +43,9 @@ build/
 
 # Claude memory compiler (has its own git repo)
 claude-memory-compiler/
+
+.claude/
+.codex/
+CLAUDE.md
+CLAUDE.*
+agents.md
