@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State Machines — OddsExecutionEngine</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+.flow-section {
+    margin: 32px auto;
+    max-width: 900px;
+    padding: 0 24px;
+}
+.flow-section h2 {
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+.flow-trigger {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+.state-diagram {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    overflow-x: auto;
+}
+.state-node {
+    cursor: pointer;
+}
+.state-node:hover rect, .state-node:hover circle {
+    stroke-width: 3;
+}
+.transition-line {
+    cursor: pointer;
+}
+.transition-line:hover {
+    stroke-width: 3 !important;
+}
+.detail-popup {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    box-shadow: var(--shadow-lg);
+    font-size: 13px;
+    max-width: 400px;
+    display: none;
+    z-index: 10;
+}
+.detail-popup h4 { margin-bottom: 6px; }
+.detail-popup .field { margin-bottom: 3px; }
+.detail-popup .field span { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<header>
+    <h1>State Machines</h1>
+    <nav>
+        <a href="index.html">Home</a>
+        <a href="system-map.html">System Map</a>
+        <a href="data-flow.html">Data Flow</a>
+        <a href="state-machines.html" class="active">State Machines</a>
+        <a href="issue-dashboard.html">Issues</a>
+        <button class="theme-toggle" onclick="toggleTheme()">&#9681;</button>
+    </nav>
+</header>
+
+<div class="flow-section">
+    <h2>Quote Ingestion Refresh</h2>
+    <div class="flow-trigger">Trigger: POST /ingestion/quotes/refresh with event_id</div>
+    <div class="state-diagram" id="diagram-ingestion"></div>
+</div>
+
+<div class="flow-section">
+    <h2>Execution Recommendation</h2>
+    <div class="flow-trigger">Trigger: POST /execution/recommendation with order intent details</div>
+    <div class="state-diagram" id="diagram-recommendation"></div>
+</div>
+
+<div class="detail-popup" id="detail-popup"></div>
+
+<script>
+const FLOWS = {
+    ingestion: {
+        states: [
+            { id: "start", label: "[start]", terminal: false },
+            { id: "provider_quotes_fetched", label: "provider_quotes_fetched", service: "QuoteIngestionService", terminal: false },
+            { id: "quotes_normalized", label: "quotes_normalized", service: "NormalizationEngine", terminal: false },
+            { id: "quotes_persisted", label: "quotes_persisted", service: "QuoteIngestionUoW", terminal: false },
+            { id: "events_published", label: "events_published", service: "LoggingPublisher", terminal: true }
+        ],
+        transitions: [
+            { from: "start", to: "provider_quotes_fetched", label: "Provider.list_quotes()", code_ref: "backend/app/application/quote_ingestion_service.py:48", reason: "Raw quotes retrieved from provider for the event" },
+            { from: "provider_quotes_fetched", to: "quotes_normalized", label: "NormalizationEngine.normalize()", code_ref: "backend/app/engines/normalization_engine.py:5", reason: "Invalid quotes filtered by event, selection, market rules" },
+            { from: "quotes_normalized", to: "quotes_persisted", label: "UoW.persist_quotes()", code_ref: "backend/app/infrastructure/persistence/quote_ingestion_uow.py:67", reason: "Quotes upserted to latest, appended to history, events staged" },
+            { from: "quotes_persisted", to: "events_published", label: "Publisher.publish()", code_ref: "backend/app/application/quote_ingestion_service.py:79", reason: "Workflow events published after successful DB commit" }
+        ]
+    },
+    recommendation: {
+        states: [
+            { id: "start", label: "[start]", terminal: false },
+            { id: "intent_persisted", label: "intent_persisted", service: "RecommendationUoW", terminal: false },
+            { id: "quotes_matched", label: "quotes_matched", service: "QuoteMatchingEngine", terminal: false },
+            { id: "recommendation_generated", label: "recommendation_generated", service: "RecommendationEngine", terminal: false },
+            { id: "events_published", label: "events_published", service: "LoggingPublisher", terminal: true }
+        ],
+        transitions: [
+            { from: "start", to: "intent_persisted", label: "UoW.create_order_intent()", code_ref: "backend/app/application/recommendation_service.py:49", reason: "Order intent persisted and OrderIntentSubmitted event staged" },
+            { from: "intent_persisted", to: "quotes_matched", label: "MatchingEngine.match()", code_ref: "backend/app/engines/quote_matching_engine.py:5", reason: "Available quotes filtered by event, market_type, selection, line" },
+            { from: "quotes_matched", to: "recommendation_generated", label: "RecEngine.generate()", code_ref: "backend/app/engines/recommendation_engine.py:12", reason: "Quotes ranked, fillability determined, best quote selected" },
+            { from: "recommendation_generated", to: "events_published", label: "Publisher.publish()", code_ref: "backend/app/application/recommendation_service.py:74", reason: "Workflow events published after successful DB commit" }
+        ]
+    }
+};
+
+function drawStateMachine(containerId, flow) {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("role", "img");
+    svg.innerHTML = '<title>State machine diagram</title>';
+
+    const stateW = 220, stateH = 40, gapY = 90, startX = 200, startY = 30;
+    const totalH = flow.states.length * gapY + 40;
+    svg.setAttribute("width", "620");
+    svg.setAttribute("height", totalH);
+
+    // Defs
+    const defs = document.createElementNS(svgNS, "defs");
+    defs.innerHTML = '<marker id="sm-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--accent)"/></marker>';
+    svg.appendChild(defs);
+
+    const statePositions = {};
+    flow.states.forEach((state, i) => {
+        const x = startX, y = startY + i * gapY;
+        statePositions[state.id] = { x, y };
+
+        const g = document.createElementNS(svgNS, "g");
+        g.setAttribute("class", "state-node");
+        g.addEventListener("click", () => showStateDetail(state));
+
+        if (state.id === "start") {
+            const circle = document.createElementNS(svgNS, "circle");
+            circle.setAttribute("cx", x + stateW/2); circle.setAttribute("cy", y + stateH/2);
+            circle.setAttribute("r", "12");
+            circle.setAttribute("fill", "var(--accent)");
+            circle.setAttribute("stroke", "var(--accent)");
+            g.appendChild(circle);
+        } else {
+            const rect = document.createElementNS(svgNS, "rect");
+            rect.setAttribute("x", x); rect.setAttribute("y", y);
+            rect.setAttribute("width", stateW); rect.setAttribute("height", stateH);
+            rect.setAttribute("rx", "20");
+            rect.setAttribute("fill", state.terminal ? "var(--bg-tertiary)" : "var(--bg-secondary)");
+            rect.setAttribute("stroke", state.terminal ? "var(--accent)" : "var(--border)");
+            rect.setAttribute("stroke-width", state.terminal ? "2.5" : "1.5");
+            g.appendChild(rect);
+
+            const text = document.createElementNS(svgNS, "text");
+            text.setAttribute("x", x + stateW/2); text.setAttribute("y", y + stateH/2 + 5);
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("font-size", "13"); text.setAttribute("font-weight", "500");
+            text.setAttribute("fill", "var(--text)");
+            text.textContent = state.label;
+            g.appendChild(text);
+        }
+        svg.appendChild(g);
+    });
+
+    // Transitions (arrows)
+    flow.transitions.forEach(t => {
+        const fromP = statePositions[t.from];
+        const toP = statePositions[t.to];
+        if (!fromP || !toP) return;
+
+        const x1 = fromP.x + stateW/2;
+        const y1 = t.from === "start" ? fromP.y + stateH/2 + 12 : fromP.y + stateH;
+        const x2 = toP.x + stateW/2;
+        const y2 = toP.y;
+
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke", "var(--accent)");
+        line.setAttribute("stroke-width", "1.5");
+        line.setAttribute("stroke-opacity", "0.6");
+        line.setAttribute("marker-end", "url(#sm-arrow)");
+        line.setAttribute("class", "transition-line");
+        line.addEventListener("click", () => showTransitionDetail(t));
+        svg.appendChild(line);
+
+        // Label
+        const mx = (x1+x2)/2 + 120, my = (y1+y2)/2;
+        const text = document.createElementNS(svgNS, "text");
+        text.setAttribute("x", mx); text.setAttribute("y", my + 4);
+        text.setAttribute("text-anchor", "start");
+        text.setAttribute("font-size", "11");
+        text.setAttribute("fill", "var(--text-secondary)");
+        text.textContent = t.label;
+        text.style.cursor = "pointer";
+        text.addEventListener("click", () => showTransitionDetail(t));
+        svg.appendChild(text);
+    });
+
+    document.getElementById(containerId).appendChild(svg);
+}
+
+function showStateDetail(state) {
+    if (state.id === "start") return;
+    const popup = document.getElementById("detail-popup");
+    popup.style.display = "block";
+    popup.innerHTML = `
+        <h4>${state.label}</h4>
+        <div class="field"><span>Service:</span> ${state.service || "—"}</div>
+        <div class="field"><span>Terminal:</span> ${state.terminal ? "Yes" : "No"}</div>
+    `;
+}
+
+function showTransitionDetail(t) {
+    const popup = document.getElementById("detail-popup");
+    popup.style.display = "block";
+    popup.innerHTML = `
+        <h4>${t.label}</h4>
+        <div class="field"><span>From:</span> ${t.from}</div>
+        <div class="field"><span>To:</span> ${t.to}</div>
+        <div class="field"><span>Reason:</span> ${t.reason}</div>
+        <div class="field"><span>Code:</span> <span class="code-ref" onclick="copyPath(this)">${t.code_ref}</span></div>
+    `;
+}
+
+function copyPath(el) {
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        const orig = el.textContent;
+        el.textContent = "Copied!";
+        setTimeout(() => el.textContent = orig, 1200);
+    });
+}
+
+function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : (current === 'light' ? 'dark' :
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark'));
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+}
+(function() {
+    const saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+// Close popup on click outside
+document.addEventListener("click", e => {
+    if (!e.target.closest(".state-node") && !e.target.closest(".transition-line") && !e.target.closest(".detail-popup")) {
+        document.getElementById("detail-popup").style.display = "none";
+    }
+});
+
+drawStateMachine("diagram-ingestion", FLOWS.ingestion);
+drawStateMachine("diagram-recommendation", FLOWS.recommendation);
+</script>
+</body>
+</html>

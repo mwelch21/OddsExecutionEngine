@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Map — OddsExecutionEngine</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+.page-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    height: calc(100vh - 57px);
+}
+.map-area {
+    overflow: auto;
+    padding: 24px;
+    position: relative;
+}
+.detail-panel {
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border);
+    padding: 20px;
+    overflow-y: auto;
+}
+.detail-panel h3 {
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+.detail-panel .pkg {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+.detail-panel section {
+    margin-bottom: 16px;
+}
+.detail-panel section h4 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.detail-panel ul {
+    list-style: none;
+    font-size: 13px;
+}
+.detail-panel li {
+    padding: 3px 0;
+}
+.empty-detail {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    font-size: 14px;
+    text-align: center;
+}
+svg text { font-family: var(--font-sans); }
+.svc-box { cursor: pointer; transition: opacity 0.15s; }
+.svc-box:hover { opacity: 0.85; }
+.svc-box.selected rect { stroke-width: 3; }
+@media print {
+    .page-layout { grid-template-columns: 1fr; }
+    .detail-panel { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>System Map</h1>
+    <nav>
+        <a href="index.html">Home</a>
+        <a href="system-map.html" class="active">System Map</a>
+        <a href="data-flow.html">Data Flow</a>
+        <a href="state-machines.html">State Machines</a>
+        <a href="issue-dashboard.html">Issues</a>
+        <button class="theme-toggle" onclick="toggleTheme()">&#9681;</button>
+    </nav>
+</header>
+
+<div class="page-layout">
+    <div class="map-area" id="map-area"></div>
+    <div class="detail-panel" id="detail-panel">
+        <div class="empty-detail">Click a service to see details</div>
+    </div>
+</div>
+
+<script>
+const SERVICES = [
+    { id: "quote-ingestion-service", name: "QuoteIngestionService", role: "Orchestrates provider fetch, normalization, persistence, and event publishing", entry_point: "backend/app/application/quote_ingestion_service.py:refresh_quotes()", package: "backend/app/application", states_owned: ["provider_quotes_fetched", "events_published"], flows: ["Quote ingestion refresh"], issues: [{severity:"moderate",desc:"No retry on provider fetch"},{severity:"moderate",desc:"No idempotency on history append"}] },
+    { id: "in-memory-quote-provider", name: "InMemoryQuoteProvider", role: "Supplies raw quotes for the given event from fixture data", entry_point: "backend/app/infrastructure/quote_provider.py:list_quotes()", package: "backend/app/infrastructure", states_owned: [], flows: ["Quote ingestion refresh"], issues: [{severity:"low",desc:"Hardcoded fixture data"}] },
+    { id: "normalization-engine", name: "NormalizationEngine", role: "Filters invalid quotes and enforces canonical shape", entry_point: "backend/app/engines/normalization_engine.py:normalize_quotes()", package: "backend/app/engines", states_owned: ["quotes_normalized"], flows: ["Quote ingestion refresh"], issues: [{severity:"low",desc:"No staleness check on quotes"}] },
+    { id: "quote-ingestion-uow", name: "SqlAlchemyQuoteIngestionUoW", role: "Persists quotes and workflow events in a single transaction", entry_point: "backend/app/infrastructure/persistence/quote_ingestion_uow.py:persist_quotes()", package: "backend/app/infrastructure/persistence", states_owned: ["quotes_persisted"], flows: ["Quote ingestion refresh"], issues: [{severity:"moderate",desc:"No lock on concurrent market upsert"}] },
+    { id: "recommendation-service", name: "RecommendationService", role: "Orchestrates intent persistence, quote matching, recommendation generation, and event publishing", entry_point: "backend/app/application/recommendation_service.py:recommend()", package: "backend/app/application", states_owned: ["intent_persisted", "events_published"], flows: ["Execution recommendation"], issues: [{severity:"moderate",desc:"Quotes may be stale — no freshness check"}] },
+    { id: "recommendation-uow", name: "SqlAlchemyRecommendationUoW", role: "Persists order intent, reads quotes, persists recommendation, stages events", entry_point: "backend/app/infrastructure/persistence/recommendation_uow.py", package: "backend/app/infrastructure/persistence", states_owned: ["intent_persisted", "recommendation_generated"], flows: ["Execution recommendation"], issues: [{severity:"low",desc:"All quotes loaded then filtered in-memory"}] },
+    { id: "quote-matching-engine", name: "QuoteMatchingEngine", role: "Filters quotes to those matching the order intent criteria", entry_point: "backend/app/engines/quote_matching_engine.py:match_quotes()", package: "backend/app/engines", states_owned: ["quotes_matched"], flows: ["Execution recommendation"], issues: [] },
+    { id: "recommendation-engine", name: "RecommendationEngine", role: "Ranks matched quotes, determines fillability, selects best/nearest-miss", entry_point: "backend/app/engines/recommendation_engine.py:generate_recommendation()", package: "backend/app/engines", states_owned: ["recommendation_generated"], flows: ["Execution recommendation"], issues: [] },
+    { id: "price-comparison-service", name: "PriceComparisonService", role: "Evaluates whether a quote price meets the target threshold", entry_point: "backend/app/engines/price_comparison_engine.py:is_price_fillable()", package: "backend/app/engines", states_owned: [], flows: ["Execution recommendation"], issues: [] },
+    { id: "logging-publisher", name: "LoggingWorkflowEventPublisher", role: "Publishes workflow events after commit (logging-only, no external bus)", entry_point: "backend/app/infrastructure/publishers/logging_publisher.py:publish()", package: "backend/app/infrastructure/publishers", states_owned: [], flows: ["Quote ingestion refresh", "Execution recommendation"], issues: [] }
+];
+
+const EDGES = [
+    { from: "quote-ingestion-service", to: "in-memory-quote-provider", label: "event_id", method: "function_call" },
+    { from: "quote-ingestion-service", to: "normalization-engine", label: "list[Quote]", method: "function_call" },
+    { from: "quote-ingestion-service", to: "quote-ingestion-uow", label: "list[Quote]", method: "function_call" },
+    { from: "quote-ingestion-service", to: "logging-publisher", label: "WorkflowEvent[]", method: "function_call" },
+    { from: "recommendation-service", to: "recommendation-uow", label: "OrderIntent", method: "function_call" },
+    { from: "recommendation-service", to: "quote-matching-engine", label: "Intent+Quotes", method: "function_call" },
+    { from: "recommendation-service", to: "recommendation-engine", label: "Intent+Quotes", method: "function_call" },
+    { from: "recommendation-service", to: "logging-publisher", label: "WorkflowEvent[]", method: "function_call" }
+];
+
+// Layout: manual grid positions
+const POSITIONS = {
+    "quote-ingestion-service": { x: 80, y: 60 },
+    "in-memory-quote-provider": { x: 80, y: 220 },
+    "normalization-engine": { x: 320, y: 220 },
+    "quote-ingestion-uow": { x: 560, y: 220 },
+    "logging-publisher": { x: 420, y: 400 },
+    "recommendation-service": { x: 700, y: 60 },
+    "recommendation-uow": { x: 700, y: 220 },
+    "quote-matching-engine": { x: 900, y: 220 },
+    "recommendation-engine": { x: 900, y: 340 },
+    "price-comparison-service": { x: 1080, y: 340 }
+};
+
+const BOX_W = 200, BOX_H = 70;
+
+function getIssueSeverity(svc) {
+    if (svc.issues.some(i => i.severity === "critical")) return "critical";
+    if (svc.issues.some(i => i.severity === "moderate")) return "moderate";
+    if (svc.issues.length > 0) return "low";
+    return "clean";
+}
+
+function severityColor(sev) {
+    const colors = { critical: "#dc2626", moderate: "#d97706", low: "#16a34a", clean: "#4b5563" };
+    return colors[sev] || colors.clean;
+}
+
+function buildSVG() {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("width", "1320");
+    svg.setAttribute("height", "520");
+    svg.setAttribute("role", "img");
+    svg.innerHTML = '<title>OddsExecutionEngine System Map</title>';
+
+    // Arrowhead marker
+    const defs = document.createElementNS(svgNS, "defs");
+    defs.innerHTML = '<marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--text-secondary)"/></marker>';
+    svg.appendChild(defs);
+
+    // Draw edges
+    EDGES.forEach(edge => {
+        const from = POSITIONS[edge.from];
+        const to = POSITIONS[edge.to];
+        if (!from || !to) return;
+        const x1 = from.x + BOX_W/2, y1 = from.y + BOX_H/2;
+        const x2 = to.x + BOX_W/2, y2 = to.y + BOX_H/2;
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke", "var(--border)");
+        line.setAttribute("stroke-width", "1.5");
+        line.setAttribute("marker-end", "url(#arrow)");
+        svg.appendChild(line);
+
+        // Edge label
+        const mx = (x1+x2)/2, my = (y1+y2)/2;
+        const text = document.createElementNS(svgNS, "text");
+        text.setAttribute("x", mx); text.setAttribute("y", my - 6);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "10");
+        text.setAttribute("fill", "var(--text-secondary)");
+        text.textContent = edge.label;
+        svg.appendChild(text);
+    });
+
+    // Draw service boxes
+    SERVICES.forEach(svc => {
+        const pos = POSITIONS[svc.id];
+        if (!pos) return;
+        const sev = getIssueSeverity(svc);
+        const g = document.createElementNS(svgNS, "g");
+        g.setAttribute("class", "svc-box");
+        g.setAttribute("data-id", svc.id);
+        g.setAttribute("tabindex", "0");
+        g.setAttribute("role", "button");
+        g.setAttribute("aria-label", svc.name);
+
+        const rect = document.createElementNS(svgNS, "rect");
+        rect.setAttribute("x", pos.x); rect.setAttribute("y", pos.y);
+        rect.setAttribute("width", BOX_W); rect.setAttribute("height", BOX_H);
+        rect.setAttribute("rx", "6");
+        rect.setAttribute("fill", "var(--bg-secondary)");
+        rect.setAttribute("stroke", severityColor(sev));
+        rect.setAttribute("stroke-width", "2");
+        g.appendChild(rect);
+
+        const title = document.createElementNS(svgNS, "text");
+        title.setAttribute("x", pos.x + 10); title.setAttribute("y", pos.y + 24);
+        title.setAttribute("font-size", "13"); title.setAttribute("font-weight", "600");
+        title.setAttribute("fill", "var(--text)");
+        title.textContent = svc.name.length > 22 ? svc.name.slice(0,20)+"..." : svc.name;
+        g.appendChild(title);
+
+        const sub = document.createElementNS(svgNS, "text");
+        sub.setAttribute("x", pos.x + 10); sub.setAttribute("y", pos.y + 44);
+        sub.setAttribute("font-size", "10");
+        sub.setAttribute("fill", "var(--text-secondary)");
+        sub.textContent = svc.package.replace("backend/app/","");
+        g.appendChild(sub);
+
+        // Issue indicator
+        if (svc.issues.length > 0) {
+            const circle = document.createElementNS(svgNS, "circle");
+            circle.setAttribute("cx", pos.x + BOX_W - 14);
+            circle.setAttribute("cy", pos.y + 14);
+            circle.setAttribute("r", "8");
+            circle.setAttribute("fill", severityColor(sev));
+            g.appendChild(circle);
+            const num = document.createElementNS(svgNS, "text");
+            num.setAttribute("x", pos.x + BOX_W - 14);
+            num.setAttribute("y", pos.y + 18);
+            num.setAttribute("text-anchor", "middle");
+            num.setAttribute("font-size", "10"); num.setAttribute("font-weight", "700");
+            num.setAttribute("fill", "#fff");
+            num.textContent = svc.issues.length;
+            g.appendChild(num);
+        }
+
+        g.addEventListener("click", () => selectService(svc.id));
+        g.addEventListener("keydown", e => { if(e.key==="Enter") selectService(svc.id); });
+        svg.appendChild(g);
+    });
+
+    document.getElementById("map-area").appendChild(svg);
+}
+
+function selectService(id) {
+    const svc = SERVICES.find(s => s.id === id);
+    if (!svc) return;
+    document.querySelectorAll(".svc-box").forEach(g => g.classList.remove("selected"));
+    document.querySelector(`.svc-box[data-id="${id}"]`)?.classList.add("selected");
+
+    const panel = document.getElementById("detail-panel");
+    panel.innerHTML = `
+        <h3>${svc.name}</h3>
+        <div class="pkg">${svc.package}</div>
+        <section><h4>Role</h4><p style="font-size:13px">${svc.role}</p></section>
+        <section><h4>Entry Point</h4><span class="code-ref" onclick="copyPath(this)">${svc.entry_point}</span></section>
+        <section><h4>States Owned</h4><ul>${svc.states_owned.length ? svc.states_owned.map(s=>`<li>${s}</li>`).join("") : "<li>None</li>"}</ul></section>
+        <section><h4>Flows</h4><ul>${svc.flows.map(f=>`<li>${f}</li>`).join("")}</ul></section>
+        <section><h4>Issues (${svc.issues.length})</h4><ul>${svc.issues.length ? svc.issues.map(i=>`<li><span class="badge badge-${i.severity}">${i.severity}</span> ${i.desc}</li>`).join("") : "<li style='color:var(--low)'>No issues</li>"}</ul></section>
+    `;
+}
+
+function copyPath(el) {
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        const orig = el.textContent;
+        el.textContent = "Copied!";
+        setTimeout(() => el.textContent = orig, 1200);
+    });
+}
+
+function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : (current === 'light' ? 'dark' :
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark'));
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+}
+(function() {
+    const saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+buildSVG();
+</script>
+</body>
+</html>

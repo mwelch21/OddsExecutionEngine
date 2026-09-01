@@ -1,0 +1,194 @@
+{
+  "id": "execution-recommendation",
+  "name": "Execution recommendation",
+  "last_updated": "2026-08-25",
+  "updated_by": "claude-code",
+  "trigger": "POST /execution/recommendation with order intent details",
+
+  "services": [
+    {
+      "id": "recommendation-service",
+      "name": "RecommendationService",
+      "role": "Orchestrates intent persistence, quote matching, recommendation generation, and event publishing",
+      "entry_point": "backend/app/application/recommendation_service.py:recommend()",
+      "package": "backend/app/application",
+      "states_owned": ["intent_persisted", "events_published"]
+    },
+    {
+      "id": "recommendation-uow",
+      "name": "SqlAlchemyRecommendationUnitOfWork",
+      "role": "Persists order intent, reads quotes, persists recommendation, stages events",
+      "entry_point": "backend/app/infrastructure/persistence/recommendation_uow.py",
+      "package": "backend/app/infrastructure/persistence",
+      "states_owned": ["intent_persisted", "recommendation_generated"]
+    },
+    {
+      "id": "quote-matching-engine",
+      "name": "QuoteMatchingEngine",
+      "role": "Filters quotes to those matching the order intent criteria",
+      "entry_point": "backend/app/engines/quote_matching_engine.py:match_quotes()",
+      "package": "backend/app/engines",
+      "states_owned": ["quotes_matched"]
+    },
+    {
+      "id": "recommendation-engine",
+      "name": "RecommendationEngine",
+      "role": "Ranks matched quotes, determines fillability, selects best/nearest-miss",
+      "entry_point": "backend/app/engines/recommendation_engine.py:generate_recommendation()",
+      "package": "backend/app/engines",
+      "states_owned": ["recommendation_generated"]
+    },
+    {
+      "id": "price-comparison-service",
+      "name": "PriceComparisonService",
+      "role": "Evaluates whether a quote price meets the target threshold",
+      "entry_point": "backend/app/engines/price_comparison_engine.py:is_price_fillable()",
+      "package": "backend/app/engines",
+      "states_owned": []
+    },
+    {
+      "id": "logging-publisher",
+      "name": "LoggingWorkflowEventPublisher",
+      "role": "Publishes workflow events after commit",
+      "entry_point": "backend/app/infrastructure/publishers/logging_publisher.py:publish()",
+      "package": "backend/app/infrastructure/publishers",
+      "states_owned": []
+    }
+  ],
+
+  "edges": [
+    {
+      "from": "recommendation-service",
+      "to": "recommendation-uow",
+      "data_type": "OrderIntent",
+      "description": "Persist the order intent",
+      "method": "function_call"
+    },
+    {
+      "from": "recommendation-uow",
+      "to": "recommendation-service",
+      "data_type": "list[Quote]",
+      "description": "Available quotes for the event from market_quotes_latest",
+      "method": "function_call"
+    },
+    {
+      "from": "recommendation-service",
+      "to": "quote-matching-engine",
+      "data_type": "OrderIntent, list[Quote]",
+      "description": "Intent and available quotes for filtering",
+      "method": "function_call"
+    },
+    {
+      "from": "quote-matching-engine",
+      "to": "recommendation-service",
+      "data_type": "list[Quote]",
+      "description": "Quotes matching intent criteria",
+      "method": "function_call"
+    },
+    {
+      "from": "recommendation-service",
+      "to": "recommendation-engine",
+      "data_type": "OrderIntent, list[Quote]",
+      "description": "Intent and matched quotes for ranking",
+      "method": "function_call"
+    },
+    {
+      "from": "recommendation-engine",
+      "to": "recommendation-service",
+      "data_type": "ExecutionRecommendation",
+      "description": "Final recommendation with fillability and ranked quotes",
+      "method": "function_call"
+    },
+    {
+      "from": "recommendation-service",
+      "to": "logging-publisher",
+      "data_type": "tuple[WorkflowEvent]",
+      "description": "Committed workflow events for publishing",
+      "method": "function_call"
+    }
+  ],
+
+  "transitions": [
+    {
+      "step": 1,
+      "from_state": null,
+      "to_state": "intent_persisted",
+      "service": "recommendation-uow",
+      "code_ref": "backend/app/application/recommendation_service.py:49",
+      "description": "Order intent persisted and OrderIntentSubmitted event staged"
+    },
+    {
+      "step": 2,
+      "from_state": "intent_persisted",
+      "to_state": "quotes_matched",
+      "service": "quote-matching-engine",
+      "code_ref": "backend/app/engines/quote_matching_engine.py:5",
+      "description": "Available quotes filtered by event, market_type, selection, line"
+    },
+    {
+      "step": 3,
+      "from_state": "quotes_matched",
+      "to_state": "recommendation_generated",
+      "service": "recommendation-engine",
+      "code_ref": "backend/app/engines/recommendation_engine.py:12",
+      "description": "Quotes ranked, fillability determined, best quote selected"
+    },
+    {
+      "step": 4,
+      "from_state": "recommendation_generated",
+      "to_state": "events_published",
+      "service": "logging-publisher",
+      "code_ref": "backend/app/application/recommendation_service.py:74",
+      "description": "Workflow events published after successful DB commit"
+    }
+  ],
+
+  "decisions": [
+    {
+      "title": "Persist and publish after commit",
+      "doc": "docs/flows/_decisions/2026-08-25-persist-and-publish-after-commit.md",
+      "date": "2026-08-25"
+    }
+  ],
+
+  "issues": [
+    {
+      "id": "ISSUE-001",
+      "severity": "moderate",
+      "category": "stale data",
+      "description": "Quotes read from DB may be arbitrarily stale — no freshness check",
+      "status": "open",
+      "code_ref": "backend/app/infrastructure/persistence/recommendation_uow.py:80-98",
+      "decision_ref": null
+    },
+    {
+      "id": "ISSUE-002",
+      "severity": "low",
+      "category": "performance",
+      "description": "All quotes for event loaded then filtered in-memory",
+      "status": "open",
+      "code_ref": "backend/app/infrastructure/persistence/recommendation_uow.py:80-98",
+      "decision_ref": null
+    }
+  ],
+
+  "deeplinks": {
+    "models": [
+      { "name": "OrderIntent", "path": "backend/app/domain/models.py" },
+      { "name": "ExecutionRecommendation", "path": "backend/app/domain/models.py" },
+      { "name": "Quote", "path": "backend/app/domain/models.py" }
+    ],
+    "logic": [
+      { "name": "Recommendation orchestration", "path": "backend/app/application/recommendation_service.py:32-97" },
+      { "name": "Quote matching", "path": "backend/app/engines/quote_matching_engine.py:5-13" },
+      { "name": "Ranking and fillability", "path": "backend/app/engines/recommendation_engine.py:9-44" }
+    ],
+    "tests": [
+      { "name": "test_engines", "path": "backend/tests/test_engines.py" },
+      { "name": "test_events", "path": "backend/tests/test_events.py" }
+    ],
+    "endpoints": [
+      { "name": "POST /execution/recommendation", "path": "backend/app/api/recommendation_router.py" }
+    ]
+  }
+}

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Flow — OddsExecutionEngine</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+.controls {
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.controls label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.flow-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.flow-btn:hover { border-color: var(--accent); }
+.flow-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.canvas {
+    padding: 32px;
+    overflow: auto;
+    height: calc(100vh - 57px - 49px);
+}
+.edge-detail {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    max-width: 380px;
+    box-shadow: var(--shadow-lg);
+    font-size: 13px;
+    display: none;
+    z-index: 10;
+}
+.edge-detail h4 { margin-bottom: 8px; font-size: 15px; }
+.edge-detail .field { margin-bottom: 5px; }
+.edge-detail .field-label { color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+.edge-detail .field-value { margin-top: 1px; }
+.edge-detail .close-btn {
+    position: absolute; top: 8px; right: 10px;
+    background: none; border: none; color: var(--text-secondary);
+    font-size: 18px; cursor: pointer;
+}
+
+@keyframes dash-flow {
+    to { stroke-dashoffset: -24; }
+}
+.flow-path {
+    fill: none;
+    stroke-dasharray: 10 14;
+    animation: dash-flow 1.2s linear infinite;
+    cursor: pointer;
+    transition: stroke-opacity 0.2s, stroke-width 0.2s;
+}
+.flow-path:hover {
+    stroke-opacity: 1 !important;
+    stroke-width: 3.5 !important;
+}
+
+.legend {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 12px;
+}
+.legend-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.legend-swatch {
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+}
+.step-sequence {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>Data Flow</h1>
+    <nav>
+        <a href="index.html">Home</a>
+        <a href="system-map.html">System Map</a>
+        <a href="data-flow.html" class="active">Data Flow</a>
+        <a href="state-machines.html">State Machines</a>
+        <a href="issue-dashboard.html">Issues</a>
+        <button class="theme-toggle" onclick="toggleTheme()">&#9681;</button>
+    </nav>
+</header>
+
+<div class="controls">
+    <label>Show flow:</label>
+    <button class="flow-btn active" data-flow="all" onclick="setFlow('all')">All Flows</button>
+    <button class="flow-btn" data-flow="ingestion" onclick="setFlow('ingestion')">Quote Ingestion</button>
+    <button class="flow-btn" data-flow="recommendation" onclick="setFlow('recommendation')">Execution Recommendation</button>
+</div>
+
+<div class="canvas" id="canvas"></div>
+<div class="edge-detail" id="edge-detail"></div>
+
+<script>
+const FLOW_COLORS = {
+    ingestion: "#3b82f6",
+    recommendation: "#a855f7"
+};
+
+// Nodes with wider spacing
+const NODES = {
+    ingestion: [
+        { id: "qi-router",    label: "QuoteIngestionRouter",    x: 40,  y: 40,  w: 210, h: 56 },
+        { id: "qi-service",   label: "QuoteIngestionService",   x: 340, y: 40,  w: 220, h: 56 },
+        { id: "provider",     label: "InMemoryQuoteProvider",   x: 40,  y: 200, w: 210, h: 56 },
+        { id: "normalizer",   label: "NormalizationEngine",     x: 340, y: 200, w: 210, h: 56 },
+        { id: "qi-uow",      label: "QuoteIngestionUoW",       x: 640, y: 200, w: 200, h: 56 },
+        { id: "publisher-qi", label: "LoggingPublisher",        x: 400, y: 380, w: 200, h: 56 }
+    ],
+    recommendation: [
+        { id: "rec-router",  label: "RecommendationRouter",     x: 40,  y: 40,  w: 220, h: 56 },
+        { id: "rec-service", label: "RecommendationService",    x: 340, y: 40,  w: 230, h: 56 },
+        { id: "rec-uow",    label: "RecommendationUoW",        x: 40,  y: 200, w: 210, h: 56 },
+        { id: "matcher",    label: "QuoteMatchingEngine",       x: 340, y: 200, w: 210, h: 56 },
+        { id: "ranker",     label: "RecommendationEngine",      x: 640, y: 200, w: 210, h: 56 },
+        { id: "publisher-r", label: "LoggingPublisher",         x: 400, y: 380, w: 200, h: 56 }
+    ]
+};
+
+// Edges are now sequential steps with direction, data type, and WHY
+const STEPS = {
+    ingestion: [
+        { step: 1, from: "qi-router",  to: "qi-service", dataType: "event_id",                 why: "HTTP request triggers refresh workflow",           curveDir: 0 },
+        { step: 2, from: "qi-service", to: "provider",   dataType: "event_id",                  why: "Fetch raw quotes from provider for this event",    curveDir: -30 },
+        { step: 3, from: "provider",   to: "qi-service", dataType: "list[Quote]",                why: "Return raw sportsbook quotes",                     curveDir: -30 },
+        { step: 4, from: "qi-service", to: "normalizer", dataType: "event_id + list[Quote]",     why: "Filter invalid quotes, enforce canonical shape",   curveDir: -30 },
+        { step: 5, from: "normalizer", to: "qi-service", dataType: "list[Quote]",                why: "Return only valid canonical quotes",               curveDir: -30 },
+        { step: 6, from: "qi-service", to: "qi-uow",     dataType: "list[Quote]",                why: "Persist to latest + history tables in one txn",    curveDir: -40 },
+        { step: 7, from: "qi-uow",    to: "qi-service",  dataType: "QuoteRefreshPersistenceResult", why: "Return counts: markets created, rows upserted", curveDir: -40 },
+        { step: 8, from: "qi-service", to: "publisher-qi", dataType: "tuple[WorkflowEvent]",     why: "Publish events only after DB commit succeeds",     curveDir: 0 }
+    ],
+    recommendation: [
+        { step: 1, from: "rec-router", to: "rec-service", dataType: "OrderIntent",              why: "HTTP request triggers recommendation workflow",     curveDir: 0 },
+        { step: 2, from: "rec-service", to: "rec-uow",   dataType: "OrderIntent",               why: "Persist intent, stage OrderIntentSubmitted event",  curveDir: -30 },
+        { step: 3, from: "rec-uow",   to: "rec-service", dataType: "order_intent_id + list[Quote]", why: "Return ID + latest quotes for this event",     curveDir: -30 },
+        { step: 4, from: "rec-service", to: "matcher",   dataType: "OrderIntent + list[Quote]",  why: "Filter quotes matching market_type, selection, line", curveDir: -30 },
+        { step: 5, from: "matcher",   to: "rec-service", dataType: "list[Quote]",                why: "Return only quotes matching intent criteria",      curveDir: -30 },
+        { step: 6, from: "rec-service", to: "ranker",    dataType: "OrderIntent + list[Quote]",  why: "Rank by price, evaluate fillability vs target",    curveDir: -40 },
+        { step: 7, from: "ranker",    to: "rec-service", dataType: "ExecutionRecommendation",    why: "Return fillable flag, best_quote, nearest_miss",   curveDir: -40 },
+        { step: 8, from: "rec-service", to: "publisher-r", dataType: "tuple[WorkflowEvent]",     why: "Publish events only after DB commit succeeds",     curveDir: 0 }
+    ]
+};
+
+let currentFlow = "all";
+
+function setFlow(flow) {
+    currentFlow = flow;
+    document.querySelectorAll(".flow-btn").forEach(b => b.classList.toggle("active", b.dataset.flow === flow));
+    document.getElementById("edge-detail").style.display = "none";
+    render();
+}
+
+function getNodeById(flowKey, nodeId) {
+    return NODES[flowKey].find(n => n.id === nodeId);
+}
+
+function anchorPoint(node, otherNode) {
+    // Return the edge center closest to the other node
+    const cx = node.x + node.w/2, cy = node.y + node.h/2;
+    const ox = otherNode.x + otherNode.w/2, oy = otherNode.y + otherNode.h/2;
+    const dx = ox - cx, dy = oy - cy;
+    const absDx = Math.abs(dx), absDy = Math.abs(dy);
+
+    if (absDx / node.w > absDy / node.h) {
+        // Connect via left/right
+        return dx > 0
+            ? { x: node.x + node.w, y: cy }
+            : { x: node.x, y: cy };
+    } else {
+        // Connect via top/bottom
+        return dy > 0
+            ? { x: cx, y: node.y + node.h }
+            : { x: cx, y: node.y };
+    }
+}
+
+function buildCurvedPath(fromNode, toNode, curveOffset) {
+    const p1 = anchorPoint(fromNode, toNode);
+    const p2 = anchorPoint(toNode, fromNode);
+
+    // Perpendicular offset for curve control point
+    const mx = (p1.x + p2.x) / 2;
+    const my = (p1.y + p2.y) / 2;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    // Perpendicular normal
+    const nx = -dy / len;
+    const ny = dx / len;
+    const cpx = mx + nx * curveOffset;
+    const cpy = my + ny * curveOffset;
+
+    return { path: `M ${p1.x} ${p1.y} Q ${cpx} ${cpy} ${p2.x} ${p2.y}`, cpx, cpy, mx, my, p1, p2 };
+}
+
+function render() {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const container = document.getElementById("canvas");
+    container.innerHTML = "";
+    container.style.position = "relative";
+
+    const flowsToShow = currentFlow === "all" ? ["ingestion", "recommendation"] : [currentFlow];
+    const isAll = currentFlow === "all";
+
+    // For "all" mode, offset recommendation to the right
+    const REC_OFFSET_X = isAll ? 920 : 0;
+
+    flowsToShow.forEach(flowKey => {
+        const offsetX = flowKey === "recommendation" ? REC_OFFSET_X : 0;
+        const nodes = NODES[flowKey];
+        const steps = STEPS[flowKey];
+        const color = FLOW_COLORS[flowKey];
+
+        const svgW = isAll ? 1800 : 900;
+        const svgH = 480;
+
+        // Reuse a single SVG for "all" or create per-flow
+        let svg = container.querySelector("svg");
+        if (!svg) {
+            svg = document.createElementNS(svgNS, "svg");
+            svg.setAttribute("width", svgW);
+            svg.setAttribute("height", svgH);
+            svg.setAttribute("role", "img");
+            svg.innerHTML = '<title>Data Flow Diagram</title>';
+
+            // Arrowhead markers
+            const defs = document.createElementNS(svgNS, "defs");
+            defs.innerHTML = `
+                <marker id="arr-ing" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                    <polygon points="0 0,10 4,0 8" fill="${FLOW_COLORS.ingestion}"/>
+                </marker>
+                <marker id="arr-rec" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                    <polygon points="0 0,10 4,0 8" fill="${FLOW_COLORS.recommendation}"/>
+                </marker>
+            `;
+            svg.appendChild(defs);
+            container.appendChild(svg);
+        }
+
+        // Flow label
+        if (isAll) {
+            const flowLabel = document.createElementNS(svgNS, "text");
+            flowLabel.setAttribute("x", offsetX + 40);
+            flowLabel.setAttribute("y", 24);
+            flowLabel.setAttribute("font-size", "14");
+            flowLabel.setAttribute("font-weight", "600");
+            flowLabel.setAttribute("fill", color);
+            flowLabel.textContent = flowKey === "ingestion" ? "Quote Ingestion Flow" : "Execution Recommendation Flow";
+            svg.appendChild(flowLabel);
+        }
+
+        // Draw edges FIRST (below nodes)
+        steps.forEach((step) => {
+            const fromN = nodes.find(n => n.id === step.from);
+            const toN = nodes.find(n => n.id === step.to);
+            if (!fromN || !toN) return;
+
+            // Apply offset
+            const fNode = { ...fromN, x: fromN.x + offsetX };
+            const tNode = { ...toN, x: toN.x + offsetX };
+
+            const curve = buildCurvedPath(fNode, tNode, step.curveDir);
+            const markerId = flowKey === "ingestion" ? "url(#arr-ing)" : "url(#arr-rec)";
+
+            // The path
+            const path = document.createElementNS(svgNS, "path");
+            path.setAttribute("d", curve.path);
+            path.setAttribute("stroke", color);
+            path.setAttribute("stroke-width", "2.5");
+            path.setAttribute("stroke-opacity", "0.65");
+            path.setAttribute("marker-end", markerId);
+            path.setAttribute("class", "flow-path");
+            path.style.cursor = "pointer";
+            path.addEventListener("click", () => showEdgeDetail(step, flowKey));
+            svg.appendChild(path);
+
+            // Step number badge
+            const badgeX = curve.cpx || curve.mx;
+            const badgeY = curve.cpy || curve.my;
+            const badge = document.createElementNS(svgNS, "circle");
+            badge.setAttribute("cx", badgeX);
+            badge.setAttribute("cy", badgeY);
+            badge.setAttribute("r", "11");
+            badge.setAttribute("fill", color);
+            badge.setAttribute("stroke", "var(--bg)");
+            badge.setAttribute("stroke-width", "2");
+            badge.style.cursor = "pointer";
+            badge.addEventListener("click", () => showEdgeDetail(step, flowKey));
+            svg.appendChild(badge);
+
+            const stepNum = document.createElementNS(svgNS, "text");
+            stepNum.setAttribute("x", badgeX);
+            stepNum.setAttribute("y", badgeY + 4);
+            stepNum.setAttribute("text-anchor", "middle");
+            stepNum.setAttribute("font-size", "10");
+            stepNum.setAttribute("font-weight", "700");
+            stepNum.setAttribute("fill", "#fff");
+            stepNum.style.pointerEvents = "none";
+            stepNum.textContent = step.step;
+            svg.appendChild(stepNum);
+
+            // Data type label along the curve
+            const labelOffset = step.curveDir < 0 ? -16 : 16;
+            const labelX = curve.cpx || curve.mx;
+            const labelY = (curve.cpy || curve.my) + labelOffset + (step.curveDir === 0 ? -18 : 0);
+            const dataLabel = document.createElementNS(svgNS, "text");
+            dataLabel.setAttribute("x", labelX);
+            dataLabel.setAttribute("y", labelY);
+            dataLabel.setAttribute("text-anchor", "middle");
+            dataLabel.setAttribute("font-size", "10");
+            dataLabel.setAttribute("fill", "var(--text-secondary)");
+            dataLabel.style.pointerEvents = "none";
+            dataLabel.textContent = step.dataType;
+            svg.appendChild(dataLabel);
+        });
+
+        // Draw nodes ON TOP
+        nodes.forEach(node => {
+            const nx = node.x + offsetX;
+            const g = document.createElementNS(svgNS, "g");
+
+            const rect = document.createElementNS(svgNS, "rect");
+            rect.setAttribute("x", nx);
+            rect.setAttribute("y", node.y);
+            rect.setAttribute("width", node.w);
+            rect.setAttribute("height", node.h);
+            rect.setAttribute("rx", "8");
+            rect.setAttribute("fill", "var(--bg-secondary)");
+            rect.setAttribute("stroke", "var(--border)");
+            rect.setAttribute("stroke-width", "1.5");
+            g.appendChild(rect);
+
+            const text = document.createElementNS(svgNS, "text");
+            text.setAttribute("x", nx + node.w/2);
+            text.setAttribute("y", node.y + node.h/2 + 5);
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("font-size", "13");
+            text.setAttribute("font-weight", "500");
+            text.setAttribute("fill", "var(--text)");
+            text.textContent = node.label;
+            g.appendChild(text);
+
+            svg.appendChild(g);
+        });
+    });
+
+    // Legend
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    legend.innerHTML = `
+        <div class="legend-title">Flows</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:${FLOW_COLORS.ingestion}"></div>Quote Ingestion</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:${FLOW_COLORS.recommendation}"></div>Execution Recommendation</div>
+        <div class="step-sequence">
+            Numbered badges show execution order.<br>
+            Click any edge or badge for details.
+        </div>
+    `;
+    container.appendChild(legend);
+}
+
+function showEdgeDetail(step, flowKey) {
+    const nodes = NODES[flowKey];
+    const fromN = nodes.find(n => n.id === step.from);
+    const toN = nodes.find(n => n.id === step.to);
+    const color = FLOW_COLORS[flowKey];
+    const flowName = flowKey === "ingestion" ? "Quote Ingestion" : "Execution Recommendation";
+
+    const panel = document.getElementById("edge-detail");
+    panel.style.display = "block";
+    panel.innerHTML = `
+        <button class="close-btn" onclick="this.parentElement.style.display='none'">&times;</button>
+        <h4><span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:${color};color:#fff;font-size:12px;font-weight:700;margin-right:6px">${step.step}</span>${step.dataType}</h4>
+        <div class="field"><div class="field-label">Direction</div><div class="field-value">${fromN?.label} &rarr; ${toN?.label}</div></div>
+        <div class="field"><div class="field-label">Why</div><div class="field-value">${step.why}</div></div>
+        <div class="field"><div class="field-label">Data type</div><div class="field-value" style="font-family:var(--font-mono);font-size:12px">${step.dataType}</div></div>
+        <div class="field"><div class="field-label">Flow</div><div class="field-value">${flowName}</div></div>
+    `;
+}
+
+function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : (current === 'light' ? 'dark' :
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark'));
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+}
+(function() {
+    const saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+render();
+</script>
+</body>
+</html>

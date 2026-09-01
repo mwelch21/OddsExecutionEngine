@@ -35,6 +35,13 @@ htmlcov/
 # Docker
 *.pid
 
+# Claude Code
+.claude/skills/
+.claude/worktrees/
+
+# Agent skills (third-party)
+.agents/
+
 # Build artifacts
 dist/
 build/

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue Dashboard — OddsExecutionEngine</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+.summary-cards {
+    display: flex;
+    gap: 16px;
+    margin: 24px;
+    flex-wrap: wrap;
+}
+.summary-card {
+    flex: 1;
+    min-width: 140px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+}
+.summary-card .count {
+    font-size: 32px;
+    font-weight: 700;
+}
+.summary-card .label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+.filter-bar {
+    display: flex;
+    gap: 8px;
+    padding: 0 24px;
+    margin-bottom: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.filter-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+}
+.filter-btn:hover { border-color: var(--accent); }
+.filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.search-input {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    width: 220px;
+    margin-left: auto;
+}
+.table-wrap {
+    padding: 0 24px 48px;
+}
+.issue-table {
+    width: 100%;
+}
+.issue-table th {
+    cursor: pointer;
+    user-select: none;
+}
+.issue-table th:hover {
+    color: var(--accent);
+}
+.severity-cell {
+    white-space: nowrap;
+}
+.expandable {
+    cursor: pointer;
+}
+.expand-row {
+    display: none;
+}
+.expand-row td {
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+    font-size: 13px;
+}
+.expand-row.visible {
+    display: table-row;
+}
+.expand-content .field {
+    margin-bottom: 4px;
+}
+.expand-content .field span {
+    color: var(--text-secondary);
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>Issue Dashboard</h1>
+    <nav>
+        <a href="index.html">Home</a>
+        <a href="system-map.html">System Map</a>
+        <a href="data-flow.html">Data Flow</a>
+        <a href="state-machines.html">State Machines</a>
+        <a href="issue-dashboard.html" class="active">Issues</a>
+        <button class="theme-toggle" onclick="toggleTheme()">&#9681;</button>
+    </nav>
+</header>
+
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="count">7</div>
+        <div class="label">Total Issues</div>
+    </div>
+    <div class="summary-card">
+        <div class="count" style="color:var(--critical)">0</div>
+        <div class="label">Critical</div>
+    </div>
+    <div class="summary-card">
+        <div class="count" style="color:var(--moderate)">4</div>
+        <div class="label">Moderate</div>
+    </div>
+    <div class="summary-card">
+        <div class="count" style="color:var(--low)">3</div>
+        <div class="label">Low</div>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+    <button class="filter-btn" data-filter="critical" onclick="setFilter('critical')">Critical</button>
+    <button class="filter-btn" data-filter="moderate" onclick="setFilter('moderate')">Moderate</button>
+    <button class="filter-btn" data-filter="low" onclick="setFilter('low')">Low</button>
+    <input type="text" class="search-input" placeholder="Search issues..." oninput="searchIssues(this.value)">
+</div>
+
+<div class="table-wrap">
+    <table class="issue-table" id="issue-table">
+        <thead>
+            <tr>
+                <th onclick="sortBy('id')">ID</th>
+                <th onclick="sortBy('severity')">Severity</th>
+                <th onclick="sortBy('category')">Category</th>
+                <th onclick="sortBy('description')">Description</th>
+                <th onclick="sortBy('flow')">Flow</th>
+                <th onclick="sortBy('status')">Status</th>
+            </tr>
+        </thead>
+        <tbody id="issue-tbody"></tbody>
+    </table>
+</div>
+
+<script>
+const ISSUES = [
+    { id: "QI-001", severity: "moderate", category: "no idempotency", description: "Repeated refresh for same event_id appends duplicate history rows", flow: "Quote Ingestion", service: "QuoteIngestionUoW", status: "open", code_ref: "backend/app/infrastructure/persistence/quote_ingestion_uow.py:97-105", decision_ref: null },
+    { id: "QI-002", severity: "moderate", category: "no retry", description: "Provider fetch has no retry/backoff; transient failure fails the request", flow: "Quote Ingestion", service: "QuoteIngestionService", status: "open", code_ref: "backend/app/application/quote_ingestion_service.py:48", decision_ref: null },
+    { id: "QI-003", severity: "moderate", category: "concurrency", description: "No lock on market upsert — concurrent refreshes could race on market creation", flow: "Quote Ingestion", service: "QuoteIngestionUoW", status: "open", code_ref: "backend/app/infrastructure/persistence/quote_ingestion_uow.py:151-176", decision_ref: null },
+    { id: "REC-001", severity: "moderate", category: "stale data", description: "Quotes read from DB may be arbitrarily stale — no freshness check before recommendation", flow: "Execution Recommendation", service: "RecommendationUoW", status: "open", code_ref: "backend/app/infrastructure/persistence/recommendation_uow.py:80-98", decision_ref: null },
+    { id: "QI-004", severity: "low", category: "hardcoded config", description: "InMemoryQuoteProvider uses hardcoded fixture data; no configuration for provider switching", flow: "Quote Ingestion", service: "InMemoryQuoteProvider", status: "open", code_ref: "backend/app/infrastructure/quote_provider.py:6", decision_ref: null },
+    { id: "QI-005", severity: "low", category: "missing validation", description: "No staleness check on quotes — stale provider data persisted without age verification", flow: "Quote Ingestion", service: "NormalizationEngine", status: "open", code_ref: "backend/app/engines/normalization_engine.py:5", decision_ref: null },
+    { id: "REC-002", severity: "low", category: "performance", description: "All quotes for event loaded then filtered in-memory; no DB-level filtering", flow: "Execution Recommendation", service: "RecommendationUoW", status: "open", code_ref: "backend/app/infrastructure/persistence/recommendation_uow.py:80-98", decision_ref: null }
+];
+
+let currentFilter = "all";
+let searchTerm = "";
+let sortField = "severity";
+let sortAsc = true;
+
+const SEV_ORDER = { critical: 0, moderate: 1, low: 2 };
+const SEV_EMOJI = { critical: "\ud83d\udd34", moderate: "\ud83d\udfe1", low: "\ud83d\udfe2" };
+
+function getFiltered() {
+    let list = ISSUES;
+    if (currentFilter !== "all") list = list.filter(i => i.severity === currentFilter);
+    if (searchTerm) list = list.filter(i => i.description.toLowerCase().includes(searchTerm.toLowerCase()));
+    list.sort((a, b) => {
+        let va = a[sortField], vb = b[sortField];
+        if (sortField === "severity") { va = SEV_ORDER[va]; vb = SEV_ORDER[vb]; }
+        if (va < vb) return sortAsc ? -1 : 1;
+        if (va > vb) return sortAsc ? 1 : -1;
+        return 0;
+    });
+    return list;
+}
+
+function render() {
+    const tbody = document.getElementById("issue-tbody");
+    const issues = getFiltered();
+    tbody.innerHTML = issues.map((issue, idx) => `
+        <tr class="expandable" onclick="toggleExpand(${idx})">
+            <td><strong>${issue.id}</strong></td>
+            <td class="severity-cell"><span class="badge badge-${issue.severity}">${SEV_EMOJI[issue.severity]} ${issue.severity}</span></td>
+            <td>${issue.category}</td>
+            <td>${issue.description}</td>
+            <td>${issue.flow}</td>
+            <td>${issue.status}</td>
+        </tr>
+        <tr class="expand-row" id="expand-${idx}">
+            <td colspan="6">
+                <div class="expand-content">
+                    <div class="field"><span>Service:</span> ${issue.service}</div>
+                    <div class="field"><span>Code:</span> <span class="code-ref" onclick="event.stopPropagation(); copyPath(this)">${issue.code_ref}</span></div>
+                    <div class="field"><span>Decision:</span> ${issue.decision_ref || "None"}</div>
+                </div>
+            </td>
+        </tr>
+    `).join("");
+}
+
+function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
+    render();
+}
+
+function searchIssues(term) {
+    searchTerm = term;
+    render();
+}
+
+function sortBy(field) {
+    if (sortField === field) { sortAsc = !sortAsc; }
+    else { sortField = field; sortAsc = true; }
+    render();
+}
+
+function toggleExpand(idx) {
+    const row = document.getElementById("expand-" + idx);
+    if (row) row.classList.toggle("visible");
+}
+
+function copyPath(el) {
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        const orig = el.textContent;
+        el.textContent = "Copied!";
+        setTimeout(() => el.textContent = orig, 1200);
+    });
+}
+
+function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : (current === 'light' ? 'dark' :
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark'));
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+}
+(function() {
+    const saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+render();
+</script>
+</body>
+</html>
