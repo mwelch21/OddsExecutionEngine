@@ -86,6 +86,20 @@ execution_recommendations_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
+watch_intents_table = Table(
+    "watch_intents",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("event_external_id", String(length=255), nullable=False),
+    Column("market_type", String(length=32), nullable=False),
+    Column("selection", String(length=64), nullable=False),
+    Column("line", Float, nullable=True),
+    Column("target_price", Integer, nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("status", String(length=16), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
 workflow_events_table = Table(
     "workflow_events",
     metadata,

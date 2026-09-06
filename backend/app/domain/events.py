@@ -9,6 +9,7 @@ from backend.app.domain.models import (
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
+    WatchIntent,
 )
 
 
@@ -67,6 +68,20 @@ class MarketSnapshotCreatedPayload(DomainModel):
     line: float | None = None
 
 
+class WatchIntentSubmittedPayload(DomainModel):
+    event_id: str
+    market_type: str
+    selection: str
+    target_price: int
+    line: float | None = None
+    expires_at: datetime | None = None
+
+
+class WatchIntentCancelledPayload(DomainModel):
+    watch_intent_id: str
+    event_id: str
+
+
 class OrderIntentSubmitted(WorkflowEvent):
     event_type: Literal["OrderIntentSubmitted"] = "OrderIntentSubmitted"
     payload: OrderIntentSubmittedPayload
@@ -92,6 +107,46 @@ class QuoteUpdated(WorkflowEvent):
 class MarketSnapshotCreated(WorkflowEvent):
     event_type: Literal["MarketSnapshotCreated"] = "MarketSnapshotCreated"
     payload: MarketSnapshotCreatedPayload
+
+
+class WatchIntentSubmitted(WorkflowEvent):
+    event_type: Literal["WatchIntentSubmitted"] = "WatchIntentSubmitted"
+    payload: WatchIntentSubmittedPayload
+
+
+class WatchIntentCancelled(WorkflowEvent):
+    event_type: Literal["WatchIntentCancelled"] = "WatchIntentCancelled"
+    payload: WatchIntentCancelledPayload
+
+
+def build_watch_intent_submitted_event(watch_intent: WatchIntent) -> WatchIntentSubmitted:
+    return WatchIntentSubmitted(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent.id,
+        workflow_id=watch_intent.id,
+        payload=WatchIntentSubmittedPayload(
+            event_id=watch_intent.event_id,
+            market_type=watch_intent.market_type.value,
+            selection=watch_intent.selection,
+            target_price=watch_intent.target_price,
+            line=watch_intent.line,
+            expires_at=watch_intent.expires_at,
+        ),
+    )
+
+
+def build_watch_intent_cancelled_event(watch_intent: WatchIntent) -> WatchIntentCancelled:
+    return WatchIntentCancelled(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent.id,
+        workflow_id=watch_intent.id,
+        payload=WatchIntentCancelledPayload(
+            watch_intent_id=watch_intent.id,
+            event_id=watch_intent.event_id,
+        ),
+    )
 
 
 def build_order_intent_submitted_event(

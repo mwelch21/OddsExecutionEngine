@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, model_validator
 
+from backend.app.api.market_validation import validate_market_fields
 from backend.app.domain.models import ExecutionRecommendation, MarketType, OrderIntent, Quote
 
 
@@ -11,16 +12,8 @@ class RecommendationRequest(BaseModel):
     target_price: int
 
     @model_validator(mode="after")
-    def validate_market_fields(self) -> "RecommendationRequest":
-        if self.market_type is MarketType.MONEYLINE and self.line is not None:
-            raise ValueError("line must be omitted for moneyline requests")
-
-        if self.market_type in {MarketType.SPREAD, MarketType.TOTAL} and self.line is None:
-            raise ValueError("line is required for spread and total requests")
-
-        if self.market_type is MarketType.TOTAL and self.selection not in {"over", "under"}:
-            raise ValueError("selection must be 'over' or 'under' for total requests")
-
+    def check_market_fields(self) -> "RecommendationRequest":
+        validate_market_fields(self.market_type, self.selection, self.line)
         return self
 
 

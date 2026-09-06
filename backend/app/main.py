@@ -7,8 +7,10 @@ from fastapi import FastAPI, Request, Response
 
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
+from backend.app.api.watch_intent_router import create_watch_intent_router
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.recommendation_service import RecommendationService
+from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.config import Settings, get_settings
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
@@ -25,6 +27,9 @@ from backend.app.infrastructure.persistence.quote_ingestion_uow import (
 )
 from backend.app.infrastructure.persistence.recommendation_uow import (
     SqlAlchemyRecommendationUnitOfWork,
+)
+from backend.app.infrastructure.persistence.watch_intent_uow import (
+    SqlAlchemyWatchIntentUnitOfWork,
 )
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
@@ -45,6 +50,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workflow_event_publisher=workflow_event_publisher,
         quote_matching_engine=QuoteMatchingEngine(),
         recommendation_engine=RecommendationEngine(PriceComparisonService()),
+    )
+    watch_intent_service = WatchIntentService(
+        unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
+        workflow_event_publisher=workflow_event_publisher,
     )
     quote_ingestion_service = QuoteIngestionService(
         unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(session_factory),
@@ -104,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(create_recommendation_router(recommendation_service))
     app.include_router(create_quote_ingestion_router(quote_ingestion_service))
+    app.include_router(create_watch_intent_router(watch_intent_service))
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router

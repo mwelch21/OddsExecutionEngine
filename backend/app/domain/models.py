@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 
 from backend.app.domain.base import DomainModel
@@ -15,6 +16,34 @@ class OrderIntent(DomainModel):
     selection: str
     target_price: int
     line: float | None = None
+
+
+class WatchStatus(StrEnum):
+    ACTIVE = "active"
+    TRIGGERED = "triggered"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class WatchIntentDraft(DomainModel):
+    event_id: str
+    market_type: MarketType
+    selection: str
+    target_price: int
+    line: float | None = None
+    expires_at: datetime | None = None
+
+
+class WatchIntent(DomainModel):
+    id: str
+    event_id: str
+    market_type: MarketType
+    selection: str
+    target_price: int
+    line: float | None = None
+    expires_at: datetime | None = None
+    status: WatchStatus
+    created_at: datetime
 
 
 class Quote(DomainModel):
