@@ -179,6 +179,9 @@ See `docs/flows/_index.md` for full flow documentation.
 | NormalizationEngine | `engines/normalization_engine.py` | Filters raw provider quotes into canonical form |
 | QuoteMatchingEngine | `engines/quote_matching_engine.py` | Matches quotes against order intent criteria |
 | RecommendationEngine | `engines/recommendation_engine.py` | Ranks matched quotes, determines fillability |
+| WatchIntentService | `application/watch_intent_service.py` | Watch intent CRUD -> persistence -> event publish |
+| WatchEvaluationService | `application/watch_evaluation_service.py` | Watch evaluation -> opportunity signals -> status updates -> event publish |
+| WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Separates expired watches, matches quotes, determines triggers |
 
 ## Build Order
 

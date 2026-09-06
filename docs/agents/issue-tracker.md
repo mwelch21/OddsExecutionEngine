@@ -29,6 +29,28 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 Create a GitHub issue.
 
+## When publishing tickets with a parent issue
+
+When a skill (e.g. `/to-tickets`) creates child tickets from a parent spec or epic, use GitHub's native sub-issue and blocking features:
+
+1. **Create tickets** in dependency order (blockers first) so each ticket can reference real issue numbers.
+2. **Add as sub-issues** of the parent:
+   ```
+   gh api repos/<owner>/<repo>/issues/<parent>/sub_issues --method POST -F sub_issue_id=<child-db-id>
+   ```
+   where `<child-db-id>` is the child's numeric database id (`gh api repos/<owner>/<repo>/issues/<n> --jq '.id'`).
+3. **Add native blocking edges** between tickets that have dependencies:
+   ```
+   gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>
+   ```
+4. **Add a task list** to the parent issue body so progress is visible:
+   ```
+   - [ ] #12 — ticket title
+   - [ ] #13 — ticket title
+   ```
+   Closing child issues checks them off automatically.
+5. **Do not close** the parent issue — the user closes it when all children are done.
+
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.

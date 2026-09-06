@@ -3,6 +3,7 @@ from typing import Protocol, Self
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     ExecutionRecommendation,
+    OpportunitySignal,
     OrderIntent,
     Quote,
     QuoteRefreshPersistenceResult,
@@ -106,3 +107,42 @@ class WatchIntentUnitOfWork(Protocol):
 
 class WatchIntentUnitOfWorkFactory(Protocol):
     def __call__(self) -> WatchIntentUnitOfWork: ...
+
+
+class WatchEvaluationUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def list_active_watch_intents(self, event_id: str) -> list[WatchIntent]: ...
+
+    def list_quotes(self, event_id: str) -> list[Quote]: ...
+
+    def create_opportunity_signal(self, opportunity_signal: OpportunitySignal) -> None: ...
+
+    def update_watch_intent_status(self, watch_intent_id: str, status: WatchStatus) -> None: ...
+
+    def list_opportunity_signals(
+        self,
+        *,
+        event_id: str | None = None,
+    ) -> list[OpportunitySignal]: ...
+
+    def get_opportunity_signal(
+        self,
+        opportunity_signal_id: str,
+    ) -> OpportunitySignal | None: ...
+
+    def stage_event(self, event: WorkflowEvent) -> None: ...
+
+    @property
+    def committed_events(self) -> tuple[WorkflowEvent, ...]: ...
+
+
+class WatchEvaluationUnitOfWorkFactory(Protocol):
+    def __call__(self) -> WatchEvaluationUnitOfWork: ...

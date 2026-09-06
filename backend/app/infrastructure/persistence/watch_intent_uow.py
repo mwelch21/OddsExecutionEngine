@@ -1,13 +1,13 @@
 import logging
-from datetime import UTC, datetime
 
-from sqlalchemy import RowMapping, insert, select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.application.ports import WatchIntentUnitOfWork
 from backend.app.domain.events import WorkflowEvent
-from backend.app.domain.models import MarketType, WatchIntent, WatchStatus
+from backend.app.domain.models import WatchIntent, WatchStatus
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.queries import row_to_watch_intent
 from backend.app.infrastructure.persistence.schema import (
     watch_intents_table,
     workflow_events_table,
@@ -87,7 +87,7 @@ class SqlAlchemyWatchIntentUnitOfWork(WatchIntentUnitOfWork):
             statement = statement.where(watch_intents_table.c.status == status.value)
 
         rows = self._require_session().execute(statement).mappings().all()
-        return [_row_to_watch_intent(row) for row in rows]
+        return [row_to_watch_intent(row) for row in rows]
 
     def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None:
         row = (
@@ -96,7 +96,7 @@ class SqlAlchemyWatchIntentUnitOfWork(WatchIntentUnitOfWork):
             .mappings()
             .first()
         )
-        return None if row is None else _row_to_watch_intent(row)
+        return None if row is None else row_to_watch_intent(row)
 
     def update_watch_intent_status(self, watch_intent_id: str, status: WatchStatus) -> None:
         self._require_session().execute(
@@ -135,27 +135,3 @@ class SqlAlchemyWatchIntentUnitOfWork(WatchIntentUnitOfWork):
                 for event in self._staged_events
             ],
         )
-
-
-def _row_to_watch_intent(row: RowMapping) -> WatchIntent:
-    return WatchIntent(
-        id=row["id"],
-        event_id=row["event_external_id"],
-        market_type=MarketType(row["market_type"]),
-        selection=row["selection"],
-        target_price=row["target_price"],
-        line=row["line"],
-        expires_at=as_utc(row["expires_at"]),
-        status=WatchStatus(row["status"]),
-        created_at=as_utc(row["created_at"]) or datetime.now(UTC),
-    )
-
-
-def as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-
-    return value.astimezone(UTC)

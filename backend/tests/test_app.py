@@ -395,6 +395,7 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
         "market_quotes_history",
         "market_quotes_latest",
         "markets",
+        "opportunity_signals",
         "order_intents",
         "watch_intents",
         "workflow_events",

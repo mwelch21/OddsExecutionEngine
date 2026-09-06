@@ -200,3 +200,34 @@ Use a minimal normalization step that filters provider data directly into canoni
 
 - stage 4 providers must produce data that can normalize into canonical `Quote` values
 - richer provider metadata can be added later without replacing the first ingestion boundary
+
+## ADR-008: Stage 5 triggers watch evaluation from the ingestion route
+
+- Status: accepted
+- Date: 2026-09-06
+
+### Context
+
+Stage 5 adds persistent watch intents that must be re-checked whenever quotes change. The repo has no pub/sub infrastructure yet, and quote ingestion already owns its own unit of work.
+
+### Decision
+
+`POST /ingestion/quotes/refresh` calls `QuoteIngestionService` and then `WatchEvaluationService` as two separate service calls, each with its own unit of work. Expired watches are marked lazily during evaluation rather than by a background sweep.
+
+### Why
+
+- keeps ingestion persistence and watch evaluation decoupled: neither service knows about the other
+- avoids introducing a scheduler or event bus before the domain justifies it
+- lazy expiry keeps expiry correctness in the evaluation path instead of a separate sweeper
+
+### Rejected alternatives
+
+- share one unit of work across ingestion and evaluation: couples ingestion latency and rollback semantics to watch volume
+- call evaluation from inside `QuoteIngestionService`: makes ingestion own monitoring concerns
+- scheduled sweep for expiry: adds infrastructure for a condition already checked during evaluation
+
+### Consequences
+
+- the router owns the ordering between ingestion and evaluation until pub/sub replaces it
+- watch evaluation failures surface on the refresh request, after quote ingestion has already committed
+- watches on events whose quotes stop refreshing stay `active` until an event-lifecycle feature retires them

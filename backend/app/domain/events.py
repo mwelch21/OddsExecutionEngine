@@ -5,6 +5,7 @@ from uuid import uuid4
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import (
     ExecutionRecommendation,
+    OpportunitySignal,
     OrderIntent,
     PersistedQuote,
     Quote,
@@ -82,6 +83,24 @@ class WatchIntentCancelledPayload(DomainModel):
     event_id: str
 
 
+class WatchIntentExpiredPayload(DomainModel):
+    watch_intent_id: str
+    event_id: str
+    expires_at: datetime | None = None
+
+
+class TargetPriceBecameFillablePayload(DomainModel):
+    watch_intent_id: str
+    opportunity_signal_id: str
+    event_id: str
+    market_type: str
+    selection: str
+    line: float | None = None
+    target_price: int
+    matched_price: int
+    sportsbook: str
+
+
 class OrderIntentSubmitted(WorkflowEvent):
     event_type: Literal["OrderIntentSubmitted"] = "OrderIntentSubmitted"
     payload: OrderIntentSubmittedPayload
@@ -117,6 +136,52 @@ class WatchIntentSubmitted(WorkflowEvent):
 class WatchIntentCancelled(WorkflowEvent):
     event_type: Literal["WatchIntentCancelled"] = "WatchIntentCancelled"
     payload: WatchIntentCancelledPayload
+
+
+class WatchIntentExpired(WorkflowEvent):
+    event_type: Literal["WatchIntentExpired"] = "WatchIntentExpired"
+    payload: WatchIntentExpiredPayload
+
+
+class TargetPriceBecameFillable(WorkflowEvent):
+    event_type: Literal["TargetPriceBecameFillable"] = "TargetPriceBecameFillable"
+    payload: TargetPriceBecameFillablePayload
+
+
+def build_watch_intent_expired_event(watch_intent: WatchIntent) -> WatchIntentExpired:
+    return WatchIntentExpired(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent.id,
+        workflow_id=watch_intent.id,
+        payload=WatchIntentExpiredPayload(
+            watch_intent_id=watch_intent.id,
+            event_id=watch_intent.event_id,
+            expires_at=watch_intent.expires_at,
+        ),
+    )
+
+
+def build_target_price_became_fillable_event(
+    opportunity_signal: OpportunitySignal,
+) -> TargetPriceBecameFillable:
+    return TargetPriceBecameFillable(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=opportunity_signal.id,
+        workflow_id=opportunity_signal.watch_intent_id,
+        payload=TargetPriceBecameFillablePayload(
+            watch_intent_id=opportunity_signal.watch_intent_id,
+            opportunity_signal_id=opportunity_signal.id,
+            event_id=opportunity_signal.event_id,
+            market_type=opportunity_signal.market_type.value,
+            selection=opportunity_signal.selection,
+            line=opportunity_signal.line,
+            target_price=opportunity_signal.target_price,
+            matched_price=opportunity_signal.matched_price,
+            sportsbook=opportunity_signal.sportsbook,
+        ),
+    )
 
 
 def build_watch_intent_submitted_event(watch_intent: WatchIntent) -> WatchIntentSubmitted:

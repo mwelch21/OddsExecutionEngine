@@ -57,3 +57,12 @@
 - Add a decision entry when changing migration strategy, schema ownership, persistence layout, layer boundaries, event model boundaries, or other major architectural rules.
 - Add to conventions when the rule is general and expected to remain true across features.
 - Update both docs when a large change introduces both a one-time decision and a standing rule.
+
+## Stage 5 landing zones
+
+- Watch lifecycle state lives in `watch_intents`; opportunity signals are denormalized into `opportunity_signals` and must stay readable without joins.
+- Watch evaluation logic stays in `backend/app/engines/watch_evaluation_engine.py` and must remain pure: evaluation time is injected, never read from the clock inside the engine.
+- Watch evaluation reuses `PriceComparisonService` so watch fillability and recommendation fillability cannot diverge.
+- Watch reads, opportunity creation, watch status updates, and staged events for one evaluation pass belong to a single `WatchEvaluationUnitOfWork` transaction.
+- Cancellation is a soft status change, never a row delete: terminal watch states must stay auditable.
+- Cross-service orchestration between quote ingestion and watch evaluation stays in the router until pub/sub exists (see ADR-008).

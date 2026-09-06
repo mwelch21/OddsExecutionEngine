@@ -1,8 +1,8 @@
-from backend.app.domain.models import OrderIntent, Quote
+from backend.app.domain.models import OrderIntent, Quote, WatchIntent
 
 
 class QuoteMatchingEngine:
-    def match_quotes(self, intent: OrderIntent, quotes: list[Quote]) -> list[Quote]:
+    def match_quotes(self, intent: OrderIntent | WatchIntent, quotes: list[Quote]) -> list[Quote]:
         return [
             quote
             for quote in quotes

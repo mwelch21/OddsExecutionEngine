@@ -1,18 +1,16 @@
 import logging
 from uuid import uuid4
 
-from sqlalchemy import RowMapping, insert, select
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
 from backend.app.application.ports import RecommendationUnitOfWork
 from backend.app.domain.events import WorkflowEvent
-from backend.app.domain.models import ExecutionRecommendation, MarketType, OrderIntent, Quote
+from backend.app.domain.models import ExecutionRecommendation, OrderIntent, Quote
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.queries import row_to_quote, select_latest_quotes
 from backend.app.infrastructure.persistence.schema import (
-    events_table,
     execution_recommendations_table,
-    market_quotes_latest_table,
-    markets_table,
     order_intents_table,
     workflow_events_table,
 )
@@ -78,24 +76,8 @@ class SqlAlchemyRecommendationUnitOfWork(RecommendationUnitOfWork):
         return order_intent_id
 
     def list_quotes(self, event_id: str) -> list[Quote]:
-        rows = self._require_session().execute(
-            select(
-                events_table.c.external_id.label("event_id"),
-                market_quotes_latest_table.c.sportsbook,
-                markets_table.c.market_type,
-                markets_table.c.selection,
-                market_quotes_latest_table.c.price,
-                markets_table.c.line,
-            )
-            .select_from(
-                market_quotes_latest_table.join(
-                    markets_table,
-                    market_quotes_latest_table.c.market_id == markets_table.c.id,
-                ).join(events_table, markets_table.c.event_id == events_table.c.id)
-            )
-            .where(events_table.c.external_id == event_id)
-        )
-        return [_row_to_quote(row) for row in rows.mappings().all()]
+        rows = self._require_session().execute(select_latest_quotes(event_id))
+        return [row_to_quote(row) for row in rows.mappings().all()]
 
     def create_execution_recommendation(
         self,
@@ -153,17 +135,6 @@ class SqlAlchemyRecommendationUnitOfWork(RecommendationUnitOfWork):
                 for event in self._staged_events
             ],
         )
-
-
-def _row_to_quote(row: RowMapping) -> Quote:
-    return Quote(
-        event_id=row["event_id"],
-        sportsbook=row["sportsbook"],
-        market_type=MarketType(row["market_type"]),
-        selection=row["selection"],
-        price=row["price"],
-        line=row["line"],
-    )
 
 
 def _quote_payload(quote: Quote | None) -> dict[str, object] | None:
