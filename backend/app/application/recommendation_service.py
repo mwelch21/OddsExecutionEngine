@@ -5,6 +5,7 @@ from backend.app.application.ports import (
     RecommendationUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.timing import elapsed_ms
 from backend.app.domain.events import (
     build_execution_recommendation_generated_event,
     build_order_intent_submitted_event,
@@ -79,7 +80,7 @@ class RecommendationService:
                     "workflow_id": order_intent_id,
                     "order_intent_id": order_intent_id,
                     "recommendation_id": recommendation_id,
-                    "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    "duration_ms": elapsed_ms(started_at),
                 },
             )
             raise
@@ -91,7 +92,7 @@ class RecommendationService:
                 "order_intent_id": order_intent_id,
                 "recommendation_id": recommendation_id,
                 "event_count": len(unit_of_work.committed_events),
-                "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                "duration_ms": elapsed_ms(started_at),
             },
         )
         return recommendation

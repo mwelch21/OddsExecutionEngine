@@ -7,6 +7,7 @@ from backend.app.application.ports import (
     WatchEvaluationUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.timing import elapsed_ms
 from backend.app.domain.events import (
     build_target_price_became_fillable_event,
     build_watch_intent_expired_event,
@@ -77,7 +78,7 @@ class WatchEvaluationService:
                 extra={
                     "workflow_id": evaluation_id,
                     "event_id": event_id,
-                    "duration_ms": _elapsed_ms(started_at),
+                    "duration_ms": elapsed_ms(started_at),
                 },
             )
             raise
@@ -96,7 +97,7 @@ class WatchEvaluationService:
                 "workflow_id": evaluation_id,
                 "event_id": event_id,
                 "event_count": len(summary.emitted_event_types),
-                "duration_ms": _elapsed_ms(started_at),
+                "duration_ms": elapsed_ms(started_at),
             },
         )
         return summary
@@ -126,7 +127,3 @@ def _build_opportunity_signal(triggered_watch: TriggeredWatch) -> OpportunitySig
         sportsbook=quote.sportsbook,
         created_at=datetime.now(UTC),
     )
-
-
-def _elapsed_ms(started_at: float) -> float:
-    return round((perf_counter() - started_at) * 1000, 2)

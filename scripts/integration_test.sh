@@ -67,6 +67,21 @@ post_json() {
     -d "$payload"
 }
 
+get_json() {
+  local path="$1"
+  curl -sS "${BASE_URL}${path}"
+}
+
+delete_json() {
+  local path="$1"
+  curl -sS -X DELETE "${BASE_URL}${path}"
+}
+
+delete_status() {
+  local path="$1"
+  curl -sS -o /dev/null -w '%{http_code}' -X DELETE "${BASE_URL}${path}"
+}
+
 get_status() {
   local method="$1"
   local path="$2"
@@ -324,7 +339,143 @@ test_recommendation_request_id() {
 run_test "Recommendation propagates X-Request-ID" test_recommendation_request_id
 
 # ---------------------------------------------------------------------------
-# Test group 6: Database state
+# Test group 6: Watch intents and opportunities
+# ---------------------------------------------------------------------------
+
+log "watch intent and opportunity tests"
+
+WATCH_EVENT_ID="nba-knicks-celtics-2026-04-11"
+TRIGGERING_WATCH_ID=""
+CANCELLED_WATCH_ID=""
+
+create_watch_intent() {
+  local target_price="$1"
+  post_json "/watch-intents" \
+    "{\"event_id\":\"${WATCH_EVENT_ID}\",\"market_type\":\"moneyline\",\"selection\":\"knicks\",\"target_price\":${target_price}}"
+}
+
+read_json_field() {
+  local payload="$1"
+  local field="$2"
+  python3 -c "import json,sys; print(json.loads(sys.stdin.read())['${field}'])" <<<"$payload"
+}
+
+test_watch_intent_create() {
+  local response
+  response="$(create_watch_intent 120)"
+  TRIGGERING_WATCH_ID="$(read_json_field "$response" id)"
+  assert_json "$response" "\
+assert data['status'] == 'active'; \
+assert data['event_id'] == '${WATCH_EVENT_ID}'; \
+assert data['target_price'] == 120; \
+assert data['id']"
+}
+
+test_watch_intent_get_by_id() {
+  local response
+  response="$(get_json "/watch-intents/${TRIGGERING_WATCH_ID}")"
+  assert_json "$response" "assert data['id'] == '${TRIGGERING_WATCH_ID}'"
+}
+
+test_watch_intent_list_filtered_by_event() {
+  local response
+  response="$(get_json "/watch-intents?event_id=${WATCH_EVENT_ID}")"
+  assert_json "$response" "\
+ids = [w['id'] for w in data['watch_intents']]; \
+assert '${TRIGGERING_WATCH_ID}' in ids; \
+assert all(w['event_id'] == '${WATCH_EVENT_ID}' for w in data['watch_intents'])"
+}
+
+test_watch_intent_unknown_id_returns_404() {
+  local status
+  status="$(get_status GET "/watch-intents/does-not-exist")"
+  assert_equals "$status" "404"
+}
+
+test_watch_intent_rejects_moneyline_with_line() {
+  local status
+  status="$(get_status POST "/watch-intents" \
+    "{\"event_id\":\"${WATCH_EVENT_ID}\",\"market_type\":\"moneyline\",\"selection\":\"knicks\",\"line\":1.5,\"target_price\":120}")"
+  assert_equals "$status" "422"
+}
+
+test_watch_intent_cancel_is_soft_delete() {
+  local created
+  created="$(create_watch_intent 300)"
+  CANCELLED_WATCH_ID="$(read_json_field "$created" id)"
+  local response
+  response="$(delete_json "/watch-intents/${CANCELLED_WATCH_ID}")"
+  assert_json "$response" "assert data['status'] == 'cancelled'"
+}
+
+test_watch_intent_cancel_is_idempotent() {
+  local response
+  response="$(delete_json "/watch-intents/${CANCELLED_WATCH_ID}")"
+  assert_json "$response" "assert data['status'] == 'cancelled'"
+}
+
+test_watch_intent_cancel_unknown_id_returns_404() {
+  local status
+  status="$(delete_status "/watch-intents/does-not-exist")"
+  assert_equals "$status" "404"
+}
+
+test_quote_refresh_triggers_watch() {
+  post_json "/ingestion/quotes/refresh" "{\"event_id\":\"${WATCH_EVENT_ID}\"}" >/dev/null
+  local response
+  response="$(get_json "/watch-intents/${TRIGGERING_WATCH_ID}")"
+  assert_json "$response" "assert data['status'] == 'triggered'"
+}
+
+test_triggered_watch_created_opportunity() {
+  local response
+  response="$(get_json "/opportunities?event_id=${WATCH_EVENT_ID}")"
+  assert_json "$response" "\
+matches = [o for o in data['opportunities'] if o['watch_intent_id'] == '${TRIGGERING_WATCH_ID}']; \
+assert len(matches) == 1; \
+assert matches[0]['target_price'] == 120; \
+assert matches[0]['matched_price'] >= 120; \
+assert matches[0]['sportsbook']"
+}
+
+test_opportunity_get_by_id() {
+  local listing
+  listing="$(get_json "/opportunities?event_id=${WATCH_EVENT_ID}")"
+  local opportunity_id
+  opportunity_id="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read())['opportunities'][0]['id'])" <<<"$listing")"
+  local response
+  response="$(get_json "/opportunities/${opportunity_id}")"
+  assert_json "$response" "assert data['id'] == '${opportunity_id}'"
+}
+
+test_opportunity_unknown_id_returns_404() {
+  local status
+  status="$(get_status GET "/opportunities/does-not-exist")"
+  assert_equals "$status" "404"
+}
+
+test_cancelled_watch_is_not_triggered() {
+  local response
+  response="$(get_json "/watch-intents/${CANCELLED_WATCH_ID}")"
+  assert_json "$response" "assert data['status'] == 'cancelled'"
+}
+
+run_test "POST /watch-intents creates active watch" test_watch_intent_create
+run_test "GET /watch-intents/{id} returns the watch" test_watch_intent_get_by_id
+run_test "GET /watch-intents filters by event_id" test_watch_intent_list_filtered_by_event
+run_test "GET /watch-intents/{id} returns 404 when unknown" test_watch_intent_unknown_id_returns_404
+run_test "POST /watch-intents rejects moneyline with line" test_watch_intent_rejects_moneyline_with_line
+run_test "DELETE /watch-intents/{id} soft-cancels" test_watch_intent_cancel_is_soft_delete
+run_test "DELETE /watch-intents/{id} is idempotent" test_watch_intent_cancel_is_idempotent
+run_test "DELETE /watch-intents/{id} returns 404 when unknown" test_watch_intent_cancel_unknown_id_returns_404
+run_test "Quote refresh triggers the matching watch" test_quote_refresh_triggers_watch
+run_test "Triggered watch produced an opportunity" test_triggered_watch_created_opportunity
+run_test "GET /opportunities/{id} returns the opportunity" test_opportunity_get_by_id
+run_test "GET /opportunities/{id} returns 404 when unknown" test_opportunity_unknown_id_returns_404
+run_test "Cancelled watch is never triggered" test_cancelled_watch_is_not_triggered
+
+# ---------------------------------------------------------------------------
+# Test group 7: Database state
 # ---------------------------------------------------------------------------
 
 log "database state tests"
@@ -377,7 +528,21 @@ run_test "market_quotes_latest has 10 rows" test_quotes_latest_count
 run_test "market_quotes_history has >= 20 rows" test_quotes_history_count
 run_test "order_intents has >= 4 rows" test_order_intents_count
 run_test "execution_recommendations has >= 4 rows" test_execution_recommendations_count
+test_watch_intents_count() {
+  local count
+  count="$(query_count watch_intents)"
+  assert_gte "$count" 2
+}
+
+test_opportunity_signals_count() {
+  local count
+  count="$(query_count opportunity_signals)"
+  assert_gte "$count" 1
+}
+
 run_test "workflow_events has rows" test_workflow_events_count
+run_test "watch_intents has >= 2 rows" test_watch_intents_count
+run_test "opportunity_signals has >= 1 row" test_opportunity_signals_count
 
 # ---------------------------------------------------------------------------
 # Summary

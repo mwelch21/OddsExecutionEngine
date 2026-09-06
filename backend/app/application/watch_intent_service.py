@@ -7,6 +7,7 @@ from backend.app.application.ports import (
     WatchIntentUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.timing import elapsed_ms
 from backend.app.domain.events import (
     build_watch_intent_cancelled_event,
     build_watch_intent_submitted_event,
@@ -59,7 +60,7 @@ class WatchIntentService:
                 "watch_intent.create.failed",
                 extra={
                     "workflow_id": watch_intent.id,
-                    "duration_ms": _elapsed_ms(started_at),
+                    "duration_ms": elapsed_ms(started_at),
                 },
             )
             raise
@@ -69,7 +70,7 @@ class WatchIntentService:
             extra={
                 "workflow_id": watch_intent.id,
                 "event_count": len(unit_of_work.committed_events),
-                "duration_ms": _elapsed_ms(started_at),
+                "duration_ms": elapsed_ms(started_at),
             },
         )
         return watch_intent
@@ -90,6 +91,14 @@ class WatchIntentService:
     def cancel_watch(self, watch_intent_id: str) -> WatchIntent | None:
         started_at = perf_counter()
 
+        self._logger.info(
+            "watch_intent.cancel.started",
+            extra={
+                "path": "/watch-intents/{watch_intent_id}",
+                "workflow_id": watch_intent_id,
+            },
+        )
+
         try:
             with self._unit_of_work_factory() as unit_of_work:
                 watch_intent = unit_of_work.get_watch_intent(watch_intent_id)
@@ -109,7 +118,7 @@ class WatchIntentService:
                 "watch_intent.cancel.failed",
                 extra={
                     "workflow_id": watch_intent_id,
-                    "duration_ms": _elapsed_ms(started_at),
+                    "duration_ms": elapsed_ms(started_at),
                 },
             )
             raise
@@ -119,11 +128,7 @@ class WatchIntentService:
             extra={
                 "workflow_id": watch_intent_id,
                 "event_count": len(unit_of_work.committed_events),
-                "duration_ms": _elapsed_ms(started_at),
+                "duration_ms": elapsed_ms(started_at),
             },
         )
         return cancelled
-
-
-def _elapsed_ms(started_at: float) -> float:
-    return round((perf_counter() - started_at) * 1000, 2)

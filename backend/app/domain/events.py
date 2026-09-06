@@ -70,6 +70,7 @@ class MarketSnapshotCreatedPayload(DomainModel):
 
 
 class WatchIntentSubmittedPayload(DomainModel):
+    watch_intent_id: str
     event_id: str
     market_type: str
     selection: str
@@ -191,6 +192,7 @@ def build_watch_intent_submitted_event(watch_intent: WatchIntent) -> WatchIntent
         aggregate_id=watch_intent.id,
         workflow_id=watch_intent.id,
         payload=WatchIntentSubmittedPayload(
+            watch_intent_id=watch_intent.id,
             event_id=watch_intent.event_id,
             market_type=watch_intent.market_type.value,
             selection=watch_intent.selection,

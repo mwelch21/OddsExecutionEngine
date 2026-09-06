@@ -7,6 +7,7 @@ from backend.app.application.ports import (
     QuoteIngestionUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.timing import elapsed_ms
 from backend.app.domain.events import (
     build_market_snapshot_created_event,
     build_quote_updated_event,
@@ -82,7 +83,7 @@ class QuoteIngestionService:
                 "quote_ingestion.failed",
                 extra={
                     "workflow_id": refresh_id,
-                    "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    "duration_ms": elapsed_ms(started_at),
                 },
             )
             raise
@@ -102,7 +103,7 @@ class QuoteIngestionService:
             extra={
                 "workflow_id": refresh_id,
                 "event_count": len(emitted_event_types),
-                "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                "duration_ms": elapsed_ms(started_at),
             },
         )
         return summary

@@ -184,17 +184,22 @@ def test_postgres_is_required_truth_path_for_watch_evaluation() -> None:
                     expires_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
                 ),
             ).json()
+            cancelled = client.post("/watch-intents", json=_watch_payload()).json()
+            cancel_response = client.delete(f"/watch-intents/{cancelled['id']}")
             _refresh(client)
 
             triggered_watch = client.get(f"/watch-intents/{created['id']}").json()
             expired_watch = client.get(f"/watch-intents/{expired['id']}").json()
+            cancelled_watch = client.get(f"/watch-intents/{cancelled['id']}").json()
             opportunities = client.get(
                 "/opportunities",
                 params={"event_id": EVENT_ID},
             ).json()["opportunities"]
 
+        assert cancel_response.status_code == 200
         assert triggered_watch["status"] == "triggered"
         assert expired_watch["status"] == "expired"
+        assert cancelled_watch["status"] == "cancelled"
         assert len(opportunities) == 1
         assert opportunities[0]["watch_intent_id"] == created["id"]
         assert opportunities[0]["matched_price"] == 125
@@ -212,5 +217,6 @@ def test_postgres_is_required_truth_path_for_watch_evaluation() -> None:
         assert len(stored_opportunities) == 1
         assert event_types.count("TargetPriceBecameFillable") == 1
         assert event_types.count("WatchIntentExpired") == 1
+        assert event_types.count("WatchIntentCancelled") == 1
     finally:
         truncate_application_tables(session_factory)

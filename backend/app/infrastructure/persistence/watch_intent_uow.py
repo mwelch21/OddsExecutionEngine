@@ -1,63 +1,24 @@
 import logging
 
 from sqlalchemy import insert, select, update
-from sqlalchemy.orm import Session
 
 from backend.app.application.ports import WatchIntentUnitOfWork
-from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import WatchIntent, WatchStatus
-from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.event_staging_uow import (
+    SqlAlchemyEventStagingUnitOfWork,
+)
 from backend.app.infrastructure.persistence.queries import row_to_watch_intent
 from backend.app.infrastructure.persistence.schema import (
     watch_intents_table,
-    workflow_events_table,
 )
 
 
-class SqlAlchemyWatchIntentUnitOfWork(WatchIntentUnitOfWork):
+class SqlAlchemyWatchIntentUnitOfWork(
+    SqlAlchemyEventStagingUnitOfWork,
+    WatchIntentUnitOfWork,
+):
     _logger = logging.getLogger(__name__)
-
-    def __init__(self, session_factory: DatabaseSessionFactory) -> None:
-        self._session_factory = session_factory
-        self._session: Session | None = None
-        self._staged_events: list[WorkflowEvent] = []
-        self._committed_events: tuple[WorkflowEvent, ...] = ()
-
-    def __enter__(self) -> "SqlAlchemyWatchIntentUnitOfWork":
-        self._session = self._session_factory.create_session()
-        self._staged_events = []
-        self._committed_events = ()
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: object | None,
-    ) -> None:
-        session = self._require_session()
-        try:
-            if exc_type is None:
-                self._persist_staged_events()
-                session.commit()
-                self._committed_events = tuple(self._staged_events)
-                self._logger.info(
-                    "watch_intent_uow.committed",
-                    extra={
-                        "workflow_id": (
-                            self._committed_events[0].workflow_id if self._committed_events else "-"
-                        ),
-                        "event_count": len(self._committed_events),
-                    },
-                )
-            else:
-                session.rollback()
-                self._committed_events = ()
-                self._logger.warning("watch_intent_uow.rolled_back")
-        finally:
-            self._staged_events = []
-            session.close()
-            self._session = None
+    _log_name = "watch_intent_uow"
 
     def create_watch_intent(self, watch_intent: WatchIntent) -> None:
         self._require_session().execute(
@@ -103,35 +64,4 @@ class SqlAlchemyWatchIntentUnitOfWork(WatchIntentUnitOfWork):
             update(watch_intents_table)
             .where(watch_intents_table.c.id == watch_intent_id)
             .values(status=status.value)
-        )
-
-    def stage_event(self, event: WorkflowEvent) -> None:
-        self._staged_events.append(event)
-
-    @property
-    def committed_events(self) -> tuple[WorkflowEvent, ...]:
-        return self._committed_events
-
-    def _require_session(self) -> Session:
-        if self._session is None:
-            raise RuntimeError("Watch intent unit of work must be entered before use.")
-        return self._session
-
-    def _persist_staged_events(self) -> None:
-        if not self._staged_events:
-            return
-
-        self._require_session().execute(
-            insert(workflow_events_table),
-            [
-                {
-                    "id": event.id,
-                    "event_type": event.event_type,
-                    "aggregate_id": event.aggregate_id,
-                    "workflow_id": event.workflow_id,
-                    "payload": event.payload.model_dump(mode="json"),
-                    "occurred_at": event.occurred_at,
-                }
-                for event in self._staged_events
-            ],
         )

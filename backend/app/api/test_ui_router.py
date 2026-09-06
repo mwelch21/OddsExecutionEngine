@@ -233,6 +233,9 @@ def _build_html() -> str:
       <select id="custom-method-endpoint">
         <option value="POST /execution/recommendation">POST /execution/recommendation</option>
         <option value="POST /ingestion/quotes/refresh">POST /ingestion/quotes/refresh</option>
+        <option value="POST /watch-intents">POST /watch-intents</option>
+        <option value="GET /watch-intents">GET /watch-intents</option>
+        <option value="GET /opportunities">GET /opportunities</option>
         <option value="GET /health">GET /health</option>
       </select>
       <label>Request Body (JSON)</label>
@@ -311,6 +314,35 @@ const SCENARIOS = [
     desc: "GET /health",
     method: "GET",
     endpoint: "/health",
+    body: null
+  },
+  {
+    key: "watch-intent-create",
+    label: "Create Watch Intent",
+    desc: "Watch Knicks moneyline at +120 or better",
+    method: "POST",
+    endpoint: "/watch-intents",
+    body: {
+      event_id: "nba-knicks-celtics-2026-04-11",
+      market_type: "moneyline",
+      selection: "knicks",
+      target_price: 120
+    }
+  },
+  {
+    key: "watch-intent-list",
+    label: "List Watch Intents",
+    desc: "GET /watch-intents for the fixture event",
+    method: "GET",
+    endpoint: "/watch-intents?event_id=nba-knicks-celtics-2026-04-11",
+    body: null
+  },
+  {
+    key: "opportunities-list",
+    label: "List Opportunities",
+    desc: "Signals fired by triggered watches (refresh quotes first)",
+    method: "GET",
+    endpoint: "/opportunities?event_id=nba-knicks-celtics-2026-04-11",
     body: null
   },
   {
