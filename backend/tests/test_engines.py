@@ -1,6 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-from backend.app.domain.models import MarketType, Opportunity, OrderIntent, Quote, WatchIntent
+from backend.app.domain.models import (
+    MarketType,
+    Opportunity,
+    OrderIntent,
+    Quote,
+    WatchIntent,
+    WatchStatus,
+)
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
@@ -372,7 +379,7 @@ def test_watch_evaluation_skips_cancelled_intents() -> None:
             market_type=MarketType.MONEYLINE,
             selection="knicks",
             target_price=120,
-            status="cancelled",
+            status=WatchStatus.CANCELLED,
         ),
     ]
     quotes = [

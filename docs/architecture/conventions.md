@@ -57,3 +57,11 @@
 - Add a decision entry when changing migration strategy, schema ownership, persistence layout, layer boundaries, event model boundaries, or other major architectural rules.
 - Add to conventions when the rule is general and expected to remain true across features.
 - Update both docs when a large change introduces both a one-time decision and a standing rule.
+
+## Watch intent TTL
+
+- `watch_intents.expires_at` is nullable; `NULL` means the watch has no TTL and never expires by time.
+- Expiry is a domain rule, not a query: `WatchIntent.is_expired_at` is the single definition, used by both evaluation and reads so the two cannot disagree.
+- Watches past their TTL are retired to `expired` and emit `WatchIntentExpired` **before** evaluation runs. A watch with a reachable target must never produce an opportunity after its TTL has passed.
+- Expiry is applied when an event is next evaluated, so a watch whose TTL passed while nothing refreshed is still stored as `active`. Reads project the correct status via `effective_status`; they never write. `?status=expired` therefore also scans stored-active rows, otherwise such a watch would be missing from both the active and expired listings.
+- Creating a watch whose TTL has already passed stores it, but skips the immediate evaluation: it can never fill.

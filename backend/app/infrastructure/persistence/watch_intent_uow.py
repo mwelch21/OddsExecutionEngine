@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import RowMapping, insert, select, update
+from sqlalchemy import RowMapping, Select, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from backend.app.domain.models import (
     Opportunity,
     Quote,
     WatchIntent,
+    WatchStatus,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import (
@@ -80,6 +81,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         selection: str,
         target_price: int,
         line: float | None,
+        expires_at: datetime | None = None,
     ) -> WatchIntent:
         watch_intent_id = str(uuid4())
         session = self._require_session()
@@ -91,7 +93,8 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 selection=selection,
                 line=line,
                 target_price=target_price,
-                status="active",
+                expires_at=expires_at,
+                status=WatchStatus.ACTIVE.value,
             )
         )
         # Read back to get server-generated created_at
@@ -105,7 +108,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         session.execute(
             update(watch_intents_table)
             .where(watch_intents_table.c.id == watch_intent_id)
-            .values(status="cancelled")
+            .values(status=WatchStatus.CANCELLED.value)
         )
         row = session.execute(
             select(watch_intents_table).where(watch_intents_table.c.id == watch_intent_id)
@@ -118,11 +121,63 @@ class SqlAlchemyWatchIntentUnitOfWork:
         self, event_id: str | None = None
     ) -> list[WatchIntent]:
         query = select(watch_intents_table).where(
-            watch_intents_table.c.status == "active"
+            watch_intents_table.c.status == WatchStatus.ACTIVE.value
         )
         if event_id is not None:
             query = query.where(watch_intents_table.c.event_external_id == event_id)
         rows = self._require_session().execute(query).mappings().all()
+        return [_row_to_watch_intent(row) for row in rows]
+
+    def list_watch_intents(
+        self,
+        event_id: str | None = None,
+        status: WatchStatus | None = None,
+    ) -> list[WatchIntent]:
+        query = select(watch_intents_table)
+        if event_id is not None:
+            query = query.where(watch_intents_table.c.event_external_id == event_id)
+        if status is not None:
+            query = query.where(watch_intents_table.c.status == status.value)
+        rows = (
+            self._require_session()
+            .execute(query.order_by(watch_intents_table.c.created_at))
+            .mappings()
+            .all()
+        )
+        return [_row_to_watch_intent(row) for row in rows]
+
+    def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None:
+        row = (
+            self._require_session()
+            .execute(
+                select(watch_intents_table).where(
+                    watch_intents_table.c.id == watch_intent_id
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _row_to_watch_intent(row)
+
+    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+        if not watch_intent_ids:
+            return []
+
+        session = self._require_session()
+        session.execute(
+            update(watch_intents_table)
+            .where(watch_intents_table.c.id.in_(watch_intent_ids))
+            .values(status=WatchStatus.EXPIRED.value)
+        )
+        rows = (
+            session.execute(
+                select(watch_intents_table).where(
+                    watch_intents_table.c.id.in_(watch_intent_ids)
+                )
+            )
+            .mappings()
+            .all()
+        )
         return [_row_to_watch_intent(row) for row in rows]
 
     def list_quotes(self, event_id: str) -> list[Quote]:
@@ -190,10 +245,8 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 inserted_opportunities.append(opp)
         return inserted_opportunities
 
-    def list_opportunities(
-        self, event_id: str | None = None
-    ) -> list[Opportunity]:
-        query = select(
+    def _opportunity_query(self) -> Select[tuple[object, ...]]:
+        return select(
             opportunities_table,
             watch_intents_table.c.market_type,
             watch_intents_table.c.selection,
@@ -205,12 +258,30 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 opportunities_table.c.watch_intent_id == watch_intents_table.c.id,
             )
         )
+
+    def list_opportunities(
+        self, event_id: str | None = None
+    ) -> list[Opportunity]:
+        query = self._opportunity_query()
         if event_id is not None:
             query = query.where(
                 opportunities_table.c.event_external_id == event_id
             )
         rows = self._require_session().execute(query).mappings().all()
         return [_row_to_opportunity(row) for row in rows]
+
+    def get_opportunity(self, opportunity_id: str) -> Opportunity | None:
+        row = (
+            self._require_session()
+            .execute(
+                self._opportunity_query().where(
+                    opportunities_table.c.id == opportunity_id
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _row_to_opportunity(row)
 
     def get_latest_quote_times(
         self, opportunities: list[Opportunity]
@@ -300,7 +371,8 @@ def _row_to_watch_intent(row: RowMapping) -> WatchIntent:
         selection=row["selection"],
         target_price=row["target_price"],
         line=row["line"],
-        status=row["status"],
+        expires_at=row["expires_at"],
+        status=WatchStatus(row["status"]),
         created_at=row["created_at"],
     )
 
