@@ -11,6 +11,7 @@ from backend.app.domain.models import (
     Quote,
     QuoteRefreshPersistenceResult,
     WatchIntent,
+    WatchStatus,
 )
 
 
@@ -100,9 +101,20 @@ class WatchIntentUnitOfWork(Protocol):
         selection: str,
         target_price: int,
         line: float | None,
+        expires_at: datetime | None = None,
     ) -> WatchIntent: ...
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent: ...
+
+    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+
+    def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None: ...
+
+    def list_watch_intents(
+        self,
+        event_id: str | None = None,
+        status: WatchStatus | None = None,
+    ) -> list[WatchIntent]: ...
 
     def list_active_watch_intents(
         self, event_id: str | None = None
@@ -121,6 +133,8 @@ class WatchIntentUnitOfWork(Protocol):
     def list_opportunities(
         self, event_id: str | None = None
     ) -> list[Opportunity]: ...
+
+    def get_opportunity(self, opportunity_id: str) -> Opportunity | None: ...
 
     def get_latest_quote_times(
         self, opportunities: list[Opportunity]

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.api.watch_intent_schemas import (
     CreateWatchIntentRequest,
@@ -6,6 +6,10 @@ from backend.app.api.watch_intent_schemas import (
     WatchIntentResponse,
 )
 from backend.app.application.watch_intent_service import WatchIntentService
+from backend.app.domain.models import WatchStatus
+
+EVENT_ID_QUERY = Query(default=None)
+STATUS_QUERY = Query(default=None, alias="status")
 
 
 def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
@@ -23,6 +27,7 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
             selection=request.selection,
             target_price=request.target_price,
             line=request.line,
+            expires_at=request.expires_at,
         )
         return WatchIntentResponse.from_domain(intent)
 
@@ -30,9 +35,22 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
         "/watch-intents",
         response_model=WatchIntentListResponse,
     )
-    def list_watch_intents(event_id: str | None = None) -> WatchIntentListResponse:
-        intents = service.list_watch_intents(event_id)
+    def list_watch_intents(
+        event_id: str | None = EVENT_ID_QUERY,
+        watch_status: WatchStatus | None = STATUS_QUERY,
+    ) -> WatchIntentListResponse:
+        intents = service.list_watch_intents(event_id, watch_status)
         return WatchIntentListResponse.from_domain(intents)
+
+    @router.get(
+        "/watch-intents/{watch_intent_id}",
+        response_model=WatchIntentResponse,
+    )
+    def get_watch_intent(watch_intent_id: str) -> WatchIntentResponse:
+        intent = service.get_watch_intent(watch_intent_id)
+        if intent is None:
+            raise HTTPException(status_code=404, detail="Watch intent not found")
+        return WatchIntentResponse.from_domain(intent)
 
     @router.delete(
         "/watch-intents/{watch_intent_id}",

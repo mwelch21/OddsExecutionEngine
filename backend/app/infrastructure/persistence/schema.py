@@ -111,6 +111,7 @@ watch_intents_table = Table(
     Column("selection", String(length=64), nullable=False),
     Column("line", Float, nullable=True),
     Column("target_price", Integer, nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
     Column("status", String(length=16), nullable=False, server_default="active"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )

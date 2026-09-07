@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
-from backend.app.domain.models import MarketType, WatchIntent
+from backend.app.domain.models import MarketType, WatchIntent, WatchStatus
 
 
 class CreateWatchIntentRequest(BaseModel):
@@ -11,6 +11,7 @@ class CreateWatchIntentRequest(BaseModel):
     selection: str = Field(min_length=1)
     line: float | None = None
     target_price: int
+    expires_at: datetime | None = None
 
     @model_validator(mode="after")
     def validate_market_fields(self) -> "CreateWatchIntentRequest":
@@ -33,7 +34,8 @@ class WatchIntentResponse(BaseModel):
     selection: str
     target_price: int
     line: float | None
-    status: str
+    expires_at: datetime | None
+    status: WatchStatus
     created_at: datetime | None
 
     @classmethod
@@ -45,6 +47,7 @@ class WatchIntentResponse(BaseModel):
             selection=intent.selection,
             target_price=intent.target_price,
             line=intent.line,
+            expires_at=intent.expires_at,
             status=intent.status,
             created_at=intent.created_at,
         )
