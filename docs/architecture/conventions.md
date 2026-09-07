@@ -66,3 +66,9 @@
 - Watch reads, opportunity creation, watch status updates, and staged events for one evaluation pass belong to a single `WatchEvaluationUnitOfWork` transaction.
 - Cancellation is a soft status change, never a row delete: terminal watch states must stay auditable.
 - Cross-service orchestration between quote ingestion and watch evaluation stays in the router until pub/sub exists (see ADR-008).
+
+## Stage 5 known limitations
+
+- Watch triggering is one-shot: a watch reaches `triggered` and is never evaluated again. Re-armable watches cannot simply reset the status to `active` — fillability is a bare `price >= target` comparison with no memory, so a price resting at or oscillating around the target would emit a signal on every quote refresh. Re-arm requires hysteresis, a cooldown, or a max-fire cap, and is a design decision rather than a status change.
+- Creating a watch does not evaluate it. A watch whose target is already met stays `active` until the next quote refresh for its event.
+- There is no user or ownership concept yet. `watch_intents` and `opportunity_signals` carry no owner, and the watch/opportunity read and cancel endpoints are unscoped. Evaluation itself already fans out correctly — every active watch is evaluated independently and produces its own signal — so ownership is an additive change, not a redesign.

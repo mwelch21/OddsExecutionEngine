@@ -96,6 +96,9 @@ class WatchEvaluationService:
             extra={
                 "workflow_id": evaluation_id,
                 "event_id": event_id,
+                "evaluated_watch_count": summary.evaluated_watch_count,
+                "triggered_watch_count": summary.triggered_watch_count,
+                "expired_watch_count": summary.expired_watch_count,
                 "event_count": len(summary.emitted_event_types),
                 "duration_ms": elapsed_ms(started_at),
             },
