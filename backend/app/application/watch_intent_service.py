@@ -10,12 +10,14 @@ from backend.app.domain.events import (
     build_opportunity_identified_event,
     build_watch_intent_cancelled_event,
     build_watch_intent_created_event,
+    build_watch_intent_expired_event,
 )
 from backend.app.domain.models import (
     MarketType,
     Opportunity,
     OpportunityWithValidity,
     WatchIntent,
+    WatchStatus,
 )
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
@@ -45,6 +47,7 @@ class WatchIntentService:
         selection: str,
         target_price: int,
         line: float | None = None,
+        expires_at: datetime | None = None,
     ) -> WatchIntent:
         started_at = perf_counter()
         inserted_opportunities: list[Opportunity] = []
@@ -67,6 +70,7 @@ class WatchIntentService:
                     selection=selection,
                     target_price=target_price,
                     line=line,
+                    expires_at=expires_at,
                 )
 
                 uow.stage_event(
@@ -76,14 +80,17 @@ class WatchIntentService:
                     )
                 )
 
-                # Immediate evaluation against current quotes
-                quotes = uow.list_quotes(event_id)
-                market_id_lookup = uow.get_market_id_lookup(event_id)
-                new_opportunities = self._watch_evaluation_engine.evaluate(
-                    watch_intents=[intent],
-                    quotes=quotes,
-                    market_id_lookup=market_id_lookup,
-                )
+                # Immediate evaluation against current quotes. A watch created with a
+                # TTL already in the past can never fill, so it is not evaluated.
+                new_opportunities: list[Opportunity] = []
+                if not intent.is_expired_at(datetime.now(UTC)):
+                    quotes = uow.list_quotes(event_id)
+                    market_id_lookup = uow.get_market_id_lookup(event_id)
+                    new_opportunities = self._watch_evaluation_engine.evaluate(
+                        watch_intents=[intent],
+                        quotes=quotes,
+                        market_id_lookup=market_id_lookup,
+                    )
 
                 if new_opportunities:
                     inserted_opportunities = uow.create_opportunities(new_opportunities)
@@ -154,32 +161,58 @@ class WatchIntentService:
         )
         return intent
 
-    def list_watch_intents(
-        self, event_id: str | None = None
-    ) -> list[WatchIntent]:
+    def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None:
         now = datetime.now(UTC)
         with self._unit_of_work_factory() as uow:
-            intents = uow.list_active_watch_intents(event_id)
-            if not intents:
-                return []
+            intent = uow.get_watch_intent(watch_intent_id)
 
-            # Batch-check event start times to filter expired intents
-            event_ids = {i.event_id for i in intents}
-            starts_at_map: dict[str, datetime | None] = {}
-            for eid in event_ids:
-                starts_at_map[eid] = uow.get_event_starts_at(eid)
+        return None if intent is None else intent.with_effective_status(now)
 
-        active: list[WatchIntent] = []
-        for intent in intents:
-            starts_at = starts_at_map.get(intent.event_id)
-            if starts_at is None:
-                active.append(intent)
-                continue
-            # Handle naive datetimes from SQLite
-            sa = starts_at if starts_at.tzinfo else starts_at.replace(tzinfo=UTC)
-            if sa > now:
-                active.append(intent)
-        return active
+    def list_watch_intents(
+        self,
+        event_id: str | None = None,
+        status: WatchStatus | None = None,
+    ) -> list[WatchIntent]:
+        """List watches, defaulting to those that can still produce an opportunity.
+
+        Without a status filter this means stored-active, TTL not passed, and on an
+        event that has not started.
+        """
+        now = datetime.now(UTC)
+
+        with self._unit_of_work_factory() as uow:
+            stored = uow.list_watch_intents(event_id=event_id, status=status)
+            if status is WatchStatus.EXPIRED:
+                # A watch whose TTL passed before the next evaluation is stored active,
+                # so scanning only stored-expired rows would hide it from both filters.
+                stored = stored + uow.list_watch_intents(
+                    event_id=event_id,
+                    status=WatchStatus.ACTIVE,
+                )
+
+            wanted = status if status is not None else WatchStatus.ACTIVE
+            intents = [
+                projected
+                for projected in (intent.with_effective_status(now) for intent in stored)
+                if projected.status is wanted
+            ]
+
+            if wanted is not WatchStatus.ACTIVE or not intents:
+                return _sorted_by_creation(intents, now)
+
+            starts_at_map = {
+                event: uow.get_event_starts_at(event)
+                for event in {intent.event_id for intent in intents}
+            }
+
+        return _sorted_by_creation(
+            [
+                intent
+                for intent in intents
+                if not _event_has_started(starts_at_map.get(intent.event_id), now)
+            ],
+            now,
+        )
 
     def list_opportunities(
         self, event_id: str | None = None
@@ -196,6 +229,20 @@ class WatchIntentService:
             ttl_minutes=self._opportunity_ttl_minutes,
             now=now,
         )
+
+    def get_opportunity(self, opportunity_id: str) -> OpportunityWithValidity | None:
+        now = datetime.now(UTC)
+        with self._unit_of_work_factory() as uow:
+            opportunity = uow.get_opportunity(opportunity_id)
+            if opportunity is None:
+                return None
+            items = uow.get_latest_quote_times([opportunity])
+
+        return self._opportunity_validity_engine.check_validity_batch(
+            items=items,
+            ttl_minutes=self._opportunity_ttl_minutes,
+            now=now,
+        )[0]
 
     def evaluate_for_event(self, event_id: str) -> list[Opportunity]:
         started_at = perf_counter()
@@ -220,23 +267,35 @@ class WatchIntentService:
                         return []
 
                 intents = uow.list_active_watch_intents(event_id)
-                if not intents:
-                    return []
 
-                quotes = uow.list_quotes(event_id)
-                if not quotes:
-                    return []
+                # Watches past their TTL are retired before evaluation and never
+                # evaluated: a reachable target must not fill an expired watch.
+                expired = [intent for intent in intents if intent.is_expired_at(now)]
+                for retired in uow.expire_watch_intents([i.id for i in expired]):
+                    uow.stage_event(
+                        build_watch_intent_expired_event(
+                            watch_intent_id=retired.id,
+                            intent=retired,
+                        )
+                    )
 
-                market_id_lookup = uow.get_market_id_lookup(event_id)
-                intent_ids = [i.id for i in intents]
-                existing_keys = uow.list_existing_opportunity_keys(intent_ids)
+                live = [intent for intent in intents if not intent.is_expired_at(now)]
+                quotes = uow.list_quotes(event_id) if live else []
+                evaluated: list[Opportunity] = []
 
-                new_opportunities = self._watch_evaluation_engine.evaluate(
-                    watch_intents=intents,
-                    quotes=quotes,
-                    market_id_lookup=market_id_lookup,
-                    existing_opportunity_keys=existing_keys,
-                )
+                if live and quotes:
+                    market_id_lookup = uow.get_market_id_lookup(event_id)
+                    existing_keys = uow.list_existing_opportunity_keys(
+                        [i.id for i in live]
+                    )
+                    evaluated = self._watch_evaluation_engine.evaluate(
+                        watch_intents=live,
+                        quotes=quotes,
+                        market_id_lookup=market_id_lookup,
+                        existing_opportunity_keys=existing_keys,
+                    )
+
+                new_opportunities = evaluated
 
                 if new_opportunities:
                     inserted_opportunities = uow.create_opportunities(new_opportunities)
@@ -269,3 +328,15 @@ class WatchIntentService:
             },
         )
         return inserted_opportunities
+
+
+def _event_has_started(starts_at: datetime | None, now: datetime) -> bool:
+    if starts_at is None:
+        return False
+
+    aware = starts_at if starts_at.tzinfo else starts_at.replace(tzinfo=UTC)
+    return aware <= now
+
+
+def _sorted_by_creation(intents: list[WatchIntent], now: datetime) -> list[WatchIntent]:
+    return sorted(intents, key=lambda intent: intent.created_at or now)

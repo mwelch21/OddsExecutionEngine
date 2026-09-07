@@ -2,7 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.events import WorkflowEvent
-from backend.app.domain.models import MarketType, Opportunity, Quote, WatchIntent
+from backend.app.domain.models import (
+    MarketType,
+    Opportunity,
+    Quote,
+    WatchIntent,
+    WatchStatus,
+)
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
@@ -27,6 +33,8 @@ class RecordingWatchIntentUnitOfWork:
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
         self.created_batches: list[list[Opportunity]] = []
+
+        self.expired_ids: list[str] = []
 
     def __enter__(self) -> "RecordingWatchIntentUnitOfWork":
         self._staged_events = []
@@ -53,11 +61,47 @@ class RecordingWatchIntentUnitOfWork:
         selection: str,
         target_price: int,
         line: float | None,
+        expires_at: datetime | None = None,
     ) -> WatchIntent:
         return self._created_intent
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
         raise NotImplementedError
+
+    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+        self.expired_ids.extend(watch_intent_ids)
+        expired = [
+            intent.model_copy(update={"status": WatchStatus.EXPIRED})
+            for intent in self._active_intents
+            if intent.id in set(watch_intent_ids)
+        ]
+        self._active_intents = [
+            intent
+            for intent in self._active_intents
+            if intent.id not in set(watch_intent_ids)
+        ]
+        return expired
+
+    def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None:
+        return next(
+            (intent for intent in self._active_intents if intent.id == watch_intent_id),
+            None,
+        )
+
+    def list_watch_intents(
+        self,
+        event_id: str | None = None,
+        status: WatchStatus | None = None,
+    ) -> list[WatchIntent]:
+        return [
+            intent
+            for intent in self._active_intents
+            if (event_id is None or intent.event_id == event_id)
+            and (status is None or intent.status is status)
+        ]
+
+    def get_opportunity(self, opportunity_id: str) -> Opportunity | None:
+        return None
 
     def list_active_watch_intents(
         self, event_id: str | None = None

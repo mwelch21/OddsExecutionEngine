@@ -226,6 +226,17 @@ class WatchIntentCreated(WorkflowEvent):
     payload: WatchIntentCreatedPayload
 
 
+class WatchIntentExpiredPayload(DomainModel):
+    watch_intent_id: str
+    event_id: str
+    expires_at: datetime | None = None
+
+
+class WatchIntentExpired(WorkflowEvent):
+    event_type: Literal["WatchIntentExpired"] = "WatchIntentExpired"
+    payload: WatchIntentExpiredPayload
+
+
 class WatchIntentCancelled(WorkflowEvent):
     event_type: Literal["WatchIntentCancelled"] = "WatchIntentCancelled"
     payload: WatchIntentCancelledPayload
@@ -270,6 +281,24 @@ def build_watch_intent_cancelled_event(
             event_id=intent.event_id,
             market_type=intent.market_type.value,
             selection=intent.selection,
+        ),
+    )
+
+
+def build_watch_intent_expired_event(
+    *,
+    watch_intent_id: str,
+    intent: WatchIntent,
+) -> WatchIntentExpired:
+    return WatchIntentExpired(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent_id,
+        workflow_id=watch_intent_id,
+        payload=WatchIntentExpiredPayload(
+            watch_intent_id=watch_intent_id,
+            event_id=intent.event_id,
+            expires_at=intent.expires_at,
         ),
     )
 
