@@ -203,3 +203,82 @@ def test_cancel_watch_returns_none_for_unknown_id() -> None:
 
     assert service.cancel_watch("missing") is None
     assert publisher.published_events == []
+
+
+def _build_watch_expiring(expires_at: datetime, watch_id: str = "watch-ttl") -> WatchIntent:
+    return WatchIntent(
+        id=watch_id,
+        event_id="event-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+        expires_at=expires_at,
+        status=WatchStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+    )
+
+
+def test_watch_past_its_expiry_reads_as_expired_before_evaluation_corrects_it() -> None:
+    unit_of_work = RecordingWatchIntentUnitOfWork(
+        watches=[_build_watch_expiring(datetime.now(UTC) - timedelta(minutes=1))]
+    )
+    service, _ = _build_service(unit_of_work)
+
+    watch = service.get_watch("watch-ttl")
+
+    assert watch is not None
+    assert watch.status is WatchStatus.EXPIRED
+    assert unit_of_work.watches[0].status is WatchStatus.ACTIVE
+
+
+def test_watch_with_future_expiry_still_reads_as_active() -> None:
+    unit_of_work = RecordingWatchIntentUnitOfWork(
+        watches=[_build_watch_expiring(datetime.now(UTC) + timedelta(minutes=1))]
+    )
+    service, _ = _build_service(unit_of_work)
+
+    watch = service.get_watch("watch-ttl")
+
+    assert watch is not None
+    assert watch.status is WatchStatus.ACTIVE
+
+
+def test_active_filter_excludes_watches_past_their_expiry() -> None:
+    unit_of_work = RecordingWatchIntentUnitOfWork(
+        watches=[
+            _build_watch(watch_id="live"),
+            _build_watch_expiring(datetime.now(UTC) - timedelta(minutes=1), "dead"),
+        ]
+    )
+    service, _ = _build_service(unit_of_work)
+
+    assert [w.id for w in service.list_watches(status=WatchStatus.ACTIVE)] == ["live"]
+
+
+def test_expired_filter_includes_watches_past_their_expiry() -> None:
+    unit_of_work = RecordingWatchIntentUnitOfWork(
+        watches=[
+            _build_watch(watch_id="live"),
+            _build_watch_expiring(datetime.now(UTC) - timedelta(minutes=1), "dead"),
+        ]
+    )
+    service, _ = _build_service(unit_of_work)
+
+    expired = service.list_watches(status=WatchStatus.EXPIRED)
+
+    assert [w.id for w in expired] == ["dead"]
+    assert expired[0].status is WatchStatus.EXPIRED
+
+
+def test_unfiltered_list_reports_effective_status_without_dropping_rows() -> None:
+    unit_of_work = RecordingWatchIntentUnitOfWork(
+        watches=[
+            _build_watch(watch_id="live"),
+            _build_watch_expiring(datetime.now(UTC) - timedelta(minutes=1), "dead"),
+        ]
+    )
+    service, _ = _build_service(unit_of_work)
+
+    listed = {w.id: w.status for w in service.list_watches()}
+
+    assert listed == {"live": WatchStatus.ACTIVE, "dead": WatchStatus.EXPIRED}

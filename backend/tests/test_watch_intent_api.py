@@ -143,3 +143,38 @@ def test_delete_watch_intent_soft_cancels_and_is_idempotent(sqlite_database_url:
 
     assert stored_watch["status"] == "cancelled"
     assert event_types == ["WatchIntentSubmitted", "WatchIntentCancelled"]
+
+
+def test_watch_past_expiry_reads_as_expired_without_any_quote_refresh(
+    sqlite_database_url: str,
+) -> None:
+    expires_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+
+    with TestClient(_build_app(sqlite_database_url)) as client:
+        created = client.post(
+            "/watch-intents",
+            json=_create_watch_payload(expires_at=expires_at),
+        ).json()
+        live = client.post("/watch-intents", json=_create_watch_payload()).json()
+
+        fetched = client.get(f"/watch-intents/{created['id']}").json()
+        active_listing = client.get("/watch-intents", params={"status": "active"}).json()
+        expired_listing = client.get("/watch-intents", params={"status": "expired"}).json()
+        full_listing = client.get("/watch-intents").json()
+
+    assert fetched["status"] == "expired"
+    assert [w["id"] for w in active_listing["watch_intents"]] == [live["id"]]
+    assert [w["id"] for w in expired_listing["watch_intents"]] == [created["id"]]
+    assert len(full_listing["watch_intents"]) == 2
+
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        stored = (
+            session.execute(
+                select(watch_intents_table).where(watch_intents_table.c.id == created["id"])
+            )
+            .mappings()
+            .one()
+        )
+
+    assert stored["status"] == "active"

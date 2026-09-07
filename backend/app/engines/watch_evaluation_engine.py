@@ -33,7 +33,7 @@ class WatchEvaluationEngine:
         triggered: list[TriggeredWatch] = []
 
         for watch_intent in watch_intents:
-            if _is_expired(watch_intent, now):
+            if watch_intent.is_expired_at(now):
                 expired.append(watch_intent)
                 continue
 
@@ -61,7 +61,3 @@ class WatchEvaluationEngine:
         ]
         ranked_quotes = self._recommendation_engine.rank_quotes(fillable_quotes)
         return ranked_quotes[0] if ranked_quotes else None
-
-
-def _is_expired(watch_intent: WatchIntent, now: datetime) -> bool:
-    return watch_intent.expires_at is not None and watch_intent.expires_at <= now

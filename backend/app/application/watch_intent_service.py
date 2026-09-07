@@ -81,12 +81,33 @@ class WatchIntentService:
         event_id: str | None = None,
         status: WatchStatus | None = None,
     ) -> list[WatchIntent]:
+        now = datetime.now(UTC)
+
         with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.list_watch_intents(event_id=event_id, status=status)
+            stored = unit_of_work.list_watch_intents(
+                event_id=event_id,
+                status=status,
+            )
+            if status is WatchStatus.EXPIRED:
+                # A watch whose TTL passed with no refresh is still stored as active.
+                stored = stored + unit_of_work.list_watch_intents(
+                    event_id=event_id,
+                    status=WatchStatus.ACTIVE,
+                )
+
+        projected = [watch.with_effective_status(now) for watch in stored]
+        if status is not None:
+            projected = [watch for watch in projected if watch.status is status]
+
+        return sorted(projected, key=lambda watch: watch.created_at)
 
     def get_watch(self, watch_intent_id: str) -> WatchIntent | None:
+        now = datetime.now(UTC)
+
         with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.get_watch_intent(watch_intent_id)
+            watch_intent = unit_of_work.get_watch_intent(watch_intent_id)
+
+        return None if watch_intent is None else watch_intent.with_effective_status(now)
 
     def cancel_watch(self, watch_intent_id: str) -> WatchIntent | None:
         started_at = perf_counter()

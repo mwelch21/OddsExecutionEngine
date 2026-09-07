@@ -65,10 +65,12 @@
 - Watch evaluation reuses `PriceComparisonService` so watch fillability and recommendation fillability cannot diverge.
 - Watch reads, opportunity creation, watch status updates, and staged events for one evaluation pass belong to a single `WatchEvaluationUnitOfWork` transaction.
 - Cancellation is a soft status change, never a row delete: terminal watch states must stay auditable.
-- Cross-service orchestration between quote ingestion and watch evaluation stays in the router until pub/sub exists (see ADR-008).
+- Cross-service orchestration between quote ingestion and watch evaluation stays in the router until pub/sub exists (see ADR-008). Measured cost of inline evaluation: flat below ~2k active watches on one event, then linear at roughly 9µs per watch (10 quotes per refresh). Refresh doubles at ~10k watches on a single event. Cost is O(watches × quotes), so more books and markets move that threshold down proportionally.
+- `opportunity_signals` carries `line` even though issue #11's column list omits it: market identity in this repo is `(event, market_type, selection, line_key)` per `uq_markets_identity`, so a signal without `line` cannot identify its own market for spread and total watches.
 
 ## Stage 5 known limitations
 
 - Watch triggering is one-shot: a watch reaches `triggered` and is never evaluated again. Re-armable watches cannot simply reset the status to `active` — fillability is a bare `price >= target` comparison with no memory, so a price resting at or oscillating around the target would emit a signal on every quote refresh. Re-arm requires hysteresis, a cooldown, or a max-fire cap, and is a design decision rather than a status change.
-- Creating a watch does not evaluate it. A watch whose target is already met stays `active` until the next quote refresh for its event.
+- Creating a watch does not evaluate it. A watch whose target is already met stays `active` until the next quote refresh for its event. This is intended: the watch is picked up by the first sweep, and evaluating at creation would couple the create path to the evaluation service for no correctness gain.
+- Expiry stays lazy in storage, but reads project it. `WatchIntent.effective_status` reports a stored-`active` watch as `expired` once `expires_at` has passed, so `?status=active` never returns a watch that can no longer trigger. The stored row is still corrected by the next evaluation; reads never write.
 - There is no user or ownership concept yet. `watch_intents` and `opportunity_signals` carry no owner, and the watch/opportunity read and cancel endpoints are unscoped. Evaluation itself already fans out correctly — every active watch is evaluated independently and produces its own signal — so ownership is an additive change, not a redesign.

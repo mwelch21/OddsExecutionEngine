@@ -45,6 +45,28 @@ class WatchIntent(DomainModel):
     status: WatchStatus
     created_at: datetime
 
+    def is_expired_at(self, now: datetime) -> bool:
+        return self.expires_at is not None and self.expires_at <= now
+
+    def effective_status(self, now: datetime) -> WatchStatus:
+        """Status a reader should see.
+
+        Expiry is applied lazily during evaluation, so a watch whose TTL passed while
+        no quotes refreshed is still stored as `active`. It will never trigger, so
+        reads must not present it as live.
+        """
+        if self.status is WatchStatus.ACTIVE and self.is_expired_at(now):
+            return WatchStatus.EXPIRED
+
+        return self.status
+
+    def with_effective_status(self, now: datetime) -> "WatchIntent":
+        status = self.effective_status(now)
+        if status is self.status:
+            return self
+
+        return self.model_copy(update={"status": status})
+
 
 class Quote(DomainModel):
     event_id: str
