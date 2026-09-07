@@ -13,6 +13,17 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Closing issues from a pull request
+
+The default branch is `development`. GitHub only honours `Closes #N` when a pull request merges into the **default** branch, so:
+
+- Pull requests must target `development` for their closing trailers to fire.
+- A pull request targeting `main` merges normally but leaves its issue **open**, with no warning. Check `gh pr view <n> --json closingIssuesReferences` after opening a PR: an empty array means nothing will close, and the usual cause is the wrong base branch.
+- When work does ship without its trailer firing, close the issue with `gh issue close <n> --comment "..."` and record what delivered it, rather than closing it silently.
+
+Promotion to `main` happens through `development` -> `main` pull requests, which do not close issues.
+
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_

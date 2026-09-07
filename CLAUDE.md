@@ -66,6 +66,26 @@ docker compose exec -T api uv run pytest
 ./scripts/verify_stage2_5.sh
 ```
 
+## Branching and Pull Requests
+
+`development` is the default branch and the integration target. `main` is the promotion target.
+
+```
+feature branch  ->  development  ->  main
+```
+
+- Cut feature branches from `development`, and open pull requests **against `development`**.
+- Promote with a `development` -> `main` pull request when a batch of work is ready.
+- Never push directly to `development` or `main`. Both are protected; a direct push is rejected with `protected branch hook declined`.
+
+### Closing issues from a pull request
+
+GitHub only honours `Closes #N` when the pull request merges into the **default** branch, which is `development`.
+
+A pull request targeting `main` will merge fine and silently leave its issue open. That is not a formatting problem and re-wording the trailer will not fix it — the base branch is wrong. Retarget to `development`, or close the issue by hand and say why.
+
+This has already bitten this repo: #16 and #18 both targeted `main`, so #11, #12, and #13 had to be closed manually after the work shipped.
+
 ## Project Layout
 
 ```
