@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     MarketType,
+    MatchingQuote,
     Opportunity,
     Quote,
     WatchIntent,
@@ -180,6 +181,28 @@ class SqlAlchemyWatchIntentUnitOfWork:
         )
         return [_row_to_watch_intent(row) for row in rows]
 
+    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+        """Retire watches that produced an opportunity. Terminal: they never re-arm."""
+        if not watch_intent_ids:
+            return []
+
+        session = self._require_session()
+        session.execute(
+            update(watch_intents_table)
+            .where(watch_intents_table.c.id.in_(watch_intent_ids))
+            .values(status=WatchStatus.TRIGGERED.value)
+        )
+        rows = (
+            session.execute(
+                select(watch_intents_table).where(
+                    watch_intents_table.c.id.in_(watch_intent_ids)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [_row_to_watch_intent(row) for row in rows]
+
     def list_quotes(self, event_id: str) -> list[Quote]:
         rows = self._require_session().execute(
             select(
@@ -286,13 +309,18 @@ class SqlAlchemyWatchIntentUnitOfWork:
     def get_latest_quote_times(
         self, opportunities: list[Opportunity]
     ) -> list[tuple[Opportunity, datetime | None]]:
+        """Quote time per opportunity, read from the best book only.
+
+        Staleness means the headline price moved or vanished. A non-best book
+        changing is irrelevant — the reader was never going to use it.
+        """
         result: list[tuple[Opportunity, datetime | None]] = []
         session = self._require_session()
         for opp in opportunities:
             row = session.execute(
                 select(market_quotes_latest_table.c.quoted_at).where(
                     market_quotes_latest_table.c.market_id == opp.market_id,
-                    market_quotes_latest_table.c.sportsbook == opp.sportsbook,
+                    market_quotes_latest_table.c.sportsbook == opp.best_sportsbook,
                 )
             ).scalar_one_or_none()
             result.append((opp, row))
@@ -304,25 +332,6 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 events_table.c.external_id == event_external_id
             )
         ).scalar_one_or_none()
-
-    def list_existing_opportunity_keys(
-        self, watch_intent_ids: list[str]
-    ) -> set[tuple[str, str, str]]:
-        if not watch_intent_ids:
-            return set()
-        rows = self._require_session().execute(
-            select(
-                opportunities_table.c.watch_intent_id,
-                opportunities_table.c.market_id,
-                opportunities_table.c.sportsbook,
-            ).where(
-                opportunities_table.c.watch_intent_id.in_(watch_intent_ids)
-            )
-        ).mappings().all()
-        return {
-            (row["watch_intent_id"], row["market_id"], row["sportsbook"])
-            for row in rows
-        }
 
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)
@@ -397,8 +406,12 @@ def _row_to_opportunity(row: RowMapping) -> Opportunity:
         market_type=MarketType(row["market_type"]),
         selection=row["selection"],
         target_price=row["target_price"],
-        sportsbook=row["sportsbook"],
-        matched_price=row["matched_price"],
+        best_sportsbook=row["best_sportsbook"],
+        best_price=row["best_price"],
+        matching_quotes=[
+            MatchingQuote(sportsbook=quote["sportsbook"], price=quote["price"])
+            for quote in row["matching_quotes"]
+        ],
         line=row["line"],
         created_at=row["created_at"],
     )
@@ -420,10 +433,13 @@ def _build_opportunity_insert_statement(
         "watch_intent_id": opportunity.watch_intent_id,
         "event_external_id": opportunity.event_id,
         "market_id": opportunity.market_id,
-        "sportsbook": opportunity.sportsbook,
-        "matched_price": opportunity.matched_price,
+        "best_sportsbook": opportunity.best_sportsbook,
+        "best_price": opportunity.best_price,
+        "matching_quotes": [
+            quote.model_dump(mode="json") for quote in opportunity.matching_quotes
+        ],
     }
-    conflict_columns = ["watch_intent_id", "market_id", "sportsbook"]
+    conflict_columns = ["watch_intent_id"]
 
     if dialect_name == "postgresql":
         return postgresql_insert(opportunities_table).values(

@@ -51,16 +51,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_logger = logging.getLogger(__name__)
     workflow_event_publisher = LoggingWorkflowEventPublisher()
     price_comparison_service = PriceComparisonService()
+    recommendation_engine = RecommendationEngine(price_comparison_service)
     recommendation_service = RecommendationService(
         unit_of_work_factory=lambda: SqlAlchemyRecommendationUnitOfWork(session_factory),
         workflow_event_publisher=workflow_event_publisher,
         quote_matching_engine=QuoteMatchingEngine(),
-        recommendation_engine=RecommendationEngine(price_comparison_service),
+        recommendation_engine=recommendation_engine,
     )
     watch_intent_service = WatchIntentService(
         unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
         workflow_event_publisher=workflow_event_publisher,
-        watch_evaluation_engine=WatchEvaluationEngine(price_comparison_service),
+        watch_evaluation_engine=WatchEvaluationEngine(
+            price_comparison_service,
+            recommendation_engine,
+        ),
         opportunity_validity_engine=OpportunityValidityEngine(),
         opportunity_ttl_minutes=app_settings.opportunity_ttl_minutes,
     )

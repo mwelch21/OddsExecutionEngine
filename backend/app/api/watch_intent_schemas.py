@@ -2,7 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
-from backend.app.domain.models import MarketType, WatchIntent, WatchStatus
+from backend.app.api.opportunity_schemas import MatchingQuoteResponse
+from backend.app.domain.models import (
+    MarketType,
+    Opportunity,
+    WatchIntent,
+    WatchIntentCreationResult,
+    WatchStatus,
+)
 
 
 class CreateWatchIntentRequest(BaseModel):
@@ -50,6 +57,52 @@ class WatchIntentResponse(BaseModel):
             expires_at=intent.expires_at,
             status=intent.status,
             created_at=intent.created_at,
+        )
+
+
+class IdentifiedOpportunityResponse(BaseModel):
+    """The opportunity a watch filled on creation.
+
+    No `is_valid` flag: this is what was true in the transaction that just
+    committed, so a freshness check here would be answering a question nobody
+    asked. Re-read `GET /opportunities/{id}` for that.
+    """
+
+    id: str
+    best_sportsbook: str
+    best_price: int
+    matching_quotes: list[MatchingQuoteResponse]
+
+    @classmethod
+    def from_domain(cls, opportunity: Opportunity) -> "IdentifiedOpportunityResponse":
+        return cls(
+            id=opportunity.id,
+            best_sportsbook=opportunity.best_sportsbook,
+            best_price=opportunity.best_price,
+            matching_quotes=[
+                MatchingQuoteResponse(sportsbook=quote.sportsbook, price=quote.price)
+                for quote in opportunity.matching_quotes
+            ],
+        )
+
+
+class CreateWatchIntentResponse(WatchIntentResponse):
+    """A created watch, plus the opportunity if it filled immediately."""
+
+    opportunity: IdentifiedOpportunityResponse | None = None
+
+    @classmethod
+    def from_creation(
+        cls, result: WatchIntentCreationResult
+    ) -> "CreateWatchIntentResponse":
+        base = WatchIntentResponse.from_domain(result.watch_intent)
+        return cls(
+            **base.model_dump(),
+            opportunity=(
+                None
+                if result.opportunity is None
+                else IdentifiedOpportunityResponse.from_domain(result.opportunity)
+            ),
         )
 
 

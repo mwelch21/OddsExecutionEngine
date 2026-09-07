@@ -63,6 +63,7 @@ class WatchStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
     CANCELLED = "cancelled"
+    TRIGGERED = "triggered"
 
 
 class WatchIntent(DomainModel):
@@ -107,7 +108,21 @@ class WatchIntent(DomainModel):
         return self.model_copy(update={"status": status})
 
 
+class MatchingQuote(DomainModel):
+    """One book that was fillable when the opportunity was identified."""
+
+    sportsbook: str
+    price: int
+
+
 class Opportunity(DomainModel):
+    """A watch's single terminal hit, carrying every book that was fillable.
+
+    `matching_quotes` is the snapshot taken at detection time, ranked best-first.
+    `best_sportsbook` / `best_price` mirror its head so the common query stays
+    SQL-native, and staleness is judged against the best book alone.
+    """
+
     id: str
     watch_intent_id: str
     event_id: str
@@ -115,8 +130,9 @@ class Opportunity(DomainModel):
     market_type: MarketType
     selection: str
     target_price: int
-    sportsbook: str
-    matched_price: int
+    best_sportsbook: str
+    best_price: int
+    matching_quotes: list[MatchingQuote]
     line: float | None = None
     created_at: datetime | None = None
 
@@ -127,9 +143,16 @@ class OpportunityWithValidity(DomainModel):
     reason: str | None = None
 
 
-class WatchEvaluationResult(DomainModel):
+class WatchIntentCreationResult(DomainModel):
+    """What creating a watch produced, including an opportunity it filled at once.
+
+    Creation still evaluates immediately, so a watch can come back already
+    `triggered`. Returning the opportunity with it saves the caller a second
+    request to learn an answer the same transaction already computed.
+    """
+
     watch_intent: WatchIntent
-    opportunities: list[Opportunity]
+    opportunity: Opportunity | None = None
 
 
 class EventParticipant(DomainModel):

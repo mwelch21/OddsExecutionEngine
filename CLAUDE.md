@@ -122,12 +122,11 @@ Implemented:
 
 - `QuotesRefreshed`, `QuoteUpdated`, `MarketSnapshotCreated`
 - `OrderIntentSubmitted`, `ExecutionRecommendationGenerated`
-- `WatchIntentCreated`, `WatchIntentCancelled`
+- `WatchIntentCreated`, `WatchIntentCancelled`, `WatchIntentExpired`, `WatchIntentTriggered`
 - `OpportunityIdentified`
 
 Planned, not yet implemented (do not assume these exist in code):
 
-- `WatchIntentExpired` (pending in PR #16, not on `main` yet)
 - `TargetPriceStillUnfilled`, `MarketMovedAwayFromTarget` (nearest-miss / drift signals)
 - `AIExplanationGenerated` (depends on the AI layer, which has not been built)
 
@@ -172,10 +171,12 @@ Ingestion:
 
 Monitoring:
 
-- `POST /watch-intents`
-- `GET /watch-intents` (optional `event_id` filter)
-- `DELETE /watch-intents/{id}`
+- `POST /watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
+- `GET /watch-intents` (optional `event_id` and `status` filters)
+- `GET /watch-intents/{id}`
+- `DELETE /watch-intents/{id}` (409 if the watch already `triggered`)
 - `GET /opportunities` (optional `event_id` filter)
+- `GET /opportunities/{id}`
 
 Dev only:
 

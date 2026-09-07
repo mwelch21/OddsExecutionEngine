@@ -5,6 +5,7 @@ from uuid import uuid4
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import (
     ExecutionRecommendation,
+    MatchingQuote,
     Opportunity,
     OrderIntent,
     PersistedQuote,
@@ -215,8 +216,9 @@ class OpportunityIdentifiedPayload(DomainModel):
     event_id: str
     market_type: str
     selection: str
-    sportsbook: str
-    matched_price: int
+    best_sportsbook: str
+    best_price: int
+    matching_quotes: list[MatchingQuote]
     target_price: int
     line: float | None = None
 
@@ -240,6 +242,25 @@ class WatchIntentExpired(WorkflowEvent):
 class WatchIntentCancelled(WorkflowEvent):
     event_type: Literal["WatchIntentCancelled"] = "WatchIntentCancelled"
     payload: WatchIntentCancelledPayload
+
+
+class WatchIntentTriggeredPayload(DomainModel):
+    watch_intent_id: str
+    event_id: str
+    opportunity_id: str
+    best_sportsbook: str
+    best_price: int
+
+
+class WatchIntentTriggered(WorkflowEvent):
+    """Audit trail for the watch's terminal transition, not a user notification.
+
+    Without it, `triggered` would be the only watch exit not reconstructable from
+    watch events alone. The user-facing alert is `OpportunityIdentified`.
+    """
+
+    event_type: Literal["WatchIntentTriggered"] = "WatchIntentTriggered"
+    payload: WatchIntentTriggeredPayload
 
 
 class OpportunityIdentified(WorkflowEvent):
@@ -318,10 +339,31 @@ def build_opportunity_identified_event(
             event_id=opportunity.event_id,
             market_type=opportunity.market_type.value,
             selection=opportunity.selection,
-            sportsbook=opportunity.sportsbook,
-            matched_price=opportunity.matched_price,
+            best_sportsbook=opportunity.best_sportsbook,
+            best_price=opportunity.best_price,
+            matching_quotes=list(opportunity.matching_quotes),
             target_price=opportunity.target_price,
             line=opportunity.line,
+        ),
+    )
+
+
+def build_watch_intent_triggered_event(
+    *,
+    watch_intent_id: str,
+    opportunity: Opportunity,
+) -> WatchIntentTriggered:
+    return WatchIntentTriggered(
+        id=str(uuid4()),
+        occurred_at=datetime.now(UTC),
+        aggregate_id=watch_intent_id,
+        workflow_id=watch_intent_id,
+        payload=WatchIntentTriggeredPayload(
+            watch_intent_id=watch_intent_id,
+            event_id=opportunity.event_id,
+            opportunity_id=opportunity.id,
+            best_sportsbook=opportunity.best_sportsbook,
+            best_price=opportunity.best_price,
         ),
     )
 
