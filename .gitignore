@@ -46,3 +46,5 @@ claude-memory-compiler/
 
 .claude/
 .codex/
+.agents/
+.manual-validation/
