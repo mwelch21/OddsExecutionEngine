@@ -52,3 +52,39 @@ def test_settings_rejects_default_passwords_in_production() -> None:
 def test_settings_rejects_unknown_environment() -> None:
     with pytest.raises(ValidationError, match="development|production"):
         Settings(app_env="staging")  # type: ignore[arg-type]
+
+
+def test_opportunity_ttl_default_suits_manual_refresh() -> None:
+    """Nothing refreshes on a schedule yet, so a minutes-long TTL made every
+    opportunity read invalid before a human could look at it."""
+    assert Settings().opportunity_ttl_minutes == 720
+
+
+def test_opportunity_ttl_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPPORTUNITY_TTL_MINUTES", "15")
+
+    assert Settings().opportunity_ttl_minutes == 15
+
+
+def test_provider_cache_ttl_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings().provider_cache_ttl_seconds == 300
+
+    monkeypatch.setenv("PROVIDER_CACHE_TTL_SECONDS", "30")
+
+    assert Settings().provider_cache_ttl_seconds == 30
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("OPPORTUNITY_TTL_MINUTES", "0"),
+        ("PROVIDER_CACHE_TTL_SECONDS", "-1"),
+    ],
+)
+def test_non_positive_ttls_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ValidationError):
+        Settings()

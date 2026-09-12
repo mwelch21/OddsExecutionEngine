@@ -19,12 +19,33 @@ class OrderIntent(DomainModel):
 
 
 class Quote(DomainModel):
+    """One book's price, carrying when the book moved it and when we pulled it.
+
+    `quoted_at` is the sportsbook's own line-movement time as reported by the
+    provider. `ingested_at` is when we read it. They are never the same fact: a
+    line untouched for three days and pulled ten seconds ago is three days old,
+    not ten seconds old. Providers that expose no line-movement time leave
+    `quoted_at` as None, which reads as unknown age rather than freshly moved.
+    """
+
     event_id: str
     sportsbook: str
     market_type: MarketType
     selection: str
     price: int
     line: float | None = None
+    quoted_at: datetime | None = None
+    ingested_at: datetime | None = None
+
+    @property
+    def line_age_known(self) -> bool:
+        """True only when the book's own line-movement time is available."""
+        return self.quoted_at is not None
+
+    @property
+    def effective_quoted_at(self) -> datetime | None:
+        """Best available age reference: the book's time, else the ingest time."""
+        return self.quoted_at if self.quoted_at is not None else self.ingested_at
 
 
 class PersistedQuote(DomainModel):

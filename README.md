@@ -289,7 +289,8 @@ uv run odds-db-seed-demo
 | `POSTGRES_PASSWORD` | `app` | Database password (must change in production) |
 | `POSTGRES_HOST` | `postgres` | `localhost` when running outside Docker |
 | `POSTGRES_PORT` | `5432` | Host port is 5433 by default in docker-compose |
-| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities remain valid |
+| `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
+| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
 | `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |

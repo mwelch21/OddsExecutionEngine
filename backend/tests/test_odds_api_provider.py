@@ -1,8 +1,9 @@
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.app.domain.models import MarketType
+from backend.app.domain.models import MarketType, Quote
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 
 SAMPLE_API_RESPONSE = [
@@ -242,3 +243,86 @@ class TestEdgeCases:
         provider = _create_provider()
         with pytest.raises(Exception, match="API error"):
             provider.list_quotes("abc123")
+
+
+LAST_UPDATE_RESPONSE = [
+    {
+        "id": "abc123",
+        "sport_key": "icehockey_nhl",
+        "commence_time": "2026-04-20T23:00:00Z",
+        "home_team": "Boston Bruins",
+        "away_team": "New York Rangers",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "title": "DraftKings",
+                "last_update": "2026-04-20T21:00:00Z",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "last_update": "2026-04-17T09:30:00Z",
+                        "outcomes": [{"name": "Boston Bruins", "price": -145}],
+                    },
+                    {
+                        "key": "spreads",
+                        "outcomes": [
+                            {"name": "Boston Bruins", "price": -110, "point": -1.5}
+                        ],
+                    },
+                ],
+            },
+            {
+                "key": "fanduel",
+                "title": "FanDuel",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [{"name": "Boston Bruins", "price": -140}],
+                    },
+                ],
+            },
+        ],
+    },
+]
+
+
+class TestLineMovementTime:
+    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_RESPONSE)
+    def test_market_last_update_becomes_the_books_quote_time(
+        self, mock_fetch: MagicMock
+    ) -> None:
+        provider = _create_provider()
+        quotes = provider.list_quotes("abc123")
+
+        quote = _only(quotes, "draftkings", MarketType.MONEYLINE)
+        assert quote.quoted_at == datetime(2026, 4, 17, 9, 30, tzinfo=UTC)
+        assert quote.line_age_known is True
+
+    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_RESPONSE)
+    def test_falls_back_to_bookmaker_last_update_when_the_market_has_none(
+        self, mock_fetch: MagicMock
+    ) -> None:
+        provider = _create_provider()
+        quotes = provider.list_quotes("abc123")
+
+        quote = _only(quotes, "draftkings", MarketType.SPREAD)
+        assert quote.quoted_at == datetime(2026, 4, 20, 21, 0, tzinfo=UTC)
+
+    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_RESPONSE)
+    def test_absent_last_update_leaves_the_quote_unknown_age(
+        self, mock_fetch: MagicMock
+    ) -> None:
+        provider = _create_provider()
+        quotes = provider.list_quotes("abc123")
+
+        quote = _only(quotes, "fanduel", MarketType.MONEYLINE)
+        assert quote.quoted_at is None
+        assert quote.line_age_known is False
+
+
+def _only(quotes: list[Quote], sportsbook: str, market_type: MarketType) -> Quote:
+    matches = [
+        q for q in quotes if q.sportsbook == sportsbook and q.market_type is market_type
+    ]
+    assert len(matches) == 1
+    return matches[0]

@@ -86,6 +86,8 @@ class SqlAlchemyRecommendationUnitOfWork(RecommendationUnitOfWork):
                 markets_table.c.selection,
                 market_quotes_latest_table.c.price,
                 markets_table.c.line,
+                market_quotes_latest_table.c.quoted_at,
+                market_quotes_latest_table.c.ingested_at,
             )
             .select_from(
                 market_quotes_latest_table.join(
@@ -163,6 +165,8 @@ def _row_to_quote(row: RowMapping) -> Quote:
         selection=row["selection"],
         price=row["price"],
         line=row["line"],
+        quoted_at=row["quoted_at"],
+        ingested_at=row["ingested_at"],
     )
 
 

@@ -78,3 +78,10 @@
 - `POST /watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
 - `DELETE /watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
 - No application-level opportunity deduplication. Terminal watches make it unreachable, and the unique constraint is the real guard — it also covers concurrent double-evaluation, which key checking never did.
+
+## Quote times: the book's clock and ours are different facts
+
+- `market_quotes_*.ingested_at` is when we pulled the quote. `quoted_at` is when the sportsbook last moved the line, as reported by the provider. Never write one from the other.
+- `quoted_at` is nullable and `NULL` means the provider exposes no line-movement time — unknown age, never "just moved". Providers leave `Quote.quoted_at` as `None` rather than stamping a substitute.
+- The fallback to ingest time is a read-time derivation (`Quote.effective_quoted_at`), paired with `Quote.line_age_known` so a reader can always tell which clock it is looking at. Do not bake the fallback into storage.
+- Opportunity staleness keys on `ingested_at`: it asks whether a later pull replaced the row, which is a question about our polling, not about the book.

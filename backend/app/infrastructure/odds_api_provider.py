@@ -17,6 +17,17 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+def _parse_timestamp(raw: object) -> datetime | None:
+    """Parse an Odds API ISO-8601 timestamp, tolerating a missing or unusable one."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("odds_api.unparsable_last_update", extra={"value": raw})
+        return None
+
+
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
     """Split Odds API sport key into (sport, league)."""
     if sport_key in SPORT_LEAGUE_MAP:
@@ -153,12 +164,18 @@ class TheOddsApiProvider:
 
         for bookmaker in event.get("bookmakers", []):
             sportsbook: str = bookmaker["key"]
+            bookmaker_last_update = _parse_timestamp(bookmaker.get("last_update"))
 
             for market in bookmaker.get("markets", []):
                 market_key: str = market["key"]
                 market_type = MARKET_TYPE_MAP.get(market_key)
                 if market_type is None:
                     continue
+
+                # Market-level last_update is the tighter claim; the bookmaker-level
+                # one covers every market it carries. Neither present means the book's
+                # own line-movement time is unknown, never "just moved".
+                quoted_at = _parse_timestamp(market.get("last_update")) or bookmaker_last_update
 
                 for outcome in market.get("outcomes", []):
                     price = outcome.get("price")
@@ -185,6 +202,7 @@ class TheOddsApiProvider:
                             selection=selection,
                             price=int(price),
                             line=line,
+                            quoted_at=quoted_at,
                         )
                     )
 
