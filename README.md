@@ -313,7 +313,10 @@ uv run pytest backend/tests/test_engines.py
 uv run pytest --cov=backend
 ```
 
-Integration tests use SQLite for speed. The Docker PostgreSQL instance is used for the running application and manual testing.
+Integration tests use SQLite for speed. Persistence behaviour is additionally proved
+against migrated Postgres by tests that skip unless `STAGE2_TEST_DATABASE_URL` is set —
+point it at a throwaway database, since they drop every table in it. See
+`docs/testing/README.md`.
 
 ## Roadmap
 
