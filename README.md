@@ -40,6 +40,7 @@ api/ --> application/ --> domain/         (pure, zero external imports)
 
 Optional:
 - **The Odds API key** -- For live sportsbook data ([free tier: 500 requests/month](https://the-odds-api.com))
+- **Node.js 22+** -- For the React frontend application
 
 ## Getting Started
 
@@ -98,6 +99,12 @@ The API runs inside the Docker container automatically. Access it at:
 http://localhost:8000
 ```
 
+The frontend runs as a separate Vite app:
+
+```
+http://localhost:5173
+```
+
 To run locally instead (e.g., for debugging):
 
 ```bash
@@ -113,9 +120,13 @@ curl http://localhost:8000/health
 
 # Open the testing dashboard (development mode only)
 open http://localhost:8000/test-ui
+
+# Open the frontend application
+open http://localhost:5173
 ```
 
 The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
+The frontend application provides the product-style lines board: sportsbook filtering, best-line mode, fillability checks, and watch creation.
 
 ## Common Commands
 
@@ -134,6 +145,15 @@ uv run odds-db-seed-demo
 
 # Run tests
 uv run pytest
+
+# Run frontend locally
+cd frontend
+npm install
+npm run dev
+
+# Build frontend
+cd frontend
+npm run build
 
 # Lint and type check
 uv run ruff check backend/
@@ -232,6 +252,16 @@ backend/
 ├── db/
 │   └── migrations/                      # Alembic migrations
 └── tests/                               # Unit + integration tests
+```
+
+frontend/
+├── src/
+│   ├── App.tsx                         # Single-page lines/watch UI
+│   ├── components/                      # Lightweight UI primitives + feature panels
+│   ├── lib/                             # API client and demo line fixtures
+│   └── styles.css                       # Design tokens and layout primitives
+├── vite.config.ts                       # Dev proxy to FastAPI
+└── package.json
 ```
 
 ## Database

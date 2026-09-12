@@ -9,6 +9,7 @@
 | Postgres truth | `uv run pytest` (with `STAGE2_TEST_DATABASE_URL`) | Full persistence correctness against real Postgres | CI + before merge |
 | Integration script | `scripts/integration_test.sh` | End-to-end against Docker stack: all endpoints, DB state, tracing | Before merge, manual |
 | Testing UI | `GET /test-ui` (dev only) | Manual exploration of all endpoints with pre-built scenarios | During development |
+| Frontend app | `http://localhost:5173` | Product-style lines board, sportsbook filter, best-line view, watch creation | During development |
 
 ## Running Tests
 
@@ -47,6 +48,31 @@ docker compose exec -T api uv run odds-db-seed-demo
 ```
 
 The UI is only available when `APP_ENV=development` (the default). It returns 404 in production.
+
+Use `/test-ui` as the manual validation driver when checking endpoint behavior by hand. It should
+stay endpoint-focused: quote refresh, recommendation fillability, nearest miss behavior, watch
+creation/cancel, opportunities, and raw request/response inspection. Use scripts and curl for
+repeatable checks; use `/test-ui` for exploratory workflow validation and demos.
+
+### Frontend App
+
+The React app is separate from `/test-ui`. It is the product-style operator surface for lines,
+book filtering, best-line mode, fillability checks, and watch creation.
+
+```bash
+docker compose up --build -d
+docker compose exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
+docker compose exec -T api uv run odds-db-seed-demo
+# open http://localhost:5173
+```
+
+For local frontend development outside Docker:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ## Fixture Data
 
