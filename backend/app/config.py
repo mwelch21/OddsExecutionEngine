@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,13 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = 5432
     database_url_override: str | None = None
-    opportunity_ttl_minutes: int = 5
+    # Refresh is hand-driven — nothing polls on a schedule yet — so a minutes-long
+    # TTL marked every opportunity invalid before anyone could read it. Tighten this
+    # once a scheduler lands.
+    opportunity_ttl_minutes: int = Field(default=720, ge=0)
+    # How long a provider response may be reused before another upstream call.
+    # 0 disables reuse. Consumed by the provider cache.
+    provider_cache_ttl_seconds: int = Field(default=300, ge=0)
 
     quote_provider: str = "in_memory"
     odds_api_key: str = ""

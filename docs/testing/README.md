@@ -26,6 +26,17 @@ uv run ruff check .
 uv run mypy backend
 ```
 
+### Postgres truth (requires Docker)
+
+Postgres-gated tests skip unless `STAGE2_TEST_DATABASE_URL` is set. Point it at a
+database used only by tests — these tests drop every table in it.
+
+```bash
+docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE odds_execution_test OWNER app"
+STAGE2_TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:$(docker compose port postgres 5432 | cut -d: -f2)/odds_execution_test" \
+  uv run pytest
+```
+
 ### Full integration (requires Docker)
 
 ```bash

@@ -116,7 +116,8 @@ def _seed_fixture_quotes(session: Session, quotes: list[Quote]) -> None:
                 market_id=market_id,
                 sportsbook=quote.sportsbook,
                 price=quote.price,
-                quoted_at=now,
+                ingested_at=now,
+                quoted_at=quote.quoted_at,
             )
         )
         session.execute(
@@ -125,6 +126,7 @@ def _seed_fixture_quotes(session: Session, quotes: list[Quote]) -> None:
                 market_id=market_id,
                 sportsbook=quote.sportsbook,
                 price=quote.price,
-                quoted_at=now,
+                ingested_at=now,
+                quoted_at=quote.quoted_at,
             )
         )

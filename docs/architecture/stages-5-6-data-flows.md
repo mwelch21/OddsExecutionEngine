@@ -78,8 +78,10 @@ SqlAlchemyQuoteIngestionUnitOfWork (single transaction):
   |     |     Returns: (market_id, market_created: bool)
   |     |
   |     |-- DELETE market_quotes_latest WHERE market_id AND sportsbook
-  |     |-- INSERT market_quotes_latest (market_id, sportsbook, price, quoted_at)
-  |     |-- INSERT market_quotes_history (id, market_id, sportsbook, price, quoted_at)
+  |     |-- INSERT market_quotes_latest (market_id, sportsbook, price, ingested_at, quoted_at)
+  |     |-- INSERT market_quotes_history (id, market_id, sportsbook, price, ingested_at, quoted_at)
+  |         ingested_at = this pull; quoted_at = the book's own last_update
+  |         (NULL when the provider exposes none, i.e. unknown age)
   |     |
   |     |-- If market_created:
   |     |     Stage event: MarketSnapshotCreated
@@ -213,9 +215,11 @@ SqlAlchemyWatchIntentUnitOfWork:
   |     -> Builds full Opportunity objects with market_type, selection, target_price, line
   |
   |-- Per opportunity:
-  |     SELECT quoted_at FROM market_quotes_latest
+  |     SELECT ingested_at FROM market_quotes_latest
   |       WHERE market_id = ? AND sportsbook = ?
   |     -> Returns latest_quote_time (or None if quote removed)
+  |        Keys on ingest time: the question is whether a later pull replaced
+  |        the row, not when the book moved its line.
   |
   v
 OpportunityValidityEngine.check_validity_batch()               [PURE ENGINE]
@@ -281,7 +285,8 @@ markets                          market_quotes_latest
 | id         (PK) |<-----+      | market_id   (PK) |---+
 | event_id   (FK) |      |      | sportsbook  (PK) |   |
 | market_type      |      |      | price            |   |
-| selection        |      |      | quoted_at        |   |
+| selection        |      |      | ingested_at      |   |
+|                  |      |      | quoted_at (null) |   |
 | line (nullable)  |      |      +------------------+   |
 | line_key         |      |                              |
 | created_at       |      |      market_quotes_history   |
@@ -290,7 +295,8 @@ markets                          market_quotes_latest
      market_type,        +------| market_id   (FK) |    |
      selection,                 | sportsbook       |    |
      line_key)                  | price            |    |
-                                | quoted_at        |    |
+                                | ingested_at      |    |
+                                | quoted_at (null) |    |
                                 +------------------+    |
                                                         |
 watch_intents                    opportunities           |

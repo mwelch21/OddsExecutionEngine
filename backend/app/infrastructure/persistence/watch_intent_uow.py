@@ -18,6 +18,7 @@ from backend.app.domain.models import (
     WatchStatus,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quote_reads import list_latest_quotes
 from backend.app.infrastructure.persistence.schema import (
     events_table,
     market_quotes_latest_table,
@@ -204,24 +205,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         return [_row_to_watch_intent(row) for row in rows]
 
     def list_quotes(self, event_id: str) -> list[Quote]:
-        rows = self._require_session().execute(
-            select(
-                events_table.c.external_id.label("event_id"),
-                market_quotes_latest_table.c.sportsbook,
-                markets_table.c.market_type,
-                markets_table.c.selection,
-                market_quotes_latest_table.c.price,
-                markets_table.c.line,
-            )
-            .select_from(
-                market_quotes_latest_table.join(
-                    markets_table,
-                    market_quotes_latest_table.c.market_id == markets_table.c.id,
-                ).join(events_table, markets_table.c.event_id == events_table.c.id)
-            )
-            .where(events_table.c.external_id == event_id)
-        )
-        return [_row_to_quote(row) for row in rows.mappings().all()]
+        return list_latest_quotes(self._require_session(), event_id)
 
     def get_market_id_lookup(
         self, event_id: str
@@ -309,16 +293,20 @@ class SqlAlchemyWatchIntentUnitOfWork:
     def get_latest_quote_times(
         self, opportunities: list[Opportunity]
     ) -> list[tuple[Opportunity, datetime | None]]:
-        """Quote time per opportunity, read from the best book only.
+        """Ingest time per opportunity, read from the best book only.
 
         Staleness means the headline price moved or vanished. A non-best book
         changing is irrelevant — the reader was never going to use it.
+
+        This keys on the ingest time, not the book's own `quoted_at`: the question
+        is whether a later pull replaced the row the opportunity was cut from, and
+        a book that exposes no line-movement time must not read as "quote removed".
         """
         result: list[tuple[Opportunity, datetime | None]] = []
         session = self._require_session()
         for opp in opportunities:
             row = session.execute(
-                select(market_quotes_latest_table.c.quoted_at).where(
+                select(market_quotes_latest_table.c.ingested_at).where(
                     market_quotes_latest_table.c.market_id == opp.market_id,
                     market_quotes_latest_table.c.sportsbook == opp.best_sportsbook,
                 )
@@ -383,17 +371,6 @@ def _row_to_watch_intent(row: RowMapping) -> WatchIntent:
         expires_at=row["expires_at"],
         status=WatchStatus(row["status"]),
         created_at=row["created_at"],
-    )
-
-
-def _row_to_quote(row: RowMapping) -> Quote:
-    return Quote(
-        event_id=row["event_id"],
-        sportsbook=row["sportsbook"],
-        market_type=MarketType(row["market_type"]),
-        selection=row["selection"],
-        price=row["price"],
-        line=row["line"],
     )
 
 

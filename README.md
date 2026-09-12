@@ -288,8 +288,10 @@ uv run odds-db-seed-demo
 | `POSTGRES_USER` | `app` | Database user |
 | `POSTGRES_PASSWORD` | `app` | Database password (must change in production) |
 | `POSTGRES_HOST` | `postgres` | `localhost` when running outside Docker |
-| `POSTGRES_PORT` | `5432` | Host port is 5433 by default in docker-compose |
-| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities remain valid |
+| `POSTGRES_PORT` | `5432` | Port inside the container; unchanged by the host mapping |
+| `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds. Change it if another stack holds 5433 |
+| `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
+| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
 | `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
@@ -312,7 +314,10 @@ uv run pytest backend/tests/test_engines.py
 uv run pytest --cov=backend
 ```
 
-Integration tests use SQLite for speed. The Docker PostgreSQL instance is used for the running application and manual testing.
+Integration tests use SQLite for speed. Persistence behaviour is additionally proved
+against migrated Postgres by tests that skip unless `STAGE2_TEST_DATABASE_URL` is set —
+point it at a throwaway database, since they drop every table in it. See
+`docs/testing/README.md`.
 
 ## Roadmap
 

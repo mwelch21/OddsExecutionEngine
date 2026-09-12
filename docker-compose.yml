@@ -21,7 +21,8 @@ services:
       ODDS_API_SPORTS: ${ODDS_API_SPORTS:-icehockey_nhl}
       ODDS_API_REGIONS: ${ODDS_API_REGIONS:-us}
       ODDS_API_MARKETS: ${ODDS_API_MARKETS:-h2h,spreads,totals}
-      OPPORTUNITY_TTL_MINUTES: ${OPPORTUNITY_TTL_MINUTES:-5}
+      OPPORTUNITY_TTL_MINUTES: ${OPPORTUNITY_TTL_MINUTES:-720}
+      PROVIDER_CACHE_TTL_SECONDS: ${PROVIDER_CACHE_TTL_SECONDS:-300}
     ports:
       - "${APP_PORT:-8000}:8000"
   frontend:
@@ -46,7 +47,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
     ports:
-      - "5433:5432"
+      # Host port is configurable: 5433 is a common default and collides with other
+      # local stacks. The container port never changes, so POSTGRES_PORT stays 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
