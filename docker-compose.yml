@@ -47,7 +47,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
     ports:
-      - "5433:5432"
+      # Host port is configurable: 5433 is a common default and collides with other
+      # local stacks. The container port never changes, so POSTGRES_PORT stays 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
