@@ -108,12 +108,17 @@ WatchIntentService.evaluate_for_event(event_id)    [POST-COMMIT HOOK]
   |       Per matching quote:
   |         PriceComparisonService.is_price_fillable()          [PURE ENGINE]
   |           Rule: quote_price >= target_price (American odds)
-  |         Dedup key: (watch_intent_id, market_id, sportsbook)
-  |         If fillable AND not duplicate -> create Opportunity candidate
-  |     Returns: list[Opportunity] (new only)
+  |       All fillable books collapse into ONE candidate per watch:
+  |         RecommendationEngine.rank_quotes() -> (-price, sportsbook)
+  |         head -> best_sportsbook / best_price
+  |         whole list -> matching_quotes (JSON snapshot)
+  |     Returns: list[Opportunity] (at most one per watch)
   |
-  |-- INSERT opportunities (idempotent, DB uniqueness final guard)
-  |-- Stage events: OpportunityIdentified (inserted rows only)
+  |-- INSERT opportunities (idempotent; unique(watch_intent_id) final guard)
+  |-- UPDATE watch_intents SET status='triggered'   [terminal, never re-arms]
+  |-- Stage events (inserted rows only):
+  |     OpportunityIdentified  <- the single user-facing notification
+  |     WatchIntentTriggered   <- audit of the lifecycle transition
   |-- COMMIT -> PUBLISH
 ```
 
@@ -152,8 +157,10 @@ SqlAlchemyWatchIntentUnitOfWork (single transaction):
   |-- Immediate Evaluation (same logic as Flow A post-commit):
   |     SELECT market_quotes_latest for this event
   |     WatchEvaluationEngine.evaluate()
-  |     INSERT opportunities (if fillable quotes found, duplicates ignored)
-  |     Stage events: OpportunityIdentified (inserted rows only)
+  |     INSERT opportunities (at most one; unique(watch_intent_id) guards)
+  |     UPDATE watch_intents SET status="triggered" on insert
+  |     Stage events: OpportunityIdentified + WatchIntentTriggered
+  |       (inserted rows only; the response may come back "triggered")
   |
   |-- COMMIT -> PUBLISH
   |
@@ -218,7 +225,7 @@ OpportunityValidityEngine.check_validity_batch()               [PURE ENGINE]
              -> is_valid=False, reason="missing_timestamp"
     Check 2: now - opportunity.created_at > TTL (default 5 min)
              -> is_valid=False, reason="expired"
-    Check 3: latest_quote_time is None
+    Check 3: latest_quote_time is None            [best book only]
              -> is_valid=False, reason="quote_removed"
     Check 4: latest_quote_time > opportunity.created_at
              -> is_valid=False, reason="quote_superseded"
@@ -232,8 +239,12 @@ Response 200:
       {
         "id": "...",
         "watch_intent_id": "...",
-        "sportsbook": "draftkings",
-        "matched_price": 125,
+        "best_sportsbook": "draftkings",
+        "best_price": 125,
+        "matching_quotes": [
+          { "sportsbook": "draftkings", "price": 125 },
+          { "sportsbook": "fanduel", "price": 122 }
+        ],
         "market_type": "moneyline",
         "selection": "philadelphia flyers",
         "target_price": 120,
@@ -288,11 +299,12 @@ watch_intents                    opportunities           |
 | event_external_id|      |      | watch_intent_id(FK)---+
 | market_type      |      +------| event_external_id|    |
 | selection        |             | market_id   (FK) |----+
-| line (nullable)  |             | sportsbook       |
-| target_price     |             | matched_price    |
-| status           |             | created_at       |
-| created_at       |             +------------------+
-+-----------------+
+| line (nullable)  |             | best_sportsbook  |
+| target_price     |             | best_price       |
+| status           |             | matching_quotes  | JSON
+| created_at       |             | created_at       |
++-----------------+             +------------------+
+                                  UQ(watch_intent_id)
 
 workflow_events (append-only audit log for ALL domain events)
 +-----------------+
@@ -325,7 +337,9 @@ workflow_events (append-only audit log for ALL domain events)
 |-------|-------------|-------------|-------------|
 | **WatchIntentCreated** | POST /watch-intents | watch_intent_id | watch_intent_id |
 | **WatchIntentCancelled** | DELETE /watch-intents/{id} | watch_intent_id | watch_intent_id |
-| **OpportunityIdentified** | Watch creation OR quote refresh evaluation | opportunity_id | watch_intent_id |
+| **WatchIntentExpired** | TTL passed, retired before evaluation | watch_intent_id | watch_intent_id |
+| **WatchIntentTriggered** | Watch fired; terminal transition (audit only) | watch_intent_id | watch_intent_id |
+| **OpportunityIdentified** | Watch creation OR quote refresh evaluation; exactly one per opportunity, however many books matched | opportunity_id | watch_intent_id |
 
 ### Stage 6 Events (already existed in Stage 4, now with live data)
 
@@ -344,9 +358,15 @@ WatchIntentCreated:
 WatchIntentCancelled:
   { event_id, market_type, selection }
 
+WatchIntentExpired:
+  { watch_intent_id, event_id, expires_at }
+
+WatchIntentTriggered:
+  { watch_intent_id, event_id, opportunity_id, best_sportsbook, best_price }
+
 OpportunityIdentified:
   { watch_intent_id, event_id, market_type, selection,
-    sportsbook, matched_price, target_price, line }
+    best_sportsbook, best_price, matching_quotes, target_price, line }
 
 MarketSnapshotCreated:
   { event_id, market_type, selection, line }
@@ -404,12 +424,21 @@ On UoW.__exit__ (exception):
 
 ### Watch Intent
 ```
-(not exists) --[POST /watch-intents]--> active --[DELETE /watch-intents/{id}]--> cancelled
+                          +--[DELETE /watch-intents/{id}]--> cancelled  (terminal)
+                          |
+(not exists) --[POST]--> active --[TTL passed at evaluation]--> expired  (terminal)
+                          |
+                          +--[opportunity identified]--> triggered      (terminal)
+
+POST evaluates immediately, so a watch can land straight in `triggered`.
+All three exits are terminal; nothing returns to `active`. DELETE on a
+`triggered` watch is refused with 409 rather than overwriting the record
+that it fired.
 ```
 
 ### Opportunity
 ```
-(not exists) --[evaluation finds fillable quote]--> created
+(not exists) --[evaluation finds fillable quote]--> created  (at most one per watch)
                                                       |
                               (validity computed at read time, never stored)
                                                       |
@@ -474,7 +503,7 @@ This means:
 
 | Method | Path | Purpose | Events Emitted |
 |--------|------|---------|---------------|
-| POST | `/watch-intents` | Create watch intent + immediate evaluation | WatchIntentCreated, OpportunityIdentified* |
+| POST | `/watch-intents` | Create watch intent + immediate evaluation; may return `triggered` with the opportunity nested | WatchIntentCreated, OpportunityIdentified*, WatchIntentTriggered* |
 | GET | `/watch-intents?event_id=` | List active intents (filters by event start time) | (none) |
 | DELETE | `/watch-intents/{id}` | Cancel watch intent | WatchIntentCancelled |
 | GET | `/opportunities?event_id=` | List opportunities with computed validity | (none) |

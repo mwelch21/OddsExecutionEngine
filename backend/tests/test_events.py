@@ -8,10 +8,12 @@ from backend.app.domain.events import (
     build_order_intent_submitted_event,
     build_watch_intent_cancelled_event,
     build_watch_intent_created_event,
+    build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
     ExecutionRecommendation,
     MarketType,
+    MatchingQuote,
     Opportunity,
     OrderIntent,
     Quote,
@@ -328,8 +330,8 @@ def test_build_watch_intent_cancelled_event_contains_deterministic_payload() -> 
     }
 
 
-def test_build_opportunity_identified_event_contains_deterministic_payload() -> None:
-    opportunity = Opportunity(
+def _opportunity() -> Opportunity:
+    return Opportunity(
         id="opp-1",
         watch_intent_id="wi-1",
         event_id="event-1",
@@ -337,12 +339,18 @@ def test_build_opportunity_identified_event_contains_deterministic_payload() -> 
         market_type=MarketType.MONEYLINE,
         selection="knicks",
         target_price=120,
-        sportsbook="DraftKings",
-        matched_price=125,
+        best_sportsbook="DraftKings",
+        best_price=125,
+        matching_quotes=[
+            MatchingQuote(sportsbook="DraftKings", price=125),
+            MatchingQuote(sportsbook="FanDuel", price=125),
+        ],
     )
 
+
+def test_build_opportunity_identified_event_contains_deterministic_payload() -> None:
     event = build_opportunity_identified_event(
-        watch_intent_id="wi-1", opportunity=opportunity
+        watch_intent_id="wi-1", opportunity=_opportunity()
     )
 
     assert event.event_type == "OpportunityIdentified"
@@ -353,8 +361,29 @@ def test_build_opportunity_identified_event_contains_deterministic_payload() -> 
         "event_id": "event-1",
         "market_type": "moneyline",
         "selection": "knicks",
-        "sportsbook": "DraftKings",
-        "matched_price": 125,
+        "best_sportsbook": "DraftKings",
+        "best_price": 125,
+        "matching_quotes": [
+            {"sportsbook": "DraftKings", "price": 125},
+            {"sportsbook": "FanDuel", "price": 125},
+        ],
         "target_price": 120,
         "line": None,
+    }
+
+
+def test_build_watch_intent_triggered_event_records_the_terminal_transition() -> None:
+    event = build_watch_intent_triggered_event(
+        watch_intent_id="wi-1", opportunity=_opportunity()
+    )
+
+    assert event.event_type == "WatchIntentTriggered"
+    assert event.aggregate_id == "wi-1"
+    assert event.workflow_id == "wi-1"
+    assert event.payload.model_dump() == {
+        "watch_intent_id": "wi-1",
+        "event_id": "event-1",
+        "opportunity_id": "opp-1",
+        "best_sportsbook": "DraftKings",
+        "best_price": 125,
     }

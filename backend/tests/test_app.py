@@ -466,13 +466,15 @@ def test_create_watch_intent_returns_201_and_persists(sqlite_database_url: str) 
     app = _build_test_app(sqlite_database_url)
 
     with TestClient(app) as client:
+        # +400 is out of reach of the fixture, so the watch stays active and this
+        # test stays about creation rather than about filling.
         response = client.post(
             "/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
                 "selection": "knicks",
-                "target_price": 121,
+                "target_price": 400,
             },
         )
 
@@ -522,7 +524,7 @@ def test_list_watch_intents_filters_by_event_id(sqlite_database_url: str) -> Non
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
                 "selection": "knicks",
-                "target_price": 121,
+                "target_price": 400,
             },
         )
         response = client.get(
@@ -544,7 +546,7 @@ def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
                 "selection": "knicks",
-                "target_price": 121,
+                "target_price": 400,
             },
         )
         watch_id = create_response.json()["id"]
@@ -592,6 +594,9 @@ def test_create_watch_intent_triggers_immediate_evaluation(
         )
 
     assert response.status_code == 201
+    # Terminal on arrival: the answer was already known, so the watch does not come
+    # back active only to fire on an unrelated refresh minutes later.
+    assert response.json()["status"] == "triggered"
 
     session_factory = DatabaseSessionFactory(sqlite_database_url)
     with session_factory.create_session() as session:
@@ -601,10 +606,21 @@ def test_create_watch_intent_triggers_immediate_evaluation(
                 workflow_events_table.c.event_type == "OpportunityIdentified"
             )
         ).mappings().all()
+        triggered_events = session.execute(
+            select(workflow_events_table).where(
+                workflow_events_table.c.event_type == "WatchIntentTriggered"
+            )
+        ).mappings().all()
 
-    # Knicks moneyline has DraftKings@125 and FanDuel@125 both >= 121
-    assert len(opps) == 2
-    assert len(opp_events) == 2
+    # Knicks moneyline has DraftKings@125 and FanDuel@125 both >= 121. Two books,
+    # one opportunity, one notification. The tie breaks alphabetically.
+    assert len(opps) == 1
+    assert opps[0]["best_sportsbook"] == "DraftKings"
+    assert sorted(
+        (quote["sportsbook"], quote["price"]) for quote in opps[0]["matching_quotes"]
+    ) == [("DraftKings", 125), ("FanDuel", 125)]
+    assert len(opp_events) == 1
+    assert len(triggered_events) == 1
 
 
 def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) -> None:
@@ -627,10 +643,12 @@ def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) 
 
     assert response.status_code == 200
     opps = response.json()["opportunities"]
-    assert len(opps) == 2
-    for opp in opps:
-        assert "is_valid" in opp
-        assert "invalid_reason" in opp
+    assert len(opps) == 1
+    assert opps[0]["best_sportsbook"] == "DraftKings"
+    assert opps[0]["best_price"] == 125
+    assert len(opps[0]["matching_quotes"]) == 2
+    assert "is_valid" in opps[0]
+    assert "invalid_reason" in opps[0]
 
 
 def _build_test_app(database_url: str) -> FastAPI:
