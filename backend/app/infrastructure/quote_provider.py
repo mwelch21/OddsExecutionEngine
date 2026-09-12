@@ -42,7 +42,16 @@ def _build_fixture_events() -> dict[str, EventInfo]:
 
 
 def build_fixture_quotes() -> list[Quote]:
+    """Demo quotes spanning all three age states a reader has to tell apart.
+
+    A book that moved seconds ago, a book that has not moved in three days, and a
+    book reporting no line-movement time at all — which is the case the fixture
+    provider models by leaving `quoted_at` unset.
+    """
     event_id = FIXTURE_EVENT_ID
+    now = datetime.now(UTC)
+    just_moved = now - timedelta(seconds=40)
+    stale = now - timedelta(days=3)
 
     return [
         Quote(
@@ -51,6 +60,7 @@ def build_fixture_quotes() -> list[Quote]:
             market_type=MarketType.MONEYLINE,
             selection="knicks",
             price=120,
+            quoted_at=stale,
         ),
         Quote(
             event_id=event_id,
@@ -58,6 +68,7 @@ def build_fixture_quotes() -> list[Quote]:
             market_type=MarketType.MONEYLINE,
             selection="knicks",
             price=125,
+            quoted_at=just_moved,
         ),
         Quote(
             event_id=event_id,

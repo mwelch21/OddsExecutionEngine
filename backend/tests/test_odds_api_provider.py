@@ -281,6 +281,18 @@ LAST_UPDATE_RESPONSE = [
                     },
                 ],
             },
+            {
+                "key": "caesars",
+                "title": "Caesars",
+                # The Odds API reports UTC, but without an offset marker here.
+                "last_update": "2026-04-17T09:30:00",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [{"name": "Boston Bruins", "price": -150}],
+                    },
+                ],
+            },
         ],
     },
 ]
@@ -307,6 +319,16 @@ class TestLineMovementTime:
 
         quote = _only(quotes, "draftkings", MarketType.SPREAD)
         assert quote.quoted_at == datetime(2026, 4, 20, 21, 0, tzinfo=UTC)
+
+    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_RESPONSE)
+    def test_offsetless_last_update_is_read_as_utc(self, mock_fetch: MagicMock) -> None:
+        """A naive timestamp would land in a tz-aware column and shift by the
+        server's offset — silently wrong on the one fact this data exists to state."""
+        provider = _create_provider()
+        quotes = provider.list_quotes("abc123")
+
+        quote = _only(quotes, "caesars", MarketType.MONEYLINE)
+        assert quote.quoted_at == datetime(2026, 4, 17, 9, 30, tzinfo=UTC)
 
     @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_RESPONSE)
     def test_absent_last_update_leaves_the_quote_unknown_age(

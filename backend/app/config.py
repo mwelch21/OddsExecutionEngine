@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Refresh is hand-driven — nothing polls on a schedule yet — so a minutes-long
     # TTL marked every opportunity invalid before anyone could read it. Tighten this
     # once a scheduler lands.
-    opportunity_ttl_minutes: int = Field(default=720, gt=0)
+    opportunity_ttl_minutes: int = Field(default=720, ge=0)
     # How long a provider response may be reused before another upstream call.
     # 0 disables reuse. Consumed by the provider cache.
     provider_cache_ttl_seconds: int = Field(default=300, ge=0)

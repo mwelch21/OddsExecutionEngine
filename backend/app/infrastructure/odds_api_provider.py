@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
@@ -22,10 +22,13 @@ def _parse_timestamp(raw: object) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         logger.warning("odds_api.unparsable_last_update", extra={"value": raw})
         return None
+    # The API reports UTC. An offsetless value left naive would be read against the
+    # server's timezone once stored, shifting the very age this column exists to state.
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
