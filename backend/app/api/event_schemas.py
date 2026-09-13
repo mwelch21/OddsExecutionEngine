@@ -7,6 +7,10 @@ from backend.app.domain.models import (
     EventParticipant,
     EventQuoteFreshness,
     EventSummary,
+    LineBoard,
+    LineBoardMarket,
+    MarketType,
+    Quote,
 )
 
 
@@ -78,6 +82,82 @@ class EventResponse(BaseModel):
                 for participant in event.participants
             ],
             quotes=EventQuoteFreshnessResponse.from_domain(event.quotes),
+        )
+
+
+class LineBoardQuoteResponse(BaseModel):
+    """One book's price on the board, carrying both clocks.
+
+    `quoted_at` is when the book last moved this line; `ingested_at` is when we
+    pulled it. A line untouched for three days and pulled ten seconds ago is
+    three days old, and the board has to be able to show that. `quoted_at` is
+    null when the provider exposes no line-movement time, which `line_age_known`
+    states outright so an unknown age is never read as freshly moved.
+    """
+
+    sportsbook: str
+    price: int
+    quoted_at: datetime | None
+    ingested_at: datetime | None
+    line_age_known: bool
+
+    @classmethod
+    def from_domain(cls, quote: Quote) -> "LineBoardQuoteResponse":
+        return cls(
+            sportsbook=quote.sportsbook,
+            price=quote.price,
+            quoted_at=quote.quoted_at,
+            ingested_at=quote.ingested_at,
+            line_age_known=quote.line_age_known,
+        )
+
+
+class LineBoardMarketResponse(BaseModel):
+    """One market's books, ranked best-first, with the best one named.
+
+    `best_sportsbook` / `best_price` are the head of `quotes`, reported rather
+    than left to the client: at an identical price only the engine's tie-break
+    decides the winner, and a client sorting for itself can disagree with the
+    book a watch on this market would actually fire on. Both are null for a
+    market no book is quoting.
+    """
+
+    market_type: MarketType
+    selection: str
+    line: float | None
+    book_count: int
+    best_sportsbook: str | None
+    best_price: int | None
+    quotes: list[LineBoardQuoteResponse]
+
+    @classmethod
+    def from_domain(cls, market: LineBoardMarket) -> "LineBoardMarketResponse":
+        return cls(
+            market_type=market.market_type,
+            selection=market.selection,
+            line=market.line,
+            book_count=market.book_count,
+            best_sportsbook=market.best_sportsbook,
+            best_price=market.best_price,
+            quotes=[
+                LineBoardQuoteResponse.from_domain(quote) for quote in market.quotes
+            ],
+        )
+
+
+class LineBoardResponse(BaseModel):
+    """One event's whole board in one answer. Deliberately unpaged."""
+
+    event: EventResponse
+    markets: list[LineBoardMarketResponse]
+
+    @classmethod
+    def from_domain(cls, board: LineBoard) -> "LineBoardResponse":
+        return cls(
+            event=EventResponse.from_domain(board.event),
+            markets=[
+                LineBoardMarketResponse.from_domain(market) for market in board.markets
+            ],
         )
 
 

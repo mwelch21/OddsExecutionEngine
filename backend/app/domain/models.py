@@ -229,6 +229,57 @@ class EventSummary(DomainModel):
     quotes: EventQuoteFreshness = EventQuoteFreshness()
 
 
+class MarketQuotes(DomainModel):
+    """One market and the books quoting it, in whatever order storage returned.
+
+    Ranking is not storage's job: the board's order has to come from the same
+    engine rule the recommendation and watch paths apply, so this carries the
+    quotes unranked and the application layer ranks them.
+    """
+
+    market_type: MarketType
+    selection: str
+    line: float | None = None
+    quotes: list[Quote] = []
+
+
+class LineBoardMarket(DomainModel):
+    """One market's books, ranked best-first, with the best one named.
+
+    `best_sportsbook` / `best_price` mirror the head of `quotes`, the same way
+    `Opportunity` mirrors the head of its matching quotes. They exist so a client
+    never re-sorts to find the best book: two books at an identical price are
+    separated only by the engine's tie-break, and a client sorting for itself can
+    show a different winner than the one a watch on this market would fire on.
+
+    A market nobody is quoting has no best book — never a best book at price
+    zero — so both fields are None when `quotes` is empty.
+    """
+
+    market_type: MarketType
+    selection: str
+    line: float | None = None
+    quotes: list[Quote] = []
+    best_sportsbook: str | None = None
+    best_price: int | None = None
+
+    @property
+    def book_count(self) -> int:
+        return len(self.quotes)
+
+
+class LineBoard(DomainModel):
+    """Everything needed to render one event's line board in a single answer.
+
+    Deliberately unpaged: one event's markets are bounded and render as one
+    screen, and paging them would mean a client reassembling pages before it
+    could display anything.
+    """
+
+    event: EventSummary
+    markets: list[LineBoardMarket] = []
+
+
 class EventFilter(DomainModel):
     """What a browse request is asking for.
 

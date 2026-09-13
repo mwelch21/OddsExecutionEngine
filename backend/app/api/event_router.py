@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from backend.app.api.event_schemas import EventListResponse
+from backend.app.api.event_schemas import EventListResponse, LineBoardResponse
 from backend.app.application.event_query_service import EventQueryService
 from backend.app.domain.models import EventFilter
 
@@ -36,5 +36,12 @@ def create_event_router(service: EventQueryService) -> APIRouter:
                 page_size=page_size,
             )
         )
+
+    @router.get("/events/{event_id}/quotes", response_model=LineBoardResponse)
+    def get_line_board(event_id: str) -> LineBoardResponse:
+        board = service.get_line_board(event_id)
+        if board is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        return LineBoardResponse.from_domain(board)
 
     return router

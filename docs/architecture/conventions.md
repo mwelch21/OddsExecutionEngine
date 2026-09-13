@@ -96,3 +96,12 @@
 - Absence is reported as absence. An event with no quotes has `quote_count == 0` and null times — never age zero. Books with no line-movement time are counted in `books_with_unknown_line_age` rather than folded into the reported oldest, so that number can never be read as covering every book.
 - Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book. `quote_count` counts quotes; `book_count` counts books and is the denominator that makes `books_with_unknown_line_age` legible.
 - Known gap, accepted: ingestion replaces only the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row and can drag `oldest_line_quoted_at` older than any live market. Pruning retired rows is its own ticket — it changes what the recommendation and watch paths read too.
+
+## The line board is ranked server-side
+
+- `GET /events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
+- Ranking calls `RecommendationEngine.rank_quotes` — the same `(-price, sportsbook)` rule, tie-break included, that the recommendation and watch paths apply. A second sort in the client can show a different winner than the book a watch on that market would fire on, and "best" must mean one thing system-wide.
+- Storage does not rank. The read unit of work returns `MarketQuotes` in query order and the application layer applies the engine, keeping the rule in one place instead of half in SQL.
+- A market no book is quoting is returned present and empty, with `best_sportsbook` / `best_price` null. "Nobody is offering this" is an answer the board has to show, and it is never a best book at price zero.
+- Each quote reports both clocks (`quoted_at`, `ingested_at`) and `line_age_known`, so a board can show that one book has not moved in days while the rest are current. Same rule as the browse list: the fallback to ingest time stays a read-time derivation and is never presented as line movement.
+- No pagination, and no started-event filter. A single event's board is bounded and renders as one screen; the browse list hides started events because they cannot be filled, but asking for one board by id is a different question.

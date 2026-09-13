@@ -75,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     event_query_service = EventQueryService(
         unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
+        recommendation_engine=recommendation_engine,
     )
     quote_provider: QuoteIngestionProvider
     if app_settings.quote_provider == "odds_api":
