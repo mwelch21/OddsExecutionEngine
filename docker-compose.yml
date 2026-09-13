@@ -1,8 +1,15 @@
+# Container names are deliberately not pinned. Compose namespaces containers by
+# project name, which defaults to the directory name, so two worktrees of this
+# repo get distinct containers for free. Pinning `container_name` overrides that
+# and makes the second stack collide.
+#
+# Every published host port is configurable so those two stacks can run at once.
+# The defaults below are slot 0 — the values this repo has always used — so a
+# plain `docker compose up` with no .env behaves exactly as it did before.
 services:
   api:
     build:
       context: .
-    container_name: odds_execution_api
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,21 +34,23 @@ services:
       - "${APP_PORT:-8000}:8000"
   frontend:
     image: node:22-slim
-    container_name: odds_execution_frontend
     depends_on:
       - api
     working_dir: /app/frontend
     environment:
       FRONTEND_API_TARGET: http://api:8000
+      # Vite binds the same port inside the container as it publishes on the
+      # host. Keeping them equal means the HMR websocket the browser opens
+      # points at a port that actually exists, with no clientPort override.
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
     command: sh -c "npm install && npm run dev"
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:${FRONTEND_PORT:-5173}"
     volumes:
       - .:/app
       - frontend_node_modules:/app/frontend/node_modules
   postgres:
     image: postgres:16
-    container_name: odds_execution_postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-odds_execution}
       POSTGRES_USER: ${POSTGRES_USER:-app}
