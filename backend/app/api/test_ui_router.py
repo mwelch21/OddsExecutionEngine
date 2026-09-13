@@ -240,6 +240,7 @@ def _build_html() -> str:
         <option value="GET /watch-intents">GET /watch-intents</option>
         <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
         <option value="GET /opportunities">GET /opportunities</option>
+        <option value="GET /events">GET /events</option>
         <option value="GET /health">GET /health</option>
       </select>
       <label>Request Body (JSON)</label>

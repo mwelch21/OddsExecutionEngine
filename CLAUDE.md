@@ -198,6 +198,10 @@ Ingestion:
 - `POST /ingestion/quotes/refresh`
 - `POST /ingestion/quotes/refresh-sport`
 
+Browse:
+
+- `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
+
 Monitoring:
 
 - `POST /watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
@@ -213,7 +217,7 @@ Dev only:
 
 Planned, not yet implemented:
 
-- `GET /events`, `GET /events/{event_id}/markets`, `GET /events/{event_id}/quotes`
+- `GET /events/{event_id}/markets`, `GET /events/{event_id}/quotes`
 - `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
 
 ## Service Catalog
@@ -222,6 +226,7 @@ See `docs/flows/_index.md` for full flow documentation.
 
 | Service | Location | Responsibility |
 |---|---|---|
+| EventQueryService | `application/event_query_service.py` | Filtered, paged event browse with per-event quote freshness |
 | QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish |
 | RecommendationService | `application/recommendation_service.py` | Intent persistence -> quote matching -> recommendation -> event publish |
 | WatchIntentService | `application/watch_intent_service.py` | Watch intent persistence -> opportunity evaluation -> validity check -> event publish |

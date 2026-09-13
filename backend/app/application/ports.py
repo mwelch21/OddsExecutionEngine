@@ -3,7 +3,9 @@ from typing import Protocol, Self
 
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventFilter,
     EventInfo,
+    EventSummary,
     ExecutionRecommendation,
     MarketType,
     Opportunity,
@@ -152,3 +154,30 @@ class WatchIntentUnitOfWork(Protocol):
 
 class WatchIntentUnitOfWorkFactory(Protocol):
     def __call__(self) -> WatchIntentUnitOfWork: ...
+
+
+class EventReadUnitOfWork(Protocol):
+    """Read-only access to stored events. Browsing never writes."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def count_events(self, event_filter: EventFilter, now: datetime) -> int: ...
+
+    def list_events(
+        self,
+        event_filter: EventFilter,
+        now: datetime,
+        limit: int,
+        offset: int,
+    ) -> list[EventSummary]: ...
+
+
+class EventReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> EventReadUnitOfWork: ...
