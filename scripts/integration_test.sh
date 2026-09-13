@@ -10,7 +10,8 @@ FAIL=0
 TOTAL=0
 CLEANUP=false
 SKIP_BUILD=false
-BASE_URL="http://localhost:8000"
+# shellcheck source=lib/stack-env.sh
+source "${ROOT_DIR}/scripts/lib/stack-env.sh"
 
 for arg in "$@"; do
   case "$arg" in

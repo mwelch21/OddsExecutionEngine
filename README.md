@@ -281,6 +281,11 @@ uv run odds-db-seed-demo
 
 ## Configuration Reference
 
+All three host ports are configurable so two worktrees can run their stacks at
+the same time. The defaults are "slot 0" — the values this repo has always used —
+so a checkout with no `.env` behaves exactly as before. See
+[docs/development/worktrees.md](docs/development/worktrees.md).
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APP_ENV` | `development` | `production` enforces security constraints |
@@ -289,7 +294,9 @@ uv run odds-db-seed-demo
 | `POSTGRES_PASSWORD` | `app` | Database password (must change in production) |
 | `POSTGRES_HOST` | `postgres` | `localhost` when running outside Docker |
 | `POSTGRES_PORT` | `5432` | Port inside the container; unchanged by the host mapping |
-| `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds. Change it if another stack holds 5433 |
+| `APP_PORT` | `8000` | Host port the API binds |
+| `FRONTEND_PORT` | `5173` | Host port the frontend dev server binds |
+| `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds |
 | `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
 | `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |

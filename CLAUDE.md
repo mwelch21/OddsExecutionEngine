@@ -66,6 +66,15 @@ docker compose exec -T api uv run pytest
 ./scripts/verify_stage2_5.sh
 ```
 
+These raw commands are canonical. A `Justfile` wraps the common sequences
+(`just up`, `just fresh`, `just dev`, `just check`, `just test`) but is optional
+convenience — nothing requires `just` to be installed.
+
+Host ports are configurable so two worktrees can run their stacks at once.
+Create one with `./scripts/new-worktree.sh <branch>`; see
+`docs/development/worktrees.md`. A checkout with no `.env` uses the long-standing
+defaults (api 8000, frontend 5173, postgres 5433).
+
 ## Branching and Pull Requests
 
 `development` is the default branch and the integration target. `main` is the promotion target.
