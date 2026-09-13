@@ -190,3 +190,68 @@ class EventInfo(DomainModel):
     status: str = "upcoming"
     participants: list[EventParticipant] = []
     commence_time: datetime | None = None
+
+
+class EventQuoteFreshness(DomainModel):
+    """How old an event's quotes are, keeping our clock and the books' apart.
+
+    `last_ingested_at` is when we last pulled this event. `oldest_line_quoted_at`
+    is the oldest line-movement time among the books that report one — the worst
+    case a reader is actually looking at, since "we pulled recently" says nothing
+    about whether any line has moved.
+
+    An event nobody has refreshed has `quote_count == 0` and no times at all,
+    which is not the same fact as age zero. Books that expose no line-movement
+    time are counted in `books_with_unknown_line_age` rather than folded into the
+    age, so the reported oldest can never be read as covering every book —
+    `book_count` is the denominator that makes that number legible.
+
+    `quote_count` counts stored quotes; `book_count` counts distinct sportsbooks.
+    One book quoting both sides of three markets is six quotes and one book.
+    """
+
+    quote_count: int = 0
+    book_count: int = 0
+    last_ingested_at: datetime | None = None
+    oldest_line_quoted_at: datetime | None = None
+    books_with_unknown_line_age: int = 0
+
+
+class EventSummary(DomainModel):
+    """One event as the browse list shows it: matchup, start time, quote age."""
+
+    id: str
+    sport: str | None = None
+    league: str | None = None
+    status: str = "upcoming"
+    starts_at: datetime | None = None
+    participants: list[EventParticipant] = []
+    quotes: EventQuoteFreshness = EventQuoteFreshness()
+
+
+class EventFilter(DomainModel):
+    """What a browse request is asking for.
+
+    League and sport narrow independently and combine; `include_started` opens up
+    events already under way, which are excluded by default because a started
+    event can no longer produce an opportunity.
+    """
+
+    league: str | None = None
+    sport: str | None = None
+    include_started: bool = False
+
+
+class EventPage(DomainModel):
+    """A page of events plus everything needed to render "page 2 of 7"."""
+
+    events: list[EventSummary]
+    page: int
+    page_size: int
+    total_events: int
+
+    @property
+    def total_pages(self) -> int:
+        if self.page_size <= 0:
+            return 0
+        return -(-self.total_events // self.page_size)

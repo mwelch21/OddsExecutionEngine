@@ -85,3 +85,14 @@
 - `quoted_at` is nullable and `NULL` means the provider exposes no line-movement time — unknown age, never "just moved". Providers leave `Quote.quoted_at` as `None` rather than stamping a substitute.
 - The fallback to ingest time is a read-time derivation (`Quote.effective_quoted_at`), paired with `Quote.line_age_known` so a reader can always tell which clock it is looking at. Do not bake the fallback into storage.
 - Opportunity staleness keys on `ingested_at`: it asks whether a later pull replaced the row, which is a question about our polling, not about the book.
+
+## Event browse reads
+
+- `GET /events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
+- Filtering and paging happen in SQL, not after the fact in Python. Dropping rows post-query would report a total the returned page does not add up to, and the page count is the reason this endpoint is page-based rather than cursor-based.
+- Started events are excluded by default, matching the watch paths: a started event can no longer produce an opportunity. `include_started=true` opts back in. An event with no known start time counts as not started.
+- Ordering is `starts_at ASC NULLS LAST`, tie-broken on `external_id`, so paging cannot repeat or skip a row and the order is identical on Postgres and SQLite.
+- Per-event freshness reports both clocks and never derives one from the other: `last_ingested_at` is `MAX(ingested_at)` (our pull), `oldest_line_quoted_at` is `MIN(quoted_at)` over the books that report one (the worst line age a reader is actually looking at).
+- Absence is reported as absence. An event with no quotes has `quote_count == 0` and null times — never age zero. Books with no line-movement time are counted in `books_with_unknown_line_age` rather than folded into the reported oldest, so that number can never be read as covering every book.
+- Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book. `quote_count` counts quotes; `book_count` counts books and is the denominator that makes `books_with_unknown_line_age` legible.
+- Known gap, accepted: ingestion replaces only the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row and can drag `oldest_line_quoted_at` older than any live market. Pruning retired rows is its own ticket — it changes what the recommendation and watch paths read too.
