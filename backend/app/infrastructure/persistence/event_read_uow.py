@@ -71,14 +71,7 @@ class SqlAlchemyEventReadUnitOfWork:
     ) -> list[EventSummary]:
         session = self._require_session()
         query = (
-            select(
-                events_table.c.id,
-                events_table.c.external_id,
-                events_table.c.sport,
-                events_table.c.league,
-                events_table.c.status,
-                events_table.c.starts_at,
-            )
+            _select_event_header()
             # Soonest first. `external_id` breaks ties so paging never repeats or
             # skips a row, and NULL start times sort last on every backend rather
             # than leading on SQLite and trailing on Postgres.
@@ -104,14 +97,7 @@ class SqlAlchemyEventReadUnitOfWork:
         session = self._require_session()
         rows = (
             session.execute(
-                select(
-                    events_table.c.id,
-                    events_table.c.external_id,
-                    events_table.c.sport,
-                    events_table.c.league,
-                    events_table.c.status,
-                    events_table.c.starts_at,
-                ).where(events_table.c.external_id == event_id)
+                _select_event_header().where(events_table.c.external_id == event_id)
             )
             .mappings()
             .all()
@@ -295,6 +281,22 @@ class SqlAlchemyEventReadUnitOfWork:
         if self._session is None:
             raise RuntimeError("Event read unit of work must be entered before use.")
         return self._session
+
+
+def _select_event_header() -> Select[tuple[Any, ...]]:
+    """The columns an `EventSummary` is built from, selected in one place.
+
+    The list and the single-event read must project the same event, so they must
+    not be free to drift apart column by column.
+    """
+    return select(
+        events_table.c.id,
+        events_table.c.external_id,
+        events_table.c.sport,
+        events_table.c.league,
+        events_table.c.status,
+        events_table.c.starts_at,
+    )
 
 
 def _apply_filter(

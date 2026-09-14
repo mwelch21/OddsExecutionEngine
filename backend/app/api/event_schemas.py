@@ -125,7 +125,6 @@ class LineBoardMarketResponse(BaseModel):
     market_type: MarketType
     selection: str
     line: float | None
-    book_count: int
     best_sportsbook: str | None
     best_price: int | None
     quotes: list[LineBoardQuoteResponse]
@@ -136,7 +135,6 @@ class LineBoardMarketResponse(BaseModel):
             market_type=market.market_type,
             selection=market.selection,
             line=market.line,
-            book_count=market.book_count,
             best_sportsbook=market.best_sportsbook,
             best_price=market.best_price,
             quotes=[

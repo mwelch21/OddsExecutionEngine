@@ -263,9 +263,24 @@ class LineBoardMarket(DomainModel):
     best_sportsbook: str | None = None
     best_price: int | None = None
 
-    @property
-    def book_count(self) -> int:
-        return len(self.quotes)
+    @classmethod
+    def from_ranked(
+        cls, market: MarketQuotes, ranked_quotes: list[Quote]
+    ) -> "LineBoardMarket":
+        """Pair a market with its books once someone else has ranked them.
+
+        Ranking is the engine's call, so it happens outside; naming the winner is
+        just reading the head of what the engine returned.
+        """
+        best = ranked_quotes[0] if ranked_quotes else None
+        return cls(
+            market_type=market.market_type,
+            selection=market.selection,
+            line=market.line,
+            quotes=ranked_quotes,
+            best_sportsbook=best.sportsbook if best is not None else None,
+            best_price=best.price if best is not None else None,
+        )
 
 
 class LineBoard(DomainModel):

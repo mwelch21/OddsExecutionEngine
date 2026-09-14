@@ -231,7 +231,6 @@ def test_board_groups_quotes_by_market_and_carries_the_event_header(
         "Caesars",
         "DraftKings",
     }
-    assert moneyline["book_count"] == 3
 
 
 def test_quotes_are_ranked_best_first_and_the_best_book_is_named(
@@ -322,7 +321,6 @@ def test_a_market_no_book_is_quoting_is_present_and_empty(
 
     total = _market(board, "total", "over")
     assert total["quotes"] == []
-    assert total["book_count"] == 0
     # No quotes means no best book — not a best book at price zero.
     assert total["best_sportsbook"] is None
     assert total["best_price"] is None

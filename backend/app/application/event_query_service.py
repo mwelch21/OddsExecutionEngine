@@ -116,33 +116,26 @@ class EventQueryService:
             )
             return None
 
-        ranked_markets = [self._rank(market) for market in markets]
+        ranked_markets = [self._to_board_market(market) for market in markets]
         self._logger.info(
             "events.line_board.completed",
             extra={
                 "path": "/events/{event_id}/quotes",
                 "event_id": event_id,
                 "market_count": len(ranked_markets),
-                "quote_count": sum(m.book_count for m in ranked_markets),
+                "quote_count": sum(len(m.quotes) for m in ranked_markets),
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
         return LineBoard(event=event, markets=ranked_markets)
 
-    def _rank(self, market: MarketQuotes) -> LineBoardMarket:
+    def _to_board_market(self, market: MarketQuotes) -> LineBoardMarket:
         """Rank one market's books with the engine rule, not a second sort.
 
         Two books at an identical price are separated only by the engine's
         tie-break. Ranking here rather than in the client is what keeps the book
         the board calls best and the book a watch would fire on the same book.
         """
-        ranked = self._recommendation_engine.rank_quotes(market.quotes)
-        best = ranked[0] if ranked else None
-        return LineBoardMarket(
-            market_type=market.market_type,
-            selection=market.selection,
-            line=market.line,
-            quotes=ranked,
-            best_sportsbook=best.sportsbook if best is not None else None,
-            best_price=best.price if best is not None else None,
+        return LineBoardMarket.from_ranked(
+            market, self._recommendation_engine.rank_quotes(market.quotes)
         )
