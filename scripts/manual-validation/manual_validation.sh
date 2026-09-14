@@ -156,8 +156,11 @@ MSG
   return 1
 }
 
+# api + postgres only, like `just up`. The frontend is not part of any suite, and
+# starting it here means an unrelated port conflict (5173 is a popular port) aborts
+# validation before it has run a single check.
 cmd_up() {
-  dc up --build -d
+  dc up --build -d api postgres
   wait_for_api
   check_schema_reachable
   dc exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
@@ -173,7 +176,7 @@ cmd_down() {
 # Destructive. Only called from the explicit reset cell.
 cmd_reset_db() {
   dc down -v
-  dc up --build -d
+  dc up --build -d api postgres
   wait_for_api
   dc exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
   dc exec -T api uv run odds-db-seed-demo
@@ -257,8 +260,220 @@ cmd_events() {
   psql_q -c "select event_type, count(*) from workflow_events group by event_type order by 1;"
 }
 
+count_workflow_events() {
+  psql_q -tAc "select count(*) from workflow_events;" | tr -d ' '
+}
+
+# --- read endpoints -------------------------------------------------------
+# The browse list and the line board. Both are pure reads: they must never add
+# a workflow_events row, which the full run asserts rather than assumes.
+
+# event-list [query-string] -- GET /events, e.g. `event-list 'league=NBA&page=1'`
+cmd_event_list() {
+  local query="${1:-}" path="/events"
+  [[ -n "$query" ]] && path="/events?${query}"
+  api GET "$path" | tee "${MV_RESULTS}/events.json" | jq .
+}
+
+# board [event_id] -- GET /events/{id}/quotes, the line board
+cmd_board() {
+  local event_id="${1:-$EVENT_ID}"
+  api GET "/events/${event_id}/quotes" | tee "${MV_RESULTS}/board.json" | jq .
+}
+
+# One market's entry on the saved board, by type and selection.
+board_market() {
+  jq --arg t "$1" --arg s "$2" \
+    '.markets[] | select(.market_type == $t and .selection == $s)' \
+    "${MV_RESULTS}/board.json"
+}
+
+# Only the demo event's `total/under` market, which the suite empties and
+# restores to show what a market nobody is quoting looks like.
+cmd_empty_market() {
+  psql_q -c "delete from market_quotes_latest q using markets m
+    where q.market_id = m.id and m.market_type = 'total' and m.selection = 'under';"
+  echo "total/under emptied — the market stays, its books are gone"
+}
+
+# market_quotes_history keeps every row ingestion ever wrote, so the latest row
+# is recoverable without re-seeding.
+cmd_restore_market() {
+  psql_q -c "insert into market_quotes_latest (market_id, sportsbook, price, ingested_at, quoted_at)
+    select distinct on (h.market_id, h.sportsbook)
+           h.market_id, h.sportsbook, h.price, h.ingested_at, h.quoted_at
+      from market_quotes_history h
+      join markets m on m.id = h.market_id
+     where m.market_type = 'total' and m.selection = 'under'
+     order by h.market_id, h.sportsbook, h.ingested_at desc
+    on conflict do nothing;"
+  echo "total/under restored from history"
+}
+
+# start-event / unstart-event -- move the demo event across its start time, to
+# show the browse list hiding it while its board still renders.
+cmd_start_event() {
+  psql_q -c "update events set starts_at = now() - interval '1 hour'
+    where external_id = '${EVENT_ID}';"
+  echo "${EVENT_ID} now started an hour ago"
+}
+
+cmd_unstart_event() {
+  psql_q -c "update events set starts_at = now() + interval '3 days'
+    where external_id = '${EVENT_ID}';"
+  echo "${EVENT_ID} back to starting in three days"
+}
+
 cmd_sql() {
   psql_q -c "$1"
+}
+
+# The line board and browse list (#28, #29). Self-healing: it restores anything
+# an earlier run (of either suite) moved, then re-ingests the fixture, so the
+# counts below describe the demo data and nothing else.
+cmd_full_line_board() {
+  cmd_restore_market >/dev/null
+  cmd_unstart_event >/dev/null
+  cmd_refresh >/dev/null
+  local events_before
+  events_before="$(count_workflow_events)"
+
+  echo "== 1. the browse list: what we hold, and whether it is worth trusting =="
+  cmd_event_list "league=NBA" >/dev/null
+  expect_eq "demo event listed" \
+    "$(jq --arg e "$EVENT_ID" '[.events[] | select(.id == $e)] | length' \
+        "${MV_RESULTS}/events.json")" "1"
+  expect_eq "matchup carried" \
+    "$(jq -r --arg e "$EVENT_ID" \
+        '[.events[] | select(.id == $e) | .participants[].name] | join(" vs ")' \
+        "${MV_RESULTS}/events.json")" "Celtics vs Knicks"
+  expect_eq "quotes held" \
+    "$(jq --arg e "$EVENT_ID" '.events[] | select(.id == $e) | .quotes.quote_count' \
+        "${MV_RESULTS}/events.json")" "10"
+  expect_eq "books held (4 books, not 10 rows)" \
+    "$(jq --arg e "$EVENT_ID" '.events[] | select(.id == $e) | .quotes.book_count' \
+        "${MV_RESULTS}/events.json")" "4"
+  expect_eq "our clock and the books' are different values" \
+    "$(jq -r --arg e "$EVENT_ID" \
+        '.events[] | select(.id == $e) | .quotes
+         | (.last_ingested_at != null and .oldest_line_quoted_at != null
+            and .last_ingested_at != .oldest_line_quoted_at)' \
+        "${MV_RESULTS}/events.json")" "true"
+
+  echo
+  echo "== 2. one call returns the whole board, grouped by market =="
+  cmd_board >/dev/null
+  expect_eq "markets, in a stable order" \
+    "$(jq -r '[.markets[] | "\(.market_type)/\(.selection)@\(.line)"] | join(", ")' \
+        "${MV_RESULTS}/board.json")" \
+    "moneyline/celtics@null, moneyline/knicks@null, spread/knicks@4.5, spread/knicks@5.5, total/over@221.5, total/under@221.5"
+  expect_eq "event header travels with it" \
+    "$(jq -r '.event.id' "${MV_RESULTS}/board.json")" "$EVENT_ID"
+
+  echo
+  echo "== 3. THE POINT OF #29: ranked best-first, and the tie broken by the engine =="
+  expect_eq "knicks moneyline, best price first" \
+    "$(board_market moneyline knicks | jq -r '[.quotes[].sportsbook] | join(",")')" \
+    "DraftKings,FanDuel,BetMGM"
+  expect_eq "best book named in the response" \
+    "$(board_market moneyline knicks | jq -r .best_sportsbook)" "DraftKings"
+  expect_eq "best price" \
+    "$(board_market moneyline knicks | jq -r .best_price)" "125"
+  # DraftKings and FanDuel are both +125. Only (-price, sportsbook) separates
+  # them, and it has to separate them the same way a watch would.
+  expect_eq "the tie is real" \
+    "$(board_market moneyline knicks | jq -r '[.quotes[] | select(.price == 125) | .sportsbook] | join(",")')" \
+    "DraftKings,FanDuel"
+  # Price ranks first, not the alphabet: DraftKings loses this one on -112.
+  expect_eq "over 221.5 best book is FanDuel at -108" \
+    "$(board_market total over | jq -r '"\(.best_sportsbook) \(.best_price)"')" \
+    "FanDuel -108"
+
+  echo
+  echo "== 4. every quote carries the book's clock and ours =="
+  expect_eq "BetMGM reports a line-movement time" \
+    "$(board_market moneyline knicks | jq -r '.quotes[] | select(.sportsbook == "BetMGM") | .line_age_known')" \
+    "true"
+  expect_eq "and that line has not moved in over two days" \
+    "$(psql_q -tAc "select (now() - q.quoted_at) > interval '2 days'
+        from market_quotes_latest q join markets m on m.id = q.market_id
+        join events e on e.id = m.event_id
+       where q.sportsbook = 'BetMGM' and m.market_type = 'moneyline'
+         and m.selection = 'knicks' and e.external_id = '${EVENT_ID}';" | tr -d ' ')" "t"
+  expect_eq "FanDuel exposes no line-movement time, and says so" \
+    "$(board_market moneyline knicks | jq -r '.quotes[] | select(.sportsbook == "FanDuel") | "\(.quoted_at) \(.line_age_known)"')" \
+    "null false"
+  expect_eq "every quote still reports when we pulled it" \
+    "$(jq '[.markets[].quotes[] | select(.ingested_at == null)] | length' "${MV_RESULTS}/board.json")" "0"
+
+  echo
+  echo "== 5. a market nobody is quoting is present and empty =="
+  cmd_empty_market >/dev/null
+  cmd_board >/dev/null
+  expect_eq "total/under still on the board" \
+    "$(board_market total under | jq -r '.selection')" "under"
+  expect_eq "with no books" \
+    "$(board_market total under | jq '.quotes | length')" "0"
+  expect_eq "and no best book — not a best book at price zero" \
+    "$(board_market total under | jq -r '"\(.best_sportsbook) \(.best_price)"')" "null null"
+  cmd_restore_market >/dev/null
+  cmd_board >/dev/null
+  expect_eq "restored" \
+    "$(board_market total under | jq -r .best_sportsbook)" "BetMGM"
+
+  echo
+  echo "== 6. the board is one screen: no pagination =="
+  expect_eq "no page fields in the response" \
+    "$(jq -r 'has("page") or has("page_size") or has("total_pages")' "${MV_RESULTS}/board.json")" \
+    "false"
+  expect_eq "page params cannot truncate it" \
+    "$(api GET "/events/${EVENT_ID}/quotes?page=2&page_size=1" | jq '.markets | length')" "6"
+
+  echo
+  echo "== 7. a started event is hidden from the list but still has a board =="
+  cmd_start_event >/dev/null
+  expect_eq "gone from the default list" \
+    "$(api GET /events | jq --arg e "$EVENT_ID" '[.events[] | select(.id == $e)] | length')" "0"
+  expect_eq "back with include_started" \
+    "$(api GET "/events?include_started=true" | jq --arg e "$EVENT_ID" '[.events[] | select(.id == $e)] | length')" "1"
+  expect_eq "its board renders regardless" \
+    "$(api GET "/events/${EVENT_ID}/quotes" | jq '.markets | length')" "6"
+  cmd_unstart_event >/dev/null
+
+  echo
+  echo "== 8. unknown ids behave =="
+  expect_status "GET /events/does-not-exist/quotes" \
+    "$(api_status GET /events/does-not-exist/quotes)" 404
+  expect_status "GET /events with a league nobody holds" \
+    "$(api_status GET "/events?league=NFL")" 200
+  expect_eq "which is an empty page, not an error" \
+    "$(api GET "/events?league=NFL" | jq '.total_events')" "0"
+
+  echo
+  echo "== 9. reads are reads: nothing was emitted or written =="
+  expect_eq "workflow_events unchanged across every read above" \
+    "$(count_workflow_events)" "$events_before"
+
+  echo
+  echo "== 10. the board matches what the database actually holds =="
+  expect_eq "markets on the event" \
+    "$(psql_q -tAc "select count(*) from markets m join events e on e.id = m.event_id
+       where e.external_id = '${EVENT_ID}';" | tr -d ' ')" \
+    "$(jq '.markets | length' "${MV_RESULTS}/board.json")"
+  expect_eq "latest quote rows on the event" \
+    "$(psql_q -tAc "select count(*) from market_quotes_latest q
+       join markets m on m.id = q.market_id join events e on e.id = m.event_id
+       where e.external_id = '${EVENT_ID}';" | tr -d ' ')" \
+    "$(jq '[.markets[].quotes[]] | length' "${MV_RESULTS}/board.json")"
+
+  echo
+  if [[ "$MV_FAILURES" -eq 0 ]]; then
+    echo "full run complete: all checks passed"
+  else
+    echo "full run complete: ${MV_FAILURES} check(s) FAILED"
+  fi
+  echo "responses saved under ${MV_RESULTS}"
+  [[ "$MV_FAILURES" -eq 0 ]]
 }
 
 cmd_full() {
@@ -384,14 +599,21 @@ case "${1:-}" in
   opportunity-for) shift; cmd_opportunity_for "$@" ;;
   bump-quote) shift; cmd_bump_quote "$@" ;;
   events) cmd_events ;;
+  event-list) shift; cmd_event_list "$@" ;;
+  board) shift; cmd_board "$@" ;;
+  empty-market) cmd_empty_market ;;
+  restore-market) cmd_restore_market ;;
+  start-event) cmd_start_event ;;
+  unstart-event) cmd_unstart_event ;;
   sql) shift; cmd_sql "$@" ;;
   api) shift; api "$@" ;;
   api-status) shift; api_status "$@" ;;
   watch-id) shift; watch_id "$@" ;;
   past) past_timestamp ;;
   full) cmd_full ;;
+  full-line-board) cmd_full_line_board ;;
   *)
-    echo "usage: manual_validation.sh {up|down|reset-db|clear-watches|wait|create-watch|refresh|watch|opportunities|opportunity-for|bump-quote|events|sql|api|api-status|watch-id|past|full}" >&2
+    echo "usage: manual_validation.sh {up|down|reset-db|clear-watches|wait|create-watch|refresh|watch|opportunities|opportunity-for|bump-quote|events|event-list|board|empty-market|restore-market|start-event|unstart-event|sql|api|api-status|watch-id|past|full|full-line-board}" >&2
     exit 2
     ;;
 esac
