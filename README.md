@@ -175,6 +175,7 @@ docker compose logs -f api
 | `POST` | `/ingestion/quotes/refresh` | Refresh quotes for a single event |
 | `POST` | `/ingestion/quotes/refresh-sport` | Refresh all events for a sport (live data) |
 | `GET` | `/events?league=&sport=&page=&page_size=` | Browse upcoming events with quote freshness |
+| `GET` | `/events/{id}/quotes` | One event's line board: markets, books ranked best-first |
 | `POST` | `/watch-intents` | Create a watch intent (monitors for target price) |
 | `GET` | `/watch-intents?event_id=` | List active watch intents |
 | `DELETE` | `/watch-intents/{id}` | Cancel a watch intent |
