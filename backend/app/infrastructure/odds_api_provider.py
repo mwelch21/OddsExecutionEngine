@@ -4,7 +4,13 @@ from typing import Any, cast
 
 import httpx
 
-from backend.app.domain.models import EventInfo, EventParticipant, MarketType, Quote
+from backend.app.domain.models import (
+    EventInfo,
+    EventParticipant,
+    MarketType,
+    Quote,
+    SupportedSport,
+)
 
 SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "icehockey_nhl": ("ice_hockey", "NHL"),
@@ -104,6 +110,18 @@ class TheOddsApiProvider:
     def get_event_info(self, event_id: str) -> EventInfo | None:
         """Get cached event metadata. Call list_events_for_sport first."""
         return self._event_cache.get(event_id)
+
+    def list_supported_sports(self) -> list[SupportedSport]:
+        """Sports this adapter can split into a sport and a league.
+
+        Read straight off `SPORT_LEAGUE_MAP` so the catalog and the parsing
+        cannot disagree. Deliberately not filtered by the configured sport list:
+        that setting bounds the per-event refresh loop, and is not a whitelist.
+        """
+        return [
+            SupportedSport(key=key, sport=sport, league=league or None)
+            for key, (sport, league) in SPORT_LEAGUE_MAP.items()
+        ]
 
     def _fetch_sport_odds(self, sport: str) -> list[dict[str, Any]]:
         """GET /v4/sports/{sport}/odds from The Odds API."""

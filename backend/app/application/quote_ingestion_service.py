@@ -12,8 +12,21 @@ from backend.app.domain.events import (
     build_quote_updated_event,
     build_quotes_refreshed_event,
 )
-from backend.app.domain.models import Quote, QuoteRefreshSummary
+from backend.app.domain.models import Quote, QuoteRefreshSummary, SupportedSport
 from backend.app.engines.normalization_engine import NormalizationEngine
+
+
+class UnsupportedSportError(Exception):
+    """A refresh named a sport this system cannot ingest.
+
+    Carries the supported keys so the caller can be told what it should have
+    asked for, rather than being handed a bare rejection.
+    """
+
+    def __init__(self, sport: str, supported: list[str]) -> None:
+        self.sport = sport
+        self.supported = supported
+        super().__init__(f"Unsupported sport {sport!r}. Supported: {', '.join(supported)}")
 
 
 class QuoteIngestionService:
@@ -132,8 +145,13 @@ class QuoteIngestionService:
         )
         return summary
 
+    def list_supported_sports(self) -> list[SupportedSport]:
+        """The sports a refresh may name."""
+        return self._quote_provider.list_supported_sports()
+
     def refresh_sport(self, sport: str) -> list[QuoteRefreshSummary]:
         """Refresh all events for a sport."""
+        self._assert_sport_supported(sport)
         self._logger.info("sport_refresh.started", extra={"sport": sport})
         started_at = perf_counter()
 
@@ -176,3 +194,19 @@ class QuoteIngestionService:
             },
         )
         return summaries
+
+    def _assert_sport_supported(self, sport: str) -> None:
+        """Reject an unknown sport key before it can cost a credit.
+
+        Upstream bills per call whether or not the sport exists, so a typo that
+        reaches the provider buys a 404. Checked against the provider's catalog
+        rather than the configured sport list: that setting bounds the per-event
+        refresh loop and was never a whitelist.
+        """
+        supported = [entry.key for entry in self._quote_provider.list_supported_sports()]
+        if sport not in supported:
+            self._logger.warning(
+                "sport_refresh.unsupported_sport",
+                extra={"sport": sport},
+            )
+            raise UnsupportedSportError(sport, supported)
