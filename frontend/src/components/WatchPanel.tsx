@@ -1,6 +1,6 @@
 import { Bell, Trash2 } from "lucide-react";
 import type { WatchIntent } from "../lib/api";
-import { formatAmerican } from "../lib/fixtures";
+import { formatAmerican } from "../lib/format";
 import { Button, EmptyState, Panel, Pill } from "./primitives";
 
 type Props = {
