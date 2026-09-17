@@ -17,6 +17,9 @@ from backend.app.domain.models import (
     EventParticipant,
     EventQuoteFreshness,
     EventSummary,
+    MarketQuotes,
+    MarketType,
+    Quote,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import (
@@ -68,14 +71,7 @@ class SqlAlchemyEventReadUnitOfWork:
     ) -> list[EventSummary]:
         session = self._require_session()
         query = (
-            select(
-                events_table.c.id,
-                events_table.c.external_id,
-                events_table.c.sport,
-                events_table.c.league,
-                events_table.c.status,
-                events_table.c.starts_at,
-            )
+            _select_event_header()
             # Soonest first. `external_id` breaks ties so paging never repeats or
             # skips a row, and NULL start times sort last on every backend rather
             # than leading on SQLite and trailing on Postgres.
@@ -89,6 +85,97 @@ class SqlAlchemyEventReadUnitOfWork:
         rows = (
             session.execute(_apply_filter(query, event_filter, now)).mappings().all()
         )
+        return self._summaries(session, list(rows))
+
+    def get_event(self, event_id: str) -> EventSummary | None:
+        """One event by its external id, carrying the same header the list shows.
+
+        No started-event filter: the browse list hides started events because
+        they cannot be filled, but asking for one by id is a different question
+        and its board still renders.
+        """
+        session = self._require_session()
+        rows = (
+            session.execute(
+                _select_event_header().where(events_table.c.external_id == event_id)
+            )
+            .mappings()
+            .all()
+        )
+        summaries = self._summaries(session, list(rows))
+        return summaries[0] if summaries else None
+
+    def list_market_quotes(self, event_id: str) -> list[MarketQuotes]:
+        """Every market of one event with the books quoting it, unranked.
+
+        Outer-joined, so a market no book is currently quoting comes back empty
+        rather than vanishing — "nobody is offering this" is an answer the board
+        has to be able to show.
+        """
+        session = self._require_session()
+        rows = (
+            session.execute(
+                select(
+                    markets_table.c.id.label("market_id"),
+                    markets_table.c.market_type,
+                    markets_table.c.selection,
+                    markets_table.c.line,
+                    market_quotes_latest_table.c.sportsbook,
+                    market_quotes_latest_table.c.price,
+                    market_quotes_latest_table.c.quoted_at,
+                    market_quotes_latest_table.c.ingested_at,
+                )
+                .select_from(
+                    markets_table.join(
+                        events_table, markets_table.c.event_id == events_table.c.id
+                    ).outerjoin(
+                        market_quotes_latest_table,
+                        market_quotes_latest_table.c.market_id == markets_table.c.id,
+                    )
+                )
+                .where(events_table.c.external_id == event_id)
+                # Markets group by type, then by line, then by selection, so the
+                # board reads the same way on every backend and on every request.
+                .order_by(
+                    markets_table.c.market_type.asc(),
+                    markets_table.c.line.asc().nullslast(),
+                    markets_table.c.selection.asc(),
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        markets: dict[str, MarketQuotes] = {}
+        for row in rows:
+            market = markets.setdefault(
+                str(row["market_id"]),
+                MarketQuotes(
+                    market_type=MarketType(row["market_type"]),
+                    selection=row["selection"],
+                    line=row["line"],
+                    quotes=[],
+                ),
+            )
+            if row["sportsbook"] is None:
+                continue
+            market.quotes.append(
+                Quote(
+                    event_id=event_id,
+                    sportsbook=row["sportsbook"],
+                    market_type=market.market_type,
+                    selection=market.selection,
+                    price=row["price"],
+                    line=market.line,
+                    quoted_at=_as_utc(row["quoted_at"]),
+                    ingested_at=_as_utc(row["ingested_at"]),
+                )
+            )
+        return list(markets.values())
+
+    def _summaries(
+        self, session: Session, rows: list[RowMapping]
+    ) -> list[EventSummary]:
         if not rows:
             return []
 
@@ -194,6 +281,22 @@ class SqlAlchemyEventReadUnitOfWork:
         if self._session is None:
             raise RuntimeError("Event read unit of work must be entered before use.")
         return self._session
+
+
+def _select_event_header() -> Select[tuple[Any, ...]]:
+    """The columns an `EventSummary` is built from, selected in one place.
+
+    The list and the single-event read must project the same event, so they must
+    not be free to drift apart column by column.
+    """
+    return select(
+        events_table.c.id,
+        events_table.c.external_id,
+        events_table.c.sport,
+        events_table.c.league,
+        events_table.c.status,
+        events_table.c.starts_at,
+    )
 
 
 def _apply_filter(

@@ -7,6 +7,7 @@ from backend.app.domain.models import (
     EventInfo,
     EventSummary,
     ExecutionRecommendation,
+    MarketQuotes,
     MarketType,
     Opportunity,
     OrderIntent,
@@ -177,6 +178,10 @@ class EventReadUnitOfWork(Protocol):
         limit: int,
         offset: int,
     ) -> list[EventSummary]: ...
+
+    def get_event(self, event_id: str) -> EventSummary | None: ...
+
+    def list_market_quotes(self, event_id: str) -> list[MarketQuotes]: ...
 
 
 class EventReadUnitOfWorkFactory(Protocol):

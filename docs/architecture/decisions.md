@@ -301,7 +301,7 @@ Introduce `EventReadUnitOfWork` / `EventReadUnitOfWorkFactory` in `backend/app/a
 
 ### Consequences
 
-- The read seam is the template for later read endpoints (`GET /events/{id}/markets`, `GET /events/{id}/quotes`), which should extend it rather than reach for a write unit of work.
+- The read seam is the template for later read endpoints (`GET /events/{id}/markets`, `GET /events/{id}/quotes`), which should extend it rather than reach for a write unit of work. `GET /events/{id}/quotes` now does exactly that: it added `get_event` and `list_market_quotes` to this port rather than introducing a second seam, and ranking stayed in the application layer so the engine rule is not duplicated in SQL.
 - Per-event freshness is computed in one grouped aggregate over `market_quotes_latest`, reported as two independent facts: `last_ingested_at` (`MAX(ingested_at)`, our pull) and `oldest_line_quoted_at` (`MIN(quoted_at)`, the books'). ADR-009's split is what makes reporting them separately possible.
 - Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book; counting rows would report six unknown-age "books" for a single silent provider.
 - Known gap, accepted: ingestion only replaces the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row. `MIN(quoted_at)` can therefore be dragged older by a market that is no longer live. Pruning retired rows changes ingestion semantics for the recommendation and watch paths too, so it belongs to its own ticket.
