@@ -192,6 +192,36 @@ class EventInfo(DomainModel):
     commence_time: datetime | None = None
 
 
+class UpstreamQuota(DomainModel):
+    """What one upstream call cost, and what is left.
+
+    The Odds API bills credits, not requests: a call costs
+    [markets] x [regions], so a single refresh of three markets in one region
+    spends three. `credits_spent` is that call's own cost (`x-requests-last`).
+
+    Every field is nullable because the headers are not guaranteed: a provider
+    may omit them, and a failed response may carry none at all. `None` reads as
+    "not reported", never as zero — a refresh that appears to have cost nothing
+    is a claim this system cannot make.
+    """
+
+    credits_spent: int | None = None
+    credits_remaining: int | None = None
+
+
+class ProviderFetchReport(DomainModel):
+    """Whether a refresh actually contacted the provider, and what it cost.
+
+    `upstream_contacted` is false when the answer came from a reused response.
+    `quota` is populated only in that case: replaying the credit figures from
+    someone else's earlier call would misreport both the cost and the balance.
+    """
+
+    upstream_contacted: bool
+    data_age_seconds: float
+    quota: UpstreamQuota | None = None
+
+
 class SupportedSport(DomainModel):
     """A sport this system knows how to ingest, named in both vocabularies.
 
@@ -203,6 +233,19 @@ class SupportedSport(DomainModel):
     key: str
     sport: str
     league: str | None = None
+
+
+class SportRefreshResult(DomainModel):
+    """One sport-wide refresh: what it persisted, and what it cost to find out.
+
+    The per-event summaries and the fetch report are returned together because
+    the router previously assembled this shape itself, and the cost of a refresh
+    is not derivable from the summaries.
+    """
+
+    sport: str
+    summaries: list[QuoteRefreshSummary]
+    fetch_report: ProviderFetchReport
 
 
 class EventQuoteFreshness(DomainModel):

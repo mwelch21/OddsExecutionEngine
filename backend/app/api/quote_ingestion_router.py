@@ -43,7 +43,7 @@ def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
     )
     def refresh_sport(request: SportRefreshRequest) -> SportRefreshResponse:
         try:
-            summaries = service.refresh_sport(request.sport)
+            result = service.refresh_sport(request.sport)
         except UnsupportedSportError as err:
             raise HTTPException(
                 status_code=422,
@@ -52,10 +52,6 @@ def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
                     f"Supported: {', '.join(err.supported)}"
                 ),
             ) from err
-        return SportRefreshResponse(
-            sport=request.sport,
-            events_refreshed=len(summaries),
-            results=[QuoteRefreshResponse.from_domain(s) for s in summaries],
-        )
+        return SportRefreshResponse.from_domain(result)
 
     return router
