@@ -782,3 +782,208 @@ select {
     justify-content: flex-start;
   }
 }
+
+/* --- Event browser -------------------------------------------------------- */
+
+.event-list {
+  display: grid;
+  gap: 18px;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.checkbox-shell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.result-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.loading-note {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.event-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.event-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.event-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-strong);
+}
+
+.event-card-main {
+  display: grid;
+  gap: 4px;
+}
+
+.event-card-main strong {
+  font-size: 16px;
+}
+
+.event-card-main small,
+.event-card-freshness small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.event-card-freshness {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+/* An unknown line age is a distinct fact from a stale one, and is toned to
+   read as "we cannot say" rather than as a warning. */
+.unknown-note {
+  color: var(--warn);
+  opacity: 0.82;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* --- Line board ----------------------------------------------------------- */
+
+/* .button-ghost is sized as a 38px icon square; this one carries a label. */
+.back-button {
+  display: inline-flex;
+  width: auto;
+  margin-bottom: 10px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.board-freshness {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.board-freshness small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.market-group {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.market-group h3 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.market-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.market-group .market-row:first-of-type {
+  border-top: none;
+}
+
+.market-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 170px;
+}
+
+.market-identity strong {
+  text-transform: capitalize;
+}
+
+.quote-strip {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quote-chip {
+  display: grid;
+  gap: 2px;
+  min-width: 108px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+/* The backend names the best book; this styling reports that call rather than
+   re-deciding it client-side. */
+.quote-chip-best {
+  border-color: var(--good);
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.quote-book {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quote-chip small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.fill-note.good {
+  color: var(--good);
+}

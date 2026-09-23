@@ -21,6 +21,8 @@ export default defineConfig({
       "/health": apiTarget,
       "/execution": apiTarget,
       "/ingestion": apiTarget,
+      "/events": apiTarget,
+      "/sports": apiTarget,
       "/watch-intents": apiTarget,
       "/opportunities": apiTarget
     }

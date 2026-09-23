@@ -1,197 +1,150 @@
-import { Bell, RefreshCcw } from "lucide-react";
-import type { Recommendation } from "../lib/api";
-import { formatAmerican, type MarketLine } from "../lib/fixtures";
-import { Button, Pill } from "./primitives";
+import { ArrowLeft, Bell, Crown } from "lucide-react";
+import type { LineBoard as LineBoardData, LineBoardMarket } from "../lib/api";
+import {
+  ageLabel,
+  formatAmerican,
+  formatLine,
+  formatStart,
+  marketLabel,
+  summarizeFreshness
+} from "../lib/format";
+import { Button, EmptyState, Pill } from "./primitives";
 
 type Props = {
-  lines: MarketLine[];
-  recommendations: Record<string, Recommendation>;
-  selectedBook: string;
+  board: LineBoardData | null;
   loading: boolean;
-  onBookChange: (book: string) => void;
-  onRefresh: () => void;
-  onOpenWatch: (line: MarketLine) => void;
-  books: string[];
+  onBack: () => void;
+  onOpenWatch: (market: LineBoardMarket) => void;
 };
 
-export function LineBoard({
-  lines,
-  recommendations,
-  selectedBook,
-  loading,
-  onBookChange,
-  onRefresh,
-  onOpenWatch,
-  books
-}: Props) {
-  const matchupGroups = lines.reduce<Record<string, MarketLine[]>>((groups, line) => {
-    groups[line.matchup] = [...(groups[line.matchup] ?? []), line];
-    return groups;
-  }, {});
+const MARKET_ORDER: Record<string, number> = { moneyline: 0, spread: 1, total: 2 };
+
+export function LineBoard({ board, loading, onBack, onOpenWatch }: Props) {
+  if (loading) {
+    return (
+      <section className="line-board">
+        <div className="loading-note">Loading line board</div>
+      </section>
+    );
+  }
+
+  if (!board) {
+    return (
+      <section className="line-board">
+        <EmptyState>Select an event to see its board.</EmptyState>
+      </section>
+    );
+  }
+
+  const freshness = summarizeFreshness(board.event.quotes);
+  const groups = groupByMarket(board.markets);
 
   return (
     <section className="line-board">
       <div className="panel-heading">
         <div>
-          <Pill tone="accent">Lines</Pill>
-          <h2>Best available execution</h2>
-          <p>Filter by sportsbook. Best shows current best line per market.</p>
-        </div>
-        <div className="board-actions">
-          <div className="book-filter" aria-label="Sportsbook filter">
-            {books.map((book) => (
-              <button
-                className={book === selectedBook ? "book-chip active" : "book-chip"}
-                key={book}
-                onClick={() => onBookChange(book)}
-              >
-                {book}
-              </button>
-            ))}
-          </div>
-          <Button onClick={onRefresh} disabled={loading}>
-            <RefreshCcw size={16} />
-            Refresh
+          <Button variant="ghost" className="back-button" onClick={onBack}>
+            <ArrowLeft size={16} />
+            All events
           </Button>
+          <p>
+            {board.event.league ?? board.event.sport ?? "Unknown league"} ·{" "}
+            {formatStart(board.event.starts_at)}
+          </p>
+        </div>
+        <div className="board-freshness">
+          <Pill tone={freshness.tone === "warn" ? "warn" : "good"}>{freshness.pulled}</Pill>
+          <small>{freshness.lines}</small>
+          {freshness.unknownNote && (
+            <small className="unknown-note">{freshness.unknownNote}</small>
+          )}
         </div>
       </div>
 
-      <div className="game-stack">
-        {Object.entries(matchupGroups).map(([matchup, matchupLines]) => (
-          <article className="game-card" key={matchup}>
-            <div className="game-card-header">
-              <div>
-                <span className="league">{matchupLines[0]?.league}</span>
-                <h3>{matchup}</h3>
-                <small>{matchupLines[0]?.startsAt}</small>
-              </div>
-              <Button variant="ghost" title="Create watch" onClick={() => onOpenWatch(matchupLines[0])}>
-                <Bell size={16} />
-              </Button>
-            </div>
-
-            <div className="team-lines">
-      <TeamLine
-        label="Knicks"
-        tone="accent"
-        lines={[
-          findLine(matchupLines, "knicks", "moneyline"),
-          findLine(matchupLines, "knicks", "spread"),
-          findLine(matchupLines, "over", "total")
-        ]}
-                recommendations={recommendations}
-                selectedBook={selectedBook}
-                onOpenWatch={onOpenWatch}
-              />
-              <div className="match-divider" />
-      <TeamLine
-        label="Celtics"
-        tone="neutral"
-        lines={[
-          findLine(matchupLines, "celtics", "moneyline"),
-          findLine(matchupLines, "celtics", "spread"),
-          findLine(matchupLines, "under", "total")
-        ]}
-                recommendations={recommendations}
-                selectedBook={selectedBook}
-                onOpenWatch={onOpenWatch}
-              />
-            </div>
-          </article>
-        ))}
-      </div>
+      {board.markets.length === 0 ? (
+        <EmptyState>
+          No lines stored for this event. Refresh its sport to pull them.
+        </EmptyState>
+      ) : (
+        <div className="market-stack">
+          {groups.map(([marketType, markets]) => (
+            <article className="market-group" key={marketType}>
+              <h3>{marketTypeHeading(marketType)}</h3>
+              {markets.map((market) => (
+                <MarketRow
+                  key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
+                  market={market}
+                  onOpenWatch={onOpenWatch}
+                />
+              ))}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
-function TeamLine({
-  label,
-  tone,
-  lines,
-  recommendations,
-  selectedBook,
+function MarketRow({
+  market,
   onOpenWatch
 }: {
-  label: string;
-  tone: "accent" | "neutral";
-  lines: Array<MarketLine | undefined>;
-  recommendations: Record<string, Recommendation>;
-  selectedBook: string;
-  onOpenWatch: (line: MarketLine) => void;
+  market: LineBoardMarket;
+  onOpenWatch: (market: LineBoardMarket) => void;
 }) {
+  const lineText = formatLine(market);
+
   return (
-    <div className="team-row">
-      <div className="team-identity">
-        <div className={`team-avatar ${tone}`}>{label.slice(0, 2)}</div>
-        <strong>{label}</strong>
+    <div className="market-row">
+      <div className="market-identity">
+        <span className="bet-label">{marketLabel(market)}</span>
+        <strong>{market.selection}</strong>
+        {lineText && <span className="bet-line">{lineText}</span>}
       </div>
-      <div className="bet-button-row">
-        {lines.map((line, index) => (
-          line ? (
-            <BetButton
-              key={line.id}
-              line={line}
-              recommendation={recommendations[line.id]}
-              selectedBook={selectedBook}
-              onOpenWatch={onOpenWatch}
-            />
-          ) : (
-            <div className="bet-button bet-button-empty" key={`empty-${label}-${index}`} aria-hidden="true" />
-          )
-        ))}
+
+      <div className="quote-strip">
+        {market.quotes.map((quote) => {
+          // The backend names the best book rather than leaving the client to
+          // sort: at an identical price only the engine's tie-break decides,
+          // and a watch would fire on the engine's pick, not ours.
+          const isBest = quote.sportsbook === market.best_sportsbook;
+          const age = ageLabel(quote.quoted_at);
+          return (
+            <div
+              className={isBest ? "quote-chip quote-chip-best" : "quote-chip"}
+              key={quote.sportsbook}
+            >
+              <span className="quote-book">
+                {isBest && <Crown size={12} />}
+                {quote.sportsbook}
+              </span>
+              <strong>{formatAmerican(quote.price)}</strong>
+              <small>{quote.line_age_known ? age : "line age unknown"}</small>
+            </div>
+          );
+        })}
       </div>
+
+      <Button variant="ghost" title="Create watch" onClick={() => onOpenWatch(market)}>
+        <Bell size={16} />
+      </Button>
     </div>
   );
 }
 
-function BetButton({
-  line,
-  recommendation,
-  selectedBook,
-  onOpenWatch
-}: {
-  line: MarketLine;
-  recommendation: Recommendation | undefined;
-  selectedBook: string;
-  onOpenWatch: (line: MarketLine) => void;
-}) {
-  const shownQuote =
-    selectedBook === "Best"
-      ? recommendation?.best_quote
-      : recommendation?.ranked_quotes.find((quote) => quote.sportsbook === selectedBook) ?? null;
-  const bookLabel = selectedBook === "Best" ? shownQuote?.sportsbook ?? "Best" : selectedBook;
-
-  return (
-    <button
-      className="bet-button"
-      onClick={() => onOpenWatch(line)}
-    >
-      <span className="bet-label">{getBetLabel(line)}</span>
-      <span className="bet-price-line">
-        {line.line !== undefined && <span className="bet-line">{formatLine(line)}</span>}
-        <strong>{formatAmerican(shownQuote?.price)}</strong>
-      </span>
-      <span className="bet-book">{bookLabel}</span>
-    </button>
+function groupByMarket(markets: LineBoardMarket[]): Array<[string, LineBoardMarket[]]> {
+  const groups = new Map<string, LineBoardMarket[]>();
+  for (const market of markets) {
+    groups.set(market.market_type, [...(groups.get(market.market_type) ?? []), market]);
+  }
+  return [...groups.entries()].sort(
+    ([a], [b]) => (MARKET_ORDER[a] ?? 99) - (MARKET_ORDER[b] ?? 99)
   );
 }
 
-function findLine(lines: MarketLine[], selection: string, marketType: MarketLine["market_type"]) {
-  return lines.find((line) => line.selection === selection && line.market_type === marketType);
-}
-
-function getBetLabel(line: MarketLine) {
-  if (line.market_type === "moneyline") return "ML";
-  if (line.market_type === "spread") return "Spread";
-  return line.selection === "over" ? "Over" : "Under";
-}
-
-function formatLine(line: MarketLine) {
-  if (line.market_type === "spread" && line.line !== undefined) {
-    return line.line > 0 ? `+${line.line}` : `${line.line}`;
-  }
-  if (line.market_type === "total" && line.line !== undefined) {
-    return `${line.line}`;
-  }
-  return "";
+function marketTypeHeading(marketType: string) {
+  if (marketType === "moneyline") return "Moneyline";
+  if (marketType === "spread") return "Spread";
+  if (marketType === "total") return "Total";
+  return marketType;
 }
