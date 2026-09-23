@@ -199,11 +199,6 @@ Ingestion:
 - `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
 - `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
 
-`ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
-walks every entry, so each extra sport multiplies the cost of refreshing one event.
-Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
-body and is validated against `GET /sports`, so a client may drive any supported sport.
-
 Browse:
 
 - `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
@@ -226,6 +221,27 @@ Planned, not yet implemented:
 
 - `GET /events/{event_id}/markets`
 - `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
+
+## Upstream Quota Discipline
+
+Non-negotiable. Read before touching ingestion, the provider, or anything that refreshes.
+
+- **Refresh is manual.** No scheduler, no polling timer, no background job, no `useEffect`
+  that pulls on mount. Manual refresh is the primary limiter on API spend and stays that
+  way until testing is done. If a task seems to need automatic refresh, stop and ask.
+- **Billing is in credits, not requests:** `cost = [markets] x [regions]` per call. The
+  default config (`h2h,spreads,totals` x `us`) is **3 credits per sport per call**.
+- **A deliberate refresh always pulls live.** The provider cache coalesces simultaneous
+  refreshes into one call and reuses responses for incidental repeats, but never answers
+  a refresh with data that predates it. See ADR-011.
+- `ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
+  walks every entry, so each extra sport multiplies the cost of refreshing one event.
+  Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
+  body and is validated against `GET /sports`, so a client may drive any supported sport.
+- Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
+  Only `POST /ingestion/quotes/refresh*` spends.
+
+`agents.md` is a symlink to this file, so one edit serves both.
 
 ## Service Catalog
 
