@@ -22,6 +22,7 @@ from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
+from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.observability.logging import configure_logging
 from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
@@ -84,6 +85,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sports=[s.strip() for s in app_settings.odds_api_sports.split(",")],
             regions=[r.strip() for r in app_settings.odds_api_regions.split(",")],
             markets=[m.strip() for m in app_settings.odds_api_markets.split(",")],
+            # One cache per provider, living as long as the process. A deliberate
+            # refresh still pulls live; this only collapses simultaneous pulls and
+            # the incidental repeats inside a single-event scan.
+            response_cache=InProcessProviderCache(
+                ttl_seconds=app_settings.provider_cache_ttl_seconds,
+            ),
         )
     else:
         quote_provider = InMemoryQuoteProvider()

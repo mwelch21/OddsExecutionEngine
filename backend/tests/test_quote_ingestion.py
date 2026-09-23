@@ -5,6 +5,7 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     MarketType,
     PersistedQuote,
+    ProviderFetchReport,
     Quote,
     QuoteRefreshPersistenceResult,
     SupportedSport,
@@ -22,8 +23,10 @@ class RecordingQuoteIngestionProvider:
     def list_quotes(self, event_id: str) -> list[Quote]:
         return list(self._quotes)
 
-    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]:
-        return {}
+    def list_quotes_for_sport(
+        self, sport: str
+    ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
+        return {}, ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def get_event_info(self, event_id: str) -> None:
         return None

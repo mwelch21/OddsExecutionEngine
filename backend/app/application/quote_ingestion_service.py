@@ -12,7 +12,12 @@ from backend.app.domain.events import (
     build_quote_updated_event,
     build_quotes_refreshed_event,
 )
-from backend.app.domain.models import Quote, QuoteRefreshSummary, SupportedSport
+from backend.app.domain.models import (
+    Quote,
+    QuoteRefreshSummary,
+    SportRefreshResult,
+    SupportedSport,
+)
 from backend.app.engines.normalization_engine import NormalizationEngine
 
 
@@ -149,13 +154,13 @@ class QuoteIngestionService:
         """The sports a refresh may name."""
         return self._quote_provider.list_supported_sports()
 
-    def refresh_sport(self, sport: str) -> list[QuoteRefreshSummary]:
+    def refresh_sport(self, sport: str) -> SportRefreshResult:
         """Refresh all events for a sport."""
         self._assert_sport_supported(sport)
         self._logger.info("sport_refresh.started", extra={"sport": sport})
         started_at = perf_counter()
 
-        all_quotes = self._quote_provider.list_quotes_for_sport(sport)
+        all_quotes, fetch_report = self._quote_provider.list_quotes_for_sport(sport)
         summaries: list[QuoteRefreshSummary] = []
 
         for event_id, quotes in all_quotes.items():
@@ -190,10 +195,21 @@ class QuoteIngestionService:
             extra={
                 "sport": sport,
                 "event_count": len(summaries),
+                "upstream_contacted": fetch_report.upstream_contacted,
+                "credits_spent": (
+                    fetch_report.quota.credits_spent if fetch_report.quota else None
+                ),
+                "credits_remaining": (
+                    fetch_report.quota.credits_remaining if fetch_report.quota else None
+                ),
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
-        return summaries
+        return SportRefreshResult(
+            sport=sport,
+            summaries=summaries,
+            fetch_report=fetch_report,
+        )
 
     def _assert_sport_supported(self, sport: str) -> None:
         """Reject an unknown sport key before it can cost a credit.
