@@ -9,6 +9,7 @@
 | Postgres truth | `uv run pytest` (with `STAGE2_TEST_DATABASE_URL`) | Full persistence correctness against real Postgres | CI + before merge |
 | Integration script | `scripts/integration_test.sh` | End-to-end against Docker stack: all endpoints, DB state, tracing | Before merge, manual |
 | Testing UI | `GET /test-ui` (dev only) | Manual exploration of all endpoints with pre-built scenarios | During development |
+| Frontend app | `http://localhost:5173` | Product-style lines board, sportsbook filter, best-line view, watch creation | During development |
 
 ## Running Tests
 
@@ -23,6 +24,17 @@ uv run pytest
 ```bash
 uv run ruff check .
 uv run mypy backend
+```
+
+### Postgres truth (requires Docker)
+
+Postgres-gated tests skip unless `STAGE2_TEST_DATABASE_URL` is set. Point it at a
+database used only by tests — these tests drop every table in it.
+
+```bash
+docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE odds_execution_test OWNER app"
+STAGE2_TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:$(docker compose port postgres 5432 | cut -d: -f2)/odds_execution_test" \
+  uv run pytest
 ```
 
 ### Full integration (requires Docker)
@@ -47,6 +59,31 @@ docker compose exec -T api uv run odds-db-seed-demo
 ```
 
 The UI is only available when `APP_ENV=development` (the default). It returns 404 in production.
+
+Use `/test-ui` as the manual validation driver when checking endpoint behavior by hand. It should
+stay endpoint-focused: quote refresh, recommendation fillability, nearest miss behavior, watch
+creation/cancel, opportunities, and raw request/response inspection. Use scripts and curl for
+repeatable checks; use `/test-ui` for exploratory workflow validation and demos.
+
+### Frontend App
+
+The React app is separate from `/test-ui`. It is the product-style operator surface for lines,
+book filtering, best-line mode, fillability checks, and watch creation.
+
+```bash
+docker compose up --build -d
+docker compose exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
+docker compose exec -T api uv run odds-db-seed-demo
+# open http://localhost:5173
+```
+
+For local frontend development outside Docker:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ## Fixture Data
 

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from backend.app.application.ports import (
+    WatchIntentUnitOfWork,
     WatchIntentUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
@@ -11,16 +12,26 @@ from backend.app.domain.events import (
     build_watch_intent_cancelled_event,
     build_watch_intent_created_event,
     build_watch_intent_expired_event,
+    build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
     MarketType,
     Opportunity,
     OpportunityWithValidity,
     WatchIntent,
+    WatchIntentCreationResult,
     WatchStatus,
 )
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
+
+
+class WatchIntentAlreadyTriggeredError(Exception):
+    """Raised when a cancel would overwrite a watch's terminal `triggered` status."""
+
+    def __init__(self, watch_intent_id: str) -> None:
+        super().__init__(f"Watch intent {watch_intent_id} has already been triggered.")
+        self.watch_intent_id = watch_intent_id
 
 
 class WatchIntentService:
@@ -48,7 +59,7 @@ class WatchIntentService:
         target_price: int,
         line: float | None = None,
         expires_at: datetime | None = None,
-    ) -> WatchIntent:
+    ) -> WatchIntentCreationResult:
         started_at = perf_counter()
         inserted_opportunities: list[Opportunity] = []
 
@@ -94,13 +105,12 @@ class WatchIntentService:
 
                 if new_opportunities:
                     inserted_opportunities = uow.create_opportunities(new_opportunities)
-                    for opp in inserted_opportunities:
-                        uow.stage_event(
-                            build_opportunity_identified_event(
-                                watch_intent_id=intent.id,
-                                opportunity=opp,
-                            )
-                        )
+                    retired = self._notify_and_retire(uow, inserted_opportunities)
+                    # The response reports the watch as the caller will next read it.
+                    intent = next(
+                        (r for r in retired if r.id == intent.id),
+                        intent,
+                    )
 
             self._workflow_event_publisher.publish(uow.committed_events)
         except Exception:
@@ -121,7 +131,10 @@ class WatchIntentService:
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
-        return intent
+        return WatchIntentCreationResult(
+            watch_intent=intent,
+            opportunity=inserted_opportunities[0] if inserted_opportunities else None,
+        )
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
         started_at = perf_counter()
@@ -133,6 +146,12 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
+                # `triggered` is terminal. Letting a cancel overwrite it would make
+                # "which of my watches fired?" unanswerable from watch state.
+                existing = uow.get_watch_intent(watch_intent_id)
+                if existing is not None and existing.status is WatchStatus.TRIGGERED:
+                    raise WatchIntentAlreadyTriggeredError(watch_intent_id)
+
                 intent = uow.cancel_watch_intent(watch_intent_id)
                 uow.stage_event(
                     build_watch_intent_cancelled_event(
@@ -244,6 +263,46 @@ class WatchIntentService:
             now=now,
         )[0]
 
+    def _notify_and_retire(
+        self,
+        uow: WatchIntentUnitOfWork,
+        opportunities: list[Opportunity],
+    ) -> list[WatchIntent]:
+        """Notify once per opportunity and retire the watch that produced it.
+
+        Only opportunities the DB actually accepted reach here, and the transition
+        commits in the same transaction as the insert. A row therefore cannot exist
+        without its watch being `triggered`, so a concurrent evaluation that loses
+        the insert race leaves the watch correctly retired by the winner.
+
+        `OpportunityIdentified` is the single user-facing alert no matter how many
+        books matched. `WatchIntentTriggered` is the audit record of the terminal
+        transition, so the watch lifecycle stays answerable without joining to
+        opportunities.
+        """
+        if not opportunities:
+            return []
+
+        retired = uow.trigger_watch_intents(
+            [opp.watch_intent_id for opp in opportunities]
+        )
+
+        for opp in opportunities:
+            uow.stage_event(
+                build_opportunity_identified_event(
+                    watch_intent_id=opp.watch_intent_id,
+                    opportunity=opp,
+                )
+            )
+            uow.stage_event(
+                build_watch_intent_triggered_event(
+                    watch_intent_id=opp.watch_intent_id,
+                    opportunity=opp,
+                )
+            )
+
+        return retired
+
     def evaluate_for_event(self, event_id: str) -> list[Opportunity]:
         started_at = perf_counter()
         inserted_opportunities: list[Opportunity] = []
@@ -285,27 +344,17 @@ class WatchIntentService:
 
                 if live and quotes:
                     market_id_lookup = uow.get_market_id_lookup(event_id)
-                    existing_keys = uow.list_existing_opportunity_keys(
-                        [i.id for i in live]
-                    )
                     evaluated = self._watch_evaluation_engine.evaluate(
                         watch_intents=live,
                         quotes=quotes,
                         market_id_lookup=market_id_lookup,
-                        existing_opportunity_keys=existing_keys,
                     )
 
                 new_opportunities = evaluated
 
                 if new_opportunities:
                     inserted_opportunities = uow.create_opportunities(new_opportunities)
-                    for opp in inserted_opportunities:
-                        uow.stage_event(
-                            build_opportunity_identified_event(
-                                watch_intent_id=opp.watch_intent_id,
-                                opportunity=opp,
-                            )
-                        )
+                    self._notify_and_retire(uow, inserted_opportunities)
 
             if uow.committed_events:
                 self._workflow_event_publisher.publish(uow.committed_events)

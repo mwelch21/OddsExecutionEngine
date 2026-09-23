@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from backend.app.domain.models import (
     MarketType,
+    MatchingQuote,
     Opportunity,
     OrderIntent,
     Quote,
@@ -19,7 +20,9 @@ normalization_engine = NormalizationEngine()
 price_comparison_service = PriceComparisonService()
 quote_matching_engine = QuoteMatchingEngine()
 recommendation_engine = RecommendationEngine(price_comparison_service)
-watch_evaluation_engine = WatchEvaluationEngine(price_comparison_service)
+watch_evaluation_engine = WatchEvaluationEngine(
+    price_comparison_service, recommendation_engine
+)
 opportunity_validity_engine = OpportunityValidityEngine()
 MarketLookup = dict[tuple[str, str, str, float | None], str]
 
@@ -264,7 +267,7 @@ def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
             sportsbook="BookB",
             market_type=MarketType.MONEYLINE,
             selection="knicks",
-            price=115,
+            price=122,
         ),
     ]
     lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
@@ -272,9 +275,15 @@ def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
     assert len(opportunities) == 1
-    assert opportunities[0].sportsbook == "BookA"
-    assert opportunities[0].matched_price == 125
+    assert opportunities[0].best_sportsbook == "BookA"
+    assert opportunities[0].best_price == 125
     assert opportunities[0].watch_intent_id == "wi-1"
+    # BookB is fillable too and rides along in the snapshot rather than becoming
+    # a second opportunity.
+    assert [(q.sportsbook, q.price) for q in opportunities[0].matching_quotes] == [
+        ("BookA", 125),
+        ("BookB", 122),
+    ]
 
 
 def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
@@ -303,7 +312,7 @@ def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
     assert opportunities == []
 
 
-def test_watch_evaluation_deduplicates_existing_opportunities() -> None:
+def test_watch_evaluation_excludes_books_that_miss_the_target() -> None:
     intents = [
         WatchIntent(
             id="wi-1",
@@ -321,11 +330,82 @@ def test_watch_evaluation_deduplicates_existing_opportunities() -> None:
             selection="knicks",
             price=125,
         ),
+        Quote(
+            event_id="event-1",
+            sportsbook="BookB",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=110,
+        ),
     ]
     lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
-    existing = {("wi-1", "market-1", "BookA")}
 
-    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup, existing)
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert [q.sportsbook for q in opportunities[0].matching_quotes] == ["BookA"]
+
+
+def test_watch_evaluation_breaks_price_ties_alphabetically() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=120,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="FanDuel",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+        Quote(
+            event_id="event-1",
+            sportsbook="DraftKings",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
+
+    assert len(opportunities) == 1
+    assert opportunities[0].best_sportsbook == "DraftKings"
+    assert [q.sportsbook for q in opportunities[0].matching_quotes] == [
+        "DraftKings",
+        "FanDuel",
+    ]
+
+
+def test_watch_evaluation_skips_triggered_intents() -> None:
+    intents = [
+        WatchIntent(
+            id="wi-1",
+            event_id="event-1",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            target_price=120,
+            status=WatchStatus.TRIGGERED,
+        ),
+    ]
+    quotes = [
+        Quote(
+            event_id="event-1",
+            sportsbook="BookA",
+            market_type=MarketType.MONEYLINE,
+            selection="knicks",
+            price=125,
+        ),
+    ]
+    lookup: MarketLookup = {("event-1", "moneyline", "knicks", None): "market-1"}
+
+    opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
     assert opportunities == []
 
@@ -367,7 +447,7 @@ def test_watch_evaluation_matches_on_line() -> None:
     opportunities = watch_evaluation_engine.evaluate(intents, quotes, lookup)
 
     assert len(opportunities) == 1
-    assert opportunities[0].sportsbook == "BookA"
+    assert opportunities[0].best_sportsbook == "BookA"
     assert opportunities[0].line == 5.5
 
 
@@ -410,8 +490,9 @@ def _make_opportunity(created_at: datetime) -> Opportunity:
         market_type=MarketType.MONEYLINE,
         selection="knicks",
         target_price=120,
-        sportsbook="BookA",
-        matched_price=125,
+        best_sportsbook="BookA",
+        best_price=125,
+        matching_quotes=[MatchingQuote(sportsbook="BookA", price=125)],
         created_at=created_at,
     )
 
@@ -470,8 +551,9 @@ def test_opportunity_validity_batch_handles_mixed_results() -> None:
         market_type=MarketType.MONEYLINE,
         selection="knicks",
         target_price=120,
-        sportsbook="BookB",
-        matched_price=122,
+        best_sportsbook="BookB",
+        best_price=122,
+        matching_quotes=[MatchingQuote(sportsbook="BookB", price=122)],
         created_at=now - timedelta(minutes=10),
     )
 

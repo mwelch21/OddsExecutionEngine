@@ -40,6 +40,7 @@ api/ --> application/ --> domain/         (pure, zero external imports)
 
 Optional:
 - **The Odds API key** -- For live sportsbook data ([free tier: 500 requests/month](https://the-odds-api.com))
+- **Node.js 22+** -- For the React frontend application
 
 ## Getting Started
 
@@ -98,6 +99,12 @@ The API runs inside the Docker container automatically. Access it at:
 http://localhost:8000
 ```
 
+The frontend runs as a separate Vite app:
+
+```
+http://localhost:5173
+```
+
 To run locally instead (e.g., for debugging):
 
 ```bash
@@ -113,9 +120,13 @@ curl http://localhost:8000/health
 
 # Open the testing dashboard (development mode only)
 open http://localhost:8000/test-ui
+
+# Open the frontend application
+open http://localhost:5173
 ```
 
 The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
+The frontend application provides the product-style lines board: sportsbook filtering, best-line mode, fillability checks, and watch creation.
 
 ## Common Commands
 
@@ -134,6 +145,15 @@ uv run odds-db-seed-demo
 
 # Run tests
 uv run pytest
+
+# Run frontend locally
+cd frontend
+npm install
+npm run dev
+
+# Build frontend
+cd frontend
+npm run build
 
 # Lint and type check
 uv run ruff check backend/
@@ -154,6 +174,8 @@ docker compose logs -f api
 | `POST` | `/execution/recommendation` | Evaluate fillability for an order intent |
 | `POST` | `/ingestion/quotes/refresh` | Refresh quotes for a single event |
 | `POST` | `/ingestion/quotes/refresh-sport` | Refresh all events for a sport (live data) |
+| `GET` | `/events?league=&sport=&page=&page_size=` | Browse upcoming events with quote freshness |
+| `GET` | `/events/{id}/quotes` | One event's line board: markets, books ranked best-first |
 | `POST` | `/watch-intents` | Create a watch intent (monitors for target price) |
 | `GET` | `/watch-intents?event_id=` | List active watch intents |
 | `DELETE` | `/watch-intents/{id}` | Cancel a watch intent |
@@ -234,6 +256,16 @@ backend/
 └── tests/                               # Unit + integration tests
 ```
 
+frontend/
+├── src/
+│   ├── App.tsx                         # Single-page lines/watch UI
+│   ├── components/                      # Lightweight UI primitives + feature panels
+│   ├── lib/                             # API client and demo line fixtures
+│   └── styles.css                       # Design tokens and layout primitives
+├── vite.config.ts                       # Dev proxy to FastAPI
+└── package.json
+```
+
 ## Database
 
 10 tables managed via Alembic migrations:
@@ -251,6 +283,11 @@ uv run odds-db-seed-demo
 
 ## Configuration Reference
 
+All three host ports are configurable so two worktrees can run their stacks at
+the same time. The defaults are "slot 0" — the values this repo has always used —
+so a checkout with no `.env` behaves exactly as before. See
+[docs/development/worktrees.md](docs/development/worktrees.md).
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APP_ENV` | `development` | `production` enforces security constraints |
@@ -258,8 +295,12 @@ uv run odds-db-seed-demo
 | `POSTGRES_USER` | `app` | Database user |
 | `POSTGRES_PASSWORD` | `app` | Database password (must change in production) |
 | `POSTGRES_HOST` | `postgres` | `localhost` when running outside Docker |
-| `POSTGRES_PORT` | `5432` | Host port is 5433 by default in docker-compose |
-| `OPPORTUNITY_TTL_MINUTES` | `5` | How long opportunities remain valid |
+| `POSTGRES_PORT` | `5432` | Port inside the container; unchanged by the host mapping |
+| `APP_PORT` | `8000` | Host port the API binds |
+| `FRONTEND_PORT` | `5173` | Host port the frontend dev server binds |
+| `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds |
+| `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
+| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
 | `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
@@ -282,7 +323,10 @@ uv run pytest backend/tests/test_engines.py
 uv run pytest --cov=backend
 ```
 
-Integration tests use SQLite for speed. The Docker PostgreSQL instance is used for the running application and manual testing.
+Integration tests use SQLite for speed. Persistence behaviour is additionally proved
+against migrated Postgres by tests that skip unless `STAGE2_TEST_DATABASE_URL` is set —
+point it at a throwaway database, since they drop every table in it. See
+`docs/testing/README.md`.
 
 ## Roadmap
 

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from backend.app.domain.models import QuoteRefreshSummary
+from backend.app.domain.models import QuoteRefreshSummary, SupportedSport
 
 
 class QuoteRefreshRequest(BaseModel):
@@ -35,3 +35,19 @@ class QuoteRefreshResponse(BaseModel):
             appended_history_count=summary.appended_history_count,
             emitted_event_types=summary.emitted_event_types,
         )
+
+
+class SupportedSportResponse(BaseModel):
+    """One sport a refresh may name, in both the provider's terms and ours."""
+
+    key: str
+    sport: str
+    league: str | None
+
+    @classmethod
+    def from_domain(cls, sport: SupportedSport) -> "SupportedSportResponse":
+        return cls(key=sport.key, sport=sport.sport, league=sport.league)
+
+
+class SupportedSportsResponse(BaseModel):
+    sports: list[SupportedSportResponse]

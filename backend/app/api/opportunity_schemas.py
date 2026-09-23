@@ -5,7 +5,19 @@ from pydantic import BaseModel
 from backend.app.domain.models import MarketType, OpportunityWithValidity
 
 
+class MatchingQuoteResponse(BaseModel):
+    sportsbook: str
+    price: int
+
+
 class OpportunityResponse(BaseModel):
+    """The books that were fillable at detection, plus whether that still holds.
+
+    `matching_quotes` is returned as stored rather than re-checked, so the reader can
+    tell "here is what we found" from "here is what is true now". `is_valid` /
+    `invalid_reason` carry the latter, judged against the best book alone.
+    """
+
     id: str
     watch_intent_id: str
     event_id: str
@@ -13,8 +25,9 @@ class OpportunityResponse(BaseModel):
     selection: str
     target_price: int
     line: float | None
-    sportsbook: str
-    matched_price: int
+    best_sportsbook: str
+    best_price: int
+    matching_quotes: list[MatchingQuoteResponse]
     created_at: datetime | None
     is_valid: bool
     invalid_reason: str | None
@@ -30,8 +43,12 @@ class OpportunityResponse(BaseModel):
             selection=opp.selection,
             target_price=opp.target_price,
             line=opp.line,
-            sportsbook=opp.sportsbook,
-            matched_price=opp.matched_price,
+            best_sportsbook=opp.best_sportsbook,
+            best_price=opp.best_price,
+            matching_quotes=[
+                MatchingQuoteResponse(sportsbook=quote.sportsbook, price=quote.price)
+                for quote in opp.matching_quotes
+            ],
             created_at=opp.created_at,
             is_valid=owv.is_valid,
             invalid_reason=owv.reason,

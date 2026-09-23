@@ -64,7 +64,10 @@ market_quotes_latest_table = Table(
     Column("market_id", String(length=36), ForeignKey("markets.id"), primary_key=True),
     Column("sportsbook", String(length=64), primary_key=True),
     Column("price", Integer, nullable=False),
-    Column("quoted_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("ingested_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # The book's own line-movement time. NULL means the provider does not expose one,
+    # which reads as unknown age — never as freshly moved.
+    Column("quoted_at", DateTime(timezone=True), nullable=True),
 )
 
 market_quotes_history_table = Table(
@@ -74,7 +77,8 @@ market_quotes_history_table = Table(
     Column("market_id", String(length=36), ForeignKey("markets.id"), nullable=False),
     Column("sportsbook", String(length=64), nullable=False),
     Column("price", Integer, nullable=False),
-    Column("quoted_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("ingested_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("quoted_at", DateTime(timezone=True), nullable=True),
 )
 
 order_intents_table = Table(
@@ -128,15 +132,13 @@ opportunities_table = Table(
     ),
     Column("event_external_id", String(length=255), nullable=False),
     Column("market_id", String(length=36), ForeignKey("markets.id"), nullable=False),
-    Column("sportsbook", String(length=64), nullable=False),
-    Column("matched_price", Integer, nullable=False),
+    Column("best_sportsbook", String(length=64), nullable=False),
+    Column("best_price", Integer, nullable=False),
+    Column("matching_quotes", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    UniqueConstraint(
-        "watch_intent_id",
-        "market_id",
-        "sportsbook",
-        name="uq_opportunities_identity",
-    ),
+    # A watch names exactly one market and is terminal once it fires, so it can
+    # produce at most one opportunity, ever.
+    UniqueConstraint("watch_intent_id", name="uq_opportunities_watch_intent"),
 )
 
 workflow_events_table = Table(

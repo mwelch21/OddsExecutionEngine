@@ -1,6 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-from backend.app.domain.models import EventInfo, EventParticipant, MarketType, Quote
+from backend.app.domain.models import (
+    EventInfo,
+    EventParticipant,
+    MarketType,
+    Quote,
+    SupportedSport,
+)
 
 FIXTURE_EVENT_ID = "nba-knicks-celtics-2026-04-11"
 FIXTURE_SPORT = "basketball_nba"
@@ -25,6 +31,21 @@ class InMemoryQuoteProvider:
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)
 
+    def list_supported_sports(self) -> list[SupportedSport]:
+        """Whatever the fixtures cover.
+
+        Keyed on each fixture event's `sport`, which is exactly what
+        `list_quotes_for_sport` matches on — so every key this returns is one a
+        refresh can actually use.
+        """
+        seen: dict[str, SupportedSport] = {}
+        for event in self._events.values():
+            seen.setdefault(
+                event.sport,
+                SupportedSport(key=event.sport, sport=event.sport, league=event.league),
+            )
+        return sorted(seen.values(), key=lambda sport: sport.key)
+
 
 def _build_fixture_events() -> dict[str, EventInfo]:
     return {
@@ -42,7 +63,16 @@ def _build_fixture_events() -> dict[str, EventInfo]:
 
 
 def build_fixture_quotes() -> list[Quote]:
+    """Demo quotes spanning all three age states a reader has to tell apart.
+
+    A book that moved seconds ago, a book that has not moved in three days, and a
+    book reporting no line-movement time at all — which is the case the fixture
+    provider models by leaving `quoted_at` unset.
+    """
     event_id = FIXTURE_EVENT_ID
+    now = datetime.now(UTC)
+    just_moved = now - timedelta(seconds=40)
+    stale = now - timedelta(days=3)
 
     return [
         Quote(
@@ -51,6 +81,7 @@ def build_fixture_quotes() -> list[Quote]:
             market_type=MarketType.MONEYLINE,
             selection="knicks",
             price=120,
+            quoted_at=stale,
         ),
         Quote(
             event_id=event_id,
@@ -58,6 +89,7 @@ def build_fixture_quotes() -> list[Quote]:
             market_type=MarketType.MONEYLINE,
             selection="knicks",
             price=125,
+            quoted_at=just_moved,
         ),
         Quote(
             event_id=event_id,

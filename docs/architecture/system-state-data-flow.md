@@ -114,11 +114,12 @@ This is operationally simple, but it means sport refresh cost scales roughly wit
 2. `WatchIntentService` writes `watch_intents`.
 3. Same request immediately reads latest quotes for the event.
 4. `WatchEvaluationEngine` matches active intent vs exact market identity and fillable price.
-5. Candidate `opportunities` are inserted idempotently.
-6. Only rows that actually insert produce `OpportunityIdentified`; duplicate identities are ignored without extra events.
-7. `WatchIntentCreated` and inserted-only `OpportunityIdentified` events are staged and committed.
+5. Every fillable book collapses into one candidate `Opportunity`, ranked `(-price, sportsbook)`; the head becomes `best_sportsbook` / `best_price`, the whole list becomes `matching_quotes`.
+6. The candidate is inserted idempotently; `unique(watch_intent_id)` is the guard.
+7. An inserted row transitions its watch to `triggered` and stages exactly one `OpportunityIdentified` (the user-facing notification) plus one `WatchIntentTriggered` (audit).
+8. `WatchIntentCreated` and the inserted-only events are staged and committed.
 
-Important property: watch creation does immediate evaluation against current state, so the API can produce opportunities without waiting for the next refresh.
+Important property: watch creation does immediate evaluation against current state, so the API can produce opportunities without waiting for the next refresh — and can return a watch already `triggered`.
 
 ### 5. Opportunity Listing
 

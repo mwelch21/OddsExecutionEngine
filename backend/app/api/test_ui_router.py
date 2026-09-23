@@ -240,6 +240,10 @@ def _build_html() -> str:
         <option value="GET /watch-intents">GET /watch-intents</option>
         <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
         <option value="GET /opportunities">GET /opportunities</option>
+        <option value="GET /events">GET /events</option>
+        <option value="GET /events/nba-knicks-celtics-2026-04-11/quotes">
+          GET /events/{id}/quotes
+        </option>
         <option value="GET /health">GET /health</option>
       </select>
       <label>Request Body (JSON)</label>
@@ -389,6 +393,22 @@ const SCENARIOS = [
     desc: "Filter watch intents by event_id",
     method: "GET",
     endpoint: "/watch-intents?event_id=nba-knicks-celtics-2026-04-11",
+    body: null
+  },
+  {
+    key: "browse-events",
+    label: "Browse Events",
+    desc: "Upcoming events with quote freshness",
+    method: "GET",
+    endpoint: "/events",
+    body: null
+  },
+  {
+    key: "line-board",
+    label: "Line Board",
+    desc: "Knicks/Celtics markets, books ranked best-first",
+    method: "GET",
+    endpoint: "/events/nba-knicks-celtics-2026-04-11/quotes",
     body: null
   },
   {

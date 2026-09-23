@@ -5,10 +5,12 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 
+from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
+from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.ports import QuoteIngestionProvider
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.recommendation_service import RecommendationService
@@ -27,6 +29,9 @@ from backend.app.infrastructure.observability.request_context import (
 )
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.event_read_uow import (
+    SqlAlchemyEventReadUnitOfWork,
+)
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
@@ -51,18 +56,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_logger = logging.getLogger(__name__)
     workflow_event_publisher = LoggingWorkflowEventPublisher()
     price_comparison_service = PriceComparisonService()
+    recommendation_engine = RecommendationEngine(price_comparison_service)
     recommendation_service = RecommendationService(
         unit_of_work_factory=lambda: SqlAlchemyRecommendationUnitOfWork(session_factory),
         workflow_event_publisher=workflow_event_publisher,
         quote_matching_engine=QuoteMatchingEngine(),
-        recommendation_engine=RecommendationEngine(price_comparison_service),
+        recommendation_engine=recommendation_engine,
     )
     watch_intent_service = WatchIntentService(
         unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
         workflow_event_publisher=workflow_event_publisher,
-        watch_evaluation_engine=WatchEvaluationEngine(price_comparison_service),
+        watch_evaluation_engine=WatchEvaluationEngine(
+            price_comparison_service,
+            recommendation_engine,
+        ),
         opportunity_validity_engine=OpportunityValidityEngine(),
         opportunity_ttl_minutes=app_settings.opportunity_ttl_minutes,
+    )
+    event_query_service = EventQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
+        recommendation_engine=recommendation_engine,
     )
     quote_provider: QuoteIngestionProvider
     if app_settings.quote_provider == "odds_api":
@@ -136,6 +149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_quote_ingestion_router(quote_ingestion_service))
     app.include_router(create_watch_intent_router(watch_intent_service))
     app.include_router(create_opportunity_router(watch_intent_service))
+    app.include_router(create_event_router(event_query_service))
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router

@@ -73,7 +73,7 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshPersistenceResult:
         session = self._require_session()
-        quoted_at = datetime.now(UTC)
+        ingested_at = datetime.now(UTC)
         event_row_id = self._ensure_event(event_id, event_metadata)
         persisted_quotes: list[PersistedQuote] = []
         created_market_count = 0
@@ -94,7 +94,8 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                     market_id=market_id,
                     sportsbook=quote.sportsbook,
                     price=quote.price,
-                    quoted_at=quoted_at,
+                    ingested_at=ingested_at,
+                    quoted_at=quote.quoted_at,
                 )
             )
             session.execute(
@@ -103,12 +104,13 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                     market_id=market_id,
                     sportsbook=quote.sportsbook,
                     price=quote.price,
-                    quoted_at=quoted_at,
+                    ingested_at=ingested_at,
+                    quoted_at=quote.quoted_at,
                 )
             )
             persisted_quotes.append(
                 PersistedQuote(
-                    quote=quote,
+                    quote=quote.model_copy(update={"ingested_at": ingested_at}),
                     market_id=market_id,
                     market_created=market_created,
                 )

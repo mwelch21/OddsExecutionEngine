@@ -3,13 +3,17 @@ from typing import Protocol, Self
 
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventFilter,
     EventInfo,
+    EventSummary,
     ExecutionRecommendation,
+    MarketQuotes,
     MarketType,
     Opportunity,
     OrderIntent,
     Quote,
     QuoteRefreshPersistenceResult,
+    SupportedSport,
     WatchIntent,
     WatchStatus,
 )
@@ -55,6 +59,8 @@ class QuoteIngestionProvider(Protocol):
     def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]: ...
 
     def get_event_info(self, event_id: str) -> EventInfo | None: ...
+
+    def list_supported_sports(self) -> list[SupportedSport]: ...
 
 
 class QuoteIngestionUnitOfWork(Protocol):
@@ -106,6 +112,8 @@ class WatchIntentUnitOfWork(Protocol):
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent: ...
 
+    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+
     def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
 
     def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None: ...
@@ -142,10 +150,6 @@ class WatchIntentUnitOfWork(Protocol):
 
     def get_event_starts_at(self, event_external_id: str) -> datetime | None: ...
 
-    def list_existing_opportunity_keys(
-        self, watch_intent_ids: list[str]
-    ) -> set[tuple[str, str, str]]: ...
-
     def stage_event(self, event: WorkflowEvent) -> None: ...
 
     @property
@@ -154,3 +158,34 @@ class WatchIntentUnitOfWork(Protocol):
 
 class WatchIntentUnitOfWorkFactory(Protocol):
     def __call__(self) -> WatchIntentUnitOfWork: ...
+
+
+class EventReadUnitOfWork(Protocol):
+    """Read-only access to stored events. Browsing never writes."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def count_events(self, event_filter: EventFilter, now: datetime) -> int: ...
+
+    def list_events(
+        self,
+        event_filter: EventFilter,
+        now: datetime,
+        limit: int,
+        offset: int,
+    ) -> list[EventSummary]: ...
+
+    def get_event(self, event_id: str) -> EventSummary | None: ...
+
+    def list_market_quotes(self, event_id: str) -> list[MarketQuotes]: ...
+
+
+class EventReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> EventReadUnitOfWork: ...

@@ -7,6 +7,7 @@ from backend.app.domain.models import (
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
+    SupportedSport,
 )
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.infrastructure.publishers.in_memory_publisher import (
@@ -26,6 +27,9 @@ class RecordingQuoteIngestionProvider:
 
     def get_event_info(self, event_id: str) -> None:
         return None
+
+    def list_supported_sports(self) -> list[SupportedSport]:
+        return [SupportedSport(key="basketball", sport="basketball", league="NBA")]
 
 
 class RecordingQuoteIngestionUnitOfWork:

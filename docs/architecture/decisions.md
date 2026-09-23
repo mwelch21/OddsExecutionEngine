@@ -200,3 +200,108 @@ Use a minimal normalization step that filters provider data directly into canoni
 
 - stage 4 providers must produce data that can normalize into canonical `Quote` values
 - richer provider metadata can be added later without replacing the first ingestion boundary
+
+## ADR-008: One opportunity per watch, and the watch is terminal once it fires
+
+- Status: accepted
+- Date: 2026-09-07
+
+### Context
+
+An opportunity was one row per `(watch_intent_id, market_id, sportsbook)`, and a single evaluation pass staged one `OpportunityIdentified` per row. A watch fillable at five books produced five rows and five notifications in one pass. The dedup key meant each book emitted once ever, so the defect was breadth-per-notification, not repetition over time: the user got "good price here — and another there", when the question is who has the best price and where else it can be filled.
+
+### Decision
+
+Collapse an opportunity to one record per watch, holding `best_sportsbook` / `best_price` as columns and `matching_quotes` as JSON. Replace `uq_opportunities_identity` with `unique(watch_intent_id)`. Transition a watch that fires to `triggered`, which is terminal: it is excluded from later evaluation and never re-arms.
+
+### Why
+
+- a watch names exactly one market, so every fillable quote it matches is a competing book on that market, not a separate finding
+- `execution_recommendations.ranked_quotes` already made this exact JSON-over-child-table call for the same shape, and `market_quotes_history` keeps analytics unblocked
+- the system notifies but cannot place bets or observe whether the user acted; once the limit is met and reported, the job is done
+- terminal watches remove themselves from the active set, so evaluation cost falls instead of growing without bound
+- `unique(watch_intent_id)` states the real invariant; `(watch_intent_id, market_id)` would be strictly weaker and would permit a state that cannot legitimately occur
+
+### Rejected alternatives
+
+- **A child table for matching books**: same shape as `ranked_quotes`, which the repo already resolved in favour of JSON; adds a join for a list only ever read whole.
+- **Re-arming a watch when its opportunity goes stale**: fillability is a bare `price >= target` comparison with no memory, so a price oscillating across the target would invalidate and re-fire repeatedly. It also makes "terminal" non-terminal, so "which of my watches fired?" stops being answerable.
+- **Re-emitting when a further book later qualifies**: the user has most likely already acted; a late second alert is noise.
+- **Live re-check of the book list on read**: merges "here is what we found" with "here is what is true now" and destroys the provenance. `is_valid` / `invalid_reason` carry the freshness separately.
+- **Backfilling existing per-book rows**: grouping logic that runs exactly once, against test data nobody will miss, where any bug produces plausible-looking wrong history. Migration `20260515_0007` deletes them, and says so.
+
+### Consequences
+
+- `POST /watch-intents` can return a watch already `triggered` with its opportunity attached, because creation still evaluates immediately. Making the caller wait for an unrelated refresh to learn an already-known answer is worse; if it reads badly the fix is presentational. The create response therefore gains a nullable nested `opportunity`; every other watch read keeps the flat `WatchIntentResponse` shape.
+- Cancelling a `triggered` watch is refused with 409. Not in the issue's acceptance criteria, but without it `DELETE` silently overwrites the terminal status and the lifecycle question this decision protects becomes unanswerable again.
+- Staleness is judged against the best book alone (`get_latest_quote_times` keys on `best_sportsbook`). Accepted gap: a best book moving down while a listed second book overtakes it is reported as stale rather than silently re-ranked.
+- Application-level dedup (`list_existing_opportunity_keys`, `existing_opportunity_keys`) is removed as structurally unreachable. The DB constraint remains the real guard and covers concurrent double-evaluation, which key checking never did reliably.
+- Re-watching a market becomes an explicit user action creating a new watch with a new id. Not yet implemented.
+
+## ADR-009: Store the book's quote time and the ingest time as separate columns
+
+- Status: accepted
+- Date: 2026-09-12
+
+### Context
+
+`market_quotes_latest.quoted_at` / `market_quotes_history.quoted_at` held one value: the moment ingestion pulled the row. The provider's own per-book `last_update` was read past and discarded. A line a sportsbook had not touched in three days, pulled ten seconds ago, was stored — and would be read — as ten seconds old. With refresh hand-driven and infrequent, that is the difference between a number you can act on and one you cannot.
+
+### Decision
+
+Split the two facts across two columns on both quote tables. `ingested_at` is when we pulled, always known, `NOT NULL`. `quoted_at` keeps its name but now means what it says: when the sportsbook last moved the line, taken from the provider. It is nullable, and `NULL` means the provider exposes no such time. Domain `Quote` carries both, with `line_age_known` and `effective_quoted_at` defining the fallback in one place.
+
+### Why
+
+- a quote's age is a property of the book's line, not of our polling schedule; conflating them makes every quote look as fresh as the last refresh
+- `NULL` for "provider exposes no time" keeps unknown age distinguishable from freshly moved. A stamped fallback in the column would be indistinguishable from a real observation the moment it was written
+- the fallback to ingest time still exists, but as a derived read (`effective_quoted_at`), so the stored data never asserts a line movement nobody observed
+- The Odds API reports `last_update` at both bookmaker and market level, so the data was already on the wire and only needed keeping
+
+### Rejected alternatives
+
+- **Rename `quoted_at` to `ingested_at` and add `line_moved_at`**: one column for the pull time and a new name for the book's time. Same information, but `quoted_at` is the natural name for the book's own quote time and giving it to the pull time is what caused the confusion in the first place.
+- **`NOT NULL quoted_at` backfilled from ingest time**: makes every provider look like it reports line movement, which is the defect restated in two columns.
+- **A separate `line_age_known` boolean**: derivable from `quoted_at IS NULL`, so it is a second source of truth for one fact.
+- **Keeping old rows' `quoted_at` values on migration**: those values were pull times. Left in a column that now means line movement they would assert movements that were never observed, so `20260912_0008` moves them to `ingested_at` and nulls `quoted_at`.
+
+### Consequences
+
+- Opportunity staleness (`get_latest_quote_times`) keys on `ingested_at`, not `quoted_at`. The question it answers is whether a later pull replaced the row the opportunity was cut from; keying on the book's time would report every unknown-age book as `quote_removed`. Validity behaviour is otherwise unchanged.
+- `OPPORTUNITY_TTL_MINUTES` defaults to 720 (12h) instead of 5. Nothing refreshes on a schedule, so a minutes-long TTL marked every opportunity invalid before a human could read it, and the flag degraded into noise. Tighten it once a scheduler lands.
+- `PROVIDER_CACHE_TTL_SECONDS` is introduced as configuration ahead of the provider cache that consumes it. `0` disables reuse.
+- The API surface is unchanged: both times reach the domain `Quote`, but no response schema exposes them yet.
+
+## ADR-010: Event browse reads go through a read-only unit of work
+
+- Status: accepted
+- Date: 2026-09-13
+
+### Context
+
+Every persistence seam in the system so far is a write unit of work: it stages domain events, persists them in the same transaction as the domain writes, and publishes after commit. `GET /events` needs none of that. It answers a question and changes nothing, but it still needs a session, a transaction boundary, and the same layering discipline as the write paths — the application layer must not import SQLAlchemy, and the route must stay thin.
+
+### Decision
+
+Introduce `EventReadUnitOfWork` / `EventReadUnitOfWorkFactory` in `backend/app/application/ports.py` as a distinct, read-only seam. It has `__enter__` / `__exit__`, `count_events`, and `list_events`, and deliberately has no `stage_event` and no `committed_events`. Its `__exit__` rolls back and closes: there is nothing to commit. `EventQueryService` depends only on that port, and `SqlAlchemyEventReadUnitOfWork` implements it under `infrastructure/persistence`.
+
+### Why
+
+- a read path that cannot stage an event cannot accidentally emit one; the missing methods are the guarantee, not a convention
+- reusing a write unit of work here would hand the read path a `stage_event` it must be trusted never to call, and a commit boundary with nothing to commit
+- filtering and paging belong in SQL, which requires a real session behind the port; returning raw rows to the service would leak the schema into the application layer
+- the service takes `now` once and passes it to both `count_events` and `list_events`, so the total and the page can never disagree about which events have started
+
+### Rejected alternatives
+
+- **Extend `WatchIntentUnitOfWork` with event listing**: it already reads events (`get_event_starts_at`), but it is a write seam carrying watch lifecycle transitions and event staging. Browsing events is not watch work, and joining them makes a divergent-change magnet.
+- **Query directly from the service with a session**: violates `api -> application -> domain` with infrastructure behind ports, and puts SQLAlchemy imports in the application layer.
+- **Filter and page in Python after loading rows**: the reason this endpoint is page-based is that "page 2 of 7" must be renderable. Dropping started events after the query reports a total the returned page does not add up to.
+- **Cursor pagination**: the set is small, slow-moving, and sorted by start time. Cursors buy stability under heavy churn that this data does not have, and cannot render a page count.
+
+### Consequences
+
+- The read seam is the template for later read endpoints (`GET /events/{id}/markets`, `GET /events/{id}/quotes`), which should extend it rather than reach for a write unit of work. `GET /events/{id}/quotes` now does exactly that: it added `get_event` and `list_market_quotes` to this port rather than introducing a second seam, and ranking stayed in the application layer so the engine rule is not duplicated in SQL.
+- Per-event freshness is computed in one grouped aggregate over `market_quotes_latest`, reported as two independent facts: `last_ingested_at` (`MAX(ingested_at)`, our pull) and `oldest_line_quoted_at` (`MIN(quoted_at)`, the books'). ADR-009's split is what makes reporting them separately possible.
+- Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book; counting rows would report six unknown-age "books" for a single silent provider.
+- Known gap, accepted: ingestion only replaces the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row. `MIN(quoted_at)` can therefore be dragged older by a market that is no longer live. Pruning retired rows changes ingestion semantics for the recommendation and watch paths too, so it belongs to its own ticket.

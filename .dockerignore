@@ -9,3 +9,16 @@ __pycache__
 htmlcov
 .coverage
 agents.md
+.git
+.venv
+node_modules
+frontend/node_modules
+frontend/dist
+
+# Agent scratch. These are gitignored, so they were never meant to ship in an
+# image — and .claude/ has held whole nested git worktrees, which put a second
+# checkout of this repo inside the build context.
+.claude
+.codex
+.agents
+.manual-validation

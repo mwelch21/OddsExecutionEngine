@@ -66,6 +66,35 @@ docker compose exec -T api uv run pytest
 ./scripts/verify_stage2_5.sh
 ```
 
+These raw commands are canonical. A `Justfile` wraps the common sequences
+(`just up`, `just fresh`, `just dev`, `just check`, `just test`) but is optional
+convenience — nothing requires `just` to be installed.
+
+Host ports are configurable so two worktrees can run their stacks at once.
+Create one with `./scripts/new-worktree.sh <branch>`; see
+`docs/development/worktrees.md`. A checkout with no `.env` uses the long-standing
+defaults (api 8000, frontend 5173, postgres 5433).
+
+## Branching and Pull Requests
+
+`development` is the default branch and the integration target. `main` is the promotion target.
+
+```
+feature branch  ->  development  ->  main
+```
+
+- Cut feature branches from `development`, and open pull requests **against `development`**.
+- Promote with a `development` -> `main` pull request when a batch of work is ready.
+- Never push directly to `development` or `main`. Both are protected; a direct push is rejected with `protected branch hook declined`.
+
+### Closing issues from a pull request
+
+GitHub only honours `Closes #N` when the pull request merges into the **default** branch, which is `development`.
+
+A pull request targeting `main` will merge fine and silently leave its issue open. That is not a formatting problem and re-wording the trailer will not fix it — the base branch is wrong. Retarget to `development`, or close the issue by hand and say why.
+
+This has already bitten this repo: #16 and #18 both targeted `main`, so #11, #12, and #13 had to be closed manually after the work shipped.
+
 ## Project Layout
 
 ```
@@ -122,12 +151,11 @@ Implemented:
 
 - `QuotesRefreshed`, `QuoteUpdated`, `MarketSnapshotCreated`
 - `OrderIntentSubmitted`, `ExecutionRecommendationGenerated`
-- `WatchIntentCreated`, `WatchIntentCancelled`
+- `WatchIntentCreated`, `WatchIntentCancelled`, `WatchIntentExpired`, `WatchIntentTriggered`
 - `OpportunityIdentified`
 
 Planned, not yet implemented (do not assume these exist in code):
 
-- `WatchIntentExpired` (pending in PR #16, not on `main` yet)
 - `TargetPriceStillUnfilled`, `MarketMovedAwayFromTarget` (nearest-miss / drift signals)
 - `AIExplanationGenerated` (depends on the AI layer, which has not been built)
 
@@ -168,14 +196,27 @@ Core:
 Ingestion:
 
 - `POST /ingestion/quotes/refresh`
-- `POST /ingestion/quotes/refresh-sport`
+- `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
+- `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
+
+`ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
+walks every entry, so each extra sport multiplies the cost of refreshing one event.
+Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
+body and is validated against `GET /sports`, so a client may drive any supported sport.
+
+Browse:
+
+- `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
+- `GET /events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
 
 Monitoring:
 
-- `POST /watch-intents`
-- `GET /watch-intents` (optional `event_id` filter)
-- `DELETE /watch-intents/{id}`
+- `POST /watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
+- `GET /watch-intents` (optional `event_id` and `status` filters)
+- `GET /watch-intents/{id}`
+- `DELETE /watch-intents/{id}` (409 if the watch already `triggered`)
 - `GET /opportunities` (optional `event_id` filter)
+- `GET /opportunities/{id}`
 
 Dev only:
 
@@ -183,7 +224,7 @@ Dev only:
 
 Planned, not yet implemented:
 
-- `GET /events`, `GET /events/{event_id}/markets`, `GET /events/{event_id}/quotes`
+- `GET /events/{event_id}/markets`
 - `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
 
 ## Service Catalog
@@ -192,6 +233,7 @@ See `docs/flows/_index.md` for full flow documentation.
 
 | Service | Location | Responsibility |
 |---|---|---|
+| EventQueryService | `application/event_query_service.py` | Filtered, paged event browse with per-event quote freshness; one event's ranked line board |
 | QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish |
 | RecommendationService | `application/recommendation_service.py` | Intent persistence -> quote matching -> recommendation -> event publish |
 | WatchIntentService | `application/watch_intent_service.py` | Watch intent persistence -> opportunity evaluation -> validity check -> event publish |

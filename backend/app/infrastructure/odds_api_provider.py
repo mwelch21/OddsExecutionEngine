@@ -1,10 +1,16 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 
-from backend.app.domain.models import EventInfo, EventParticipant, MarketType, Quote
+from backend.app.domain.models import (
+    EventInfo,
+    EventParticipant,
+    MarketType,
+    Quote,
+    SupportedSport,
+)
 
 SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "icehockey_nhl": ("ice_hockey", "NHL"),
@@ -15,6 +21,20 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "golf_pga": ("golf", "PGA"),
     "tennis_atp": ("tennis", "ATP"),
 }
+
+
+def _parse_timestamp(raw: object) -> datetime | None:
+    """Parse an Odds API ISO-8601 timestamp, tolerating a missing or unusable one."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("odds_api.unparsable_last_update", extra={"value": raw})
+        return None
+    # The API reports UTC. An offsetless value left naive would be read against the
+    # server's timezone once stored, shifting the very age this column exists to state.
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
@@ -91,6 +111,18 @@ class TheOddsApiProvider:
         """Get cached event metadata. Call list_events_for_sport first."""
         return self._event_cache.get(event_id)
 
+    def list_supported_sports(self) -> list[SupportedSport]:
+        """Sports this adapter can split into a sport and a league.
+
+        Read straight off `SPORT_LEAGUE_MAP` so the catalog and the parsing
+        cannot disagree. Deliberately not filtered by the configured sport list:
+        that setting bounds the per-event refresh loop, and is not a whitelist.
+        """
+        return [
+            SupportedSport(key=key, sport=sport, league=league or None)
+            for key, (sport, league) in SPORT_LEAGUE_MAP.items()
+        ]
+
     def _fetch_sport_odds(self, sport: str) -> list[dict[str, Any]]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         url = f"{ODDS_API_BASE}/{sport}/odds"
@@ -153,12 +185,18 @@ class TheOddsApiProvider:
 
         for bookmaker in event.get("bookmakers", []):
             sportsbook: str = bookmaker["key"]
+            bookmaker_last_update = _parse_timestamp(bookmaker.get("last_update"))
 
             for market in bookmaker.get("markets", []):
                 market_key: str = market["key"]
                 market_type = MARKET_TYPE_MAP.get(market_key)
                 if market_type is None:
                     continue
+
+                # Market-level last_update is the tighter claim; the bookmaker-level
+                # one covers every market it carries. Neither present means the book's
+                # own line-movement time is unknown, never "just moved".
+                quoted_at = _parse_timestamp(market.get("last_update")) or bookmaker_last_update
 
                 for outcome in market.get("outcomes", []):
                     price = outcome.get("price")
@@ -185,6 +223,7 @@ class TheOddsApiProvider:
                             selection=selection,
                             price=int(price),
                             line=line,
+                            quoted_at=quoted_at,
                         )
                     )
 

@@ -65,3 +65,44 @@
 - Watches past their TTL are retired to `expired` and emit `WatchIntentExpired` **before** evaluation runs. A watch with a reachable target must never produce an opportunity after its TTL has passed.
 - Expiry is applied when an event is next evaluated, so a watch whose TTL passed while nothing refreshed is still stored as `active`. Reads project the correct status via `effective_status`; they never write. `?status=expired` therefore also scans stored-active rows, otherwise such a watch would be missing from both the active and expired listings.
 - Creating a watch whose TTL has already passed stores it, but skips the immediate evaluation: it can never fill.
+
+## Watch intents are terminal once they fire
+
+- A watch names exactly one market (`event_id` + `market_type` + `selection` + `line` *is* the market identity tuple), so it produces **at most one opportunity, ever**. `unique(watch_intent_id)` on `opportunities` states this; there is no per-book row.
+- An opportunity carries every book that was fillable at detection: `best_sportsbook` / `best_price` as columns, `matching_quotes` as JSON. Same call as `execution_recommendations.ranked_quotes` — a ranked quote list captured at one moment. Analytics is not blocked, since `market_quotes_history` retains every book independently.
+- Identification transitions the watch to `triggered`, which is terminal. It is excluded from later evaluation and **never re-arms**, not even when its opportunity is flagged invalid. Fillability has no memory, so automatic re-arming would let a price oscillating across the target fire repeatedly, and "which of my watches fired?" would stop being answerable. Re-watching is an explicit user action creating a new watch.
+- Exactly one `OpportunityIdentified` is emitted per opportunity — it is the user-facing notification, and its count does not scale with the number of matching books. `WatchIntentTriggered` accompanies it as audit only, so every watch exit (`cancelled`, `expired`, `triggered`) is reconstructable from watch events without joining to opportunities.
+- Best book is `(-price, sportsbook)`, reusing `RecommendationEngine.rank_quotes`. Determinism is the requirement, not the alphabet: without it the same market state yields different notifications on different runs.
+- Staleness is keyed to the **best book only**: `get_latest_quote_times` looks up `best_sportsbook`. A non-best book moving is irrelevant to the decision. Known gap, accepted: a best book moving down while a listed second book overtakes it reads as stale rather than silently re-ranking the snapshot.
+- Reads return the stored snapshot as-is plus `is_valid` / `invalid_reason`, preserving the distinction between "here is what we found" and "here is what is true now". Never re-check live quotes on read.
+- `POST /watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
+- `DELETE /watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
+- No application-level opportunity deduplication. Terminal watches make it unreachable, and the unique constraint is the real guard — it also covers concurrent double-evaluation, which key checking never did.
+
+## Quote times: the book's clock and ours are different facts
+
+- `market_quotes_*.ingested_at` is when we pulled the quote. `quoted_at` is when the sportsbook last moved the line, as reported by the provider. Never write one from the other.
+- `quoted_at` is nullable and `NULL` means the provider exposes no line-movement time — unknown age, never "just moved". Providers leave `Quote.quoted_at` as `None` rather than stamping a substitute.
+- The fallback to ingest time is a read-time derivation (`Quote.effective_quoted_at`), paired with `Quote.line_age_known` so a reader can always tell which clock it is looking at. Do not bake the fallback into storage.
+- Opportunity staleness keys on `ingested_at`: it asks whether a later pull replaced the row, which is a question about our polling, not about the book.
+
+## Event browse reads
+
+- `GET /events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
+- Filtering and paging happen in SQL, not after the fact in Python. Dropping rows post-query would report a total the returned page does not add up to, and the page count is the reason this endpoint is page-based rather than cursor-based.
+- Started events are excluded by default, matching the watch paths: a started event can no longer produce an opportunity. `include_started=true` opts back in. An event with no known start time counts as not started.
+- Ordering is `starts_at ASC NULLS LAST`, tie-broken on `external_id`, so paging cannot repeat or skip a row and the order is identical on Postgres and SQLite.
+- Per-event freshness reports both clocks and never derives one from the other: `last_ingested_at` is `MAX(ingested_at)` (our pull), `oldest_line_quoted_at` is `MIN(quoted_at)` over the books that report one (the worst line age a reader is actually looking at).
+- Absence is reported as absence. An event with no quotes has `quote_count == 0` and null times — never age zero. Books with no line-movement time are counted in `books_with_unknown_line_age` rather than folded into the reported oldest, so that number can never be read as covering every book.
+- Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book. `quote_count` counts quotes; `book_count` counts books and is the denominator that makes `books_with_unknown_line_age` legible.
+- Known gap, accepted: ingestion replaces only the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row and can drag `oldest_line_quoted_at` older than any live market. Pruning retired rows is its own ticket — it changes what the recommendation and watch paths read too.
+
+## The line board is ranked server-side
+
+- `GET /events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
+- Ranking calls `RecommendationEngine.rank_quotes` — the same `(-price, sportsbook)` rule, tie-break included, that the recommendation and watch paths apply. A second sort in the client can show a different winner than the book a watch on that market would fire on, and "best" must mean one thing system-wide.
+- Storage does not rank. The read unit of work returns `MarketQuotes` in query order and the application layer applies the engine, keeping the rule in one place instead of half in SQL.
+- A market no book is quoting is returned present and empty, with `best_sportsbook` / `best_price` null. "Nobody is offering this" is an answer the board has to show, and it is never a best book at price zero.
+- Each quote reports both clocks (`quoted_at`, `ingested_at`) and `line_age_known`, so a board can show that one book has not moved in days while the rest are current. Same rule as the browse list: the fallback to ingest time stays a read-time derivation and is never presented as line movement.
+- No pagination, and no started-event filter. A single event's board is bounded and renders as one screen; the browse list hides started events because they cannot be filled, but asking for one board by id is a different question.
+- Known gap, accepted, inherited from the browse list: ingestion never prunes the latest row for a line a book has stopped offering, so a retired row can still be ranked and named `best_sportsbook`. Its `quoted_at` is what exposes it — a best book whose line has not moved in days is the tell. Pruning is its own ticket.

@@ -37,12 +37,16 @@ htmlcov/
 
 # Build artifacts
 dist/
+.vite/
 build/
 .eggs/
 *.egg-info/
+node_modules/
 
 # Claude memory compiler (has its own git repo)
 claude-memory-compiler/
 
 .claude/
 .codex/
+.agents/
+.manual-validation/
