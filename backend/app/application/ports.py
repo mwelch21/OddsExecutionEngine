@@ -13,6 +13,7 @@ from backend.app.domain.models import (
     OrderIntent,
     Quote,
     QuoteRefreshPersistenceResult,
+    SupportedSport,
     WatchIntent,
     WatchStatus,
 )
@@ -58,6 +59,8 @@ class QuoteIngestionProvider(Protocol):
     def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]: ...
 
     def get_event_info(self, event_id: str) -> EventInfo | None: ...
+
+    def list_supported_sports(self) -> list[SupportedSport]: ...
 
 
 class QuoteIngestionUnitOfWork(Protocol):

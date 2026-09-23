@@ -28,7 +28,13 @@ class Settings(BaseSettings):
 
     quote_provider: str = "in_memory"
     odds_api_key: str = ""
-    odds_api_sports: str = "icehockey_nhl"
+    # Cost is billed per market per region per call (markets x regions credits),
+    # not per request, and every configured sport is a separate call.
+    # Only gates the per-event refresh loop, which walks every entry. Sport-wide
+    # refresh takes its sport from the request, so the UI can drive any supported
+    # sport without this list changing. Keep it to one in-season sport: each extra
+    # entry multiplies the cost of refreshing a single event.
+    odds_api_sports: str = "americanfootball_nfl"
     odds_api_regions: str = "us"
     odds_api_markets: str = "h2h,spreads,totals"
 

@@ -25,7 +25,7 @@ services:
       POSTGRES_PORT: 5432
       QUOTE_PROVIDER: ${QUOTE_PROVIDER:-in_memory}
       ODDS_API_KEY: ${ODDS_API_KEY:-}
-      ODDS_API_SPORTS: ${ODDS_API_SPORTS:-icehockey_nhl}
+      ODDS_API_SPORTS: ${ODDS_API_SPORTS:-americanfootball_nfl}
       ODDS_API_REGIONS: ${ODDS_API_REGIONS:-us}
       ODDS_API_MARKETS: ${ODDS_API_MARKETS:-h2h,spreads,totals}
       OPPORTUNITY_TTL_MINUTES: ${OPPORTUNITY_TTL_MINUTES:-720}

@@ -196,7 +196,13 @@ Core:
 Ingestion:
 
 - `POST /ingestion/quotes/refresh`
-- `POST /ingestion/quotes/refresh-sport`
+- `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
+- `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
+
+`ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
+walks every entry, so each extra sport multiplies the cost of refreshing one event.
+Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
+body and is validated against `GET /sports`, so a client may drive any supported sport.
 
 Browse:
 

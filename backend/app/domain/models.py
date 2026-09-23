@@ -192,6 +192,19 @@ class EventInfo(DomainModel):
     commence_time: datetime | None = None
 
 
+class SupportedSport(DomainModel):
+    """A sport this system knows how to ingest, named in both vocabularies.
+
+    `key` is the provider's own sport key and the value a refresh request carries.
+    `sport` and `league` are what that key splits into once stored, and what a
+    client should display — a user picks "NFL", not `americanfootball_nfl`.
+    """
+
+    key: str
+    sport: str
+    league: str | None = None
+
+
 class EventQuoteFreshness(DomainModel):
     """How old an event's quotes are, keeping our clock and the books' apart.
 

@@ -1,6 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-from backend.app.domain.models import EventInfo, EventParticipant, MarketType, Quote
+from backend.app.domain.models import (
+    EventInfo,
+    EventParticipant,
+    MarketType,
+    Quote,
+    SupportedSport,
+)
 
 FIXTURE_EVENT_ID = "nba-knicks-celtics-2026-04-11"
 FIXTURE_SPORT = "basketball_nba"
@@ -24,6 +30,21 @@ class InMemoryQuoteProvider:
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)
+
+    def list_supported_sports(self) -> list[SupportedSport]:
+        """Whatever the fixtures cover.
+
+        Keyed on each fixture event's `sport`, which is exactly what
+        `list_quotes_for_sport` matches on — so every key this returns is one a
+        refresh can actually use.
+        """
+        seen: dict[str, SupportedSport] = {}
+        for event in self._events.values():
+            seen.setdefault(
+                event.sport,
+                SupportedSport(key=event.sport, sport=event.sport, league=event.league),
+            )
+        return sorted(seen.values(), key=lambda sport: sport.key)
 
 
 def _build_fixture_events() -> dict[str, EventInfo]:
