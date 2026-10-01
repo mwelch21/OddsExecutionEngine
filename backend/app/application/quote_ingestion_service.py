@@ -13,6 +13,7 @@ from backend.app.domain.events import (
     build_quotes_refreshed_event,
 )
 from backend.app.domain.models import (
+    EventSport,
     Quote,
     QuoteRefreshSummary,
     SportRefreshResult,
@@ -32,6 +33,32 @@ class UnsupportedSportError(Exception):
         self.sport = sport
         self.supported = supported
         super().__init__(f"Unsupported sport {sport!r}. Supported: {', '.join(supported)}")
+
+
+class UnknownEventError(Exception):
+    """A per-event refresh named an event this system has never stored or seen."""
+
+    def __init__(self, event_id: str) -> None:
+        self.event_id = event_id
+        super().__init__(
+            f"Unknown event {event_id!r}. Refresh its sport first so the event is known."
+        )
+
+
+class UnresolvableEventSportError(Exception):
+    """A per-event refresh found the event, but not a sport the provider can fetch.
+
+    Raised instead of scanning every sport to find the event: that scan is what
+    made one event cost more than a whole sport.
+    """
+
+    def __init__(self, event_id: str, event_sport: EventSport) -> None:
+        self.event_id = event_id
+        self.event_sport = event_sport
+        super().__init__(
+            f"Cannot resolve a provider sport for event {event_id!r} "
+            f"(sport={event_sport.sport!r}, league={event_sport.league!r})."
+        )
 
 
 class QuoteIngestionService:
@@ -71,11 +98,16 @@ class QuoteIngestionService:
             },
         )
 
+        # Resolved before the workflow starts: an unknown or unresolvable event is
+        # the caller's mistake, not an ingestion failure, and must cost nothing.
+        if quotes_override is None:
+            sport_key = self._resolve_sport_key(event_id)
+
         try:
             provider_quotes = (
                 quotes_override
                 if quotes_override is not None
-                else self._quote_provider.list_quotes(event_id)
+                else self._quote_provider.list_quotes(event_id, sport_key)
             )
             normalized_quotes = self._normalization_engine.normalize_quotes(
                 event_id,
@@ -211,13 +243,33 @@ class QuoteIngestionService:
             fetch_report=fetch_report,
         )
 
+    def _resolve_sport_key(self, event_id: str) -> str:
+        """The provider sport key for one event, found without a paid call.
+
+        Stored events come first; the provider's in-process knowledge covers an
+        event it has seen but nothing has stored a sport for yet. The (sport, league) pair
+        is matched against the provider's own catalog, so this never guesses a
+        key that upstream would bill a 404 for.
+        """
+        with self._unit_of_work_factory() as unit_of_work:
+            event_sport = unit_of_work.get_event_sport(event_id)
+        if event_sport is None or event_sport.sport is None:
+            known = self._quote_provider.get_event_info(event_id)
+            if known is not None:
+                event_sport = EventSport(sport=known.sport, league=known.league)
+            elif event_sport is None:
+                raise UnknownEventError(event_id)
+
+        for entry in self._quote_provider.list_supported_sports():
+            if (entry.sport, entry.league) == (event_sport.sport, event_sport.league):
+                return entry.key
+        raise UnresolvableEventSportError(event_id, event_sport)
+
     def _assert_sport_supported(self, sport: str) -> None:
         """Reject an unknown sport key before it can cost a credit.
 
         Upstream bills per call whether or not the sport exists, so a typo that
-        reaches the provider buys a 404. Checked against the provider's catalog
-        rather than the configured sport list: that setting bounds the per-event
-        refresh loop and was never a whitelist.
+        reaches the provider buys a 404. Checked against the provider's catalog.
         """
         supported = [entry.key for entry in self._quote_provider.list_supported_sports()]
         if sport not in supported:

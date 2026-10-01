@@ -32,16 +32,15 @@ EVENT: dict[str, Any] = {
 def _provider(cache_ttl_seconds: int = 300) -> TheOddsApiProvider:
     return TheOddsApiProvider(
         api_key="test-key",
-        sports=[SPORT],
         regions=["us"],
         markets=["h2h", "spreads", "totals"],
         response_cache=InProcessProviderCache(ttl_seconds=cache_ttl_seconds),
     )
 
 
-def _response(headers: dict[str, str]) -> MagicMock:
+def _response(headers: dict[str, str], body: object = None) -> MagicMock:
     resp = MagicMock()
-    resp.json.return_value = [EVENT]
+    resp.json.return_value = [EVENT] if body is None else body
     resp.headers = headers
     resp.raise_for_status = MagicMock()
     return resp
@@ -135,17 +134,60 @@ class TestFetchReport:
         assert second.upstream_contacted is True
 
     def test_an_incidental_scan_reuses_the_response_within_the_ttl(self) -> None:
-        """list_quotes walks every configured sport; the repeat is free."""
+        """Listing a sport's events is not a refresh; the repeat is free."""
         provider = _provider(cache_ttl_seconds=300)
         headers = {"x-requests-last": "3", "x-requests-remaining": "487"}
 
         with patch.object(
             provider._client, "get", return_value=_response(headers)
         ) as http_get:
-            provider.list_quotes("evt-1")
-            provider.list_quotes("evt-1")
+            provider.list_events_for_sport(SPORT)
+            provider.list_events_for_sport(SPORT)
 
         assert http_get.call_count == 1
+
+
+class TestSingleEventRefresh:
+    """Refreshing one event is one call to the single-event endpoint."""
+
+    def test_one_upstream_call_to_the_single_event_endpoint(self) -> None:
+        provider = _provider()
+        headers = {"x-requests-last": "3", "x-requests-remaining": "487"}
+
+        with patch.object(
+            provider._client, "get", return_value=_response(headers, body=EVENT)
+        ) as http_get:
+            provider.list_quotes("evt-1", SPORT)
+
+        assert http_get.call_count == 1
+        url = http_get.call_args.args[0]
+        assert url.endswith(f"/{SPORT}/events/evt-1/odds")
+        params = http_get.call_args.kwargs["params"]
+        assert params["markets"] == "h2h,spreads,totals"
+        assert params["regions"] == "us"
+
+    def test_a_per_event_refresh_always_pulls_live(self) -> None:
+        provider = _provider(cache_ttl_seconds=300)
+
+        with patch.object(
+            provider._client, "get", return_value=_response({}, body=EVENT)
+        ) as http_get:
+            provider.list_quotes("evt-1", SPORT)
+            provider.list_quotes("evt-1", SPORT)
+
+        assert http_get.call_count == 2
+
+    def test_an_event_upstream_no_longer_offers_yields_no_quotes(self) -> None:
+        provider = _provider()
+        resp = _response({}, body={"message": "Event not found"})
+        resp.status_code = 404
+
+        with patch.object(provider._client, "get", return_value=resp) as http_get:
+            quotes = provider.list_quotes("gone", SPORT)
+
+        assert quotes == []
+        assert http_get.call_count == 1
+        resp.raise_for_status.assert_not_called()
 
 
 class TestRefreshEndpointReporting:

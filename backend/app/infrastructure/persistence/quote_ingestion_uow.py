@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from backend.app.application.ports import QuoteIngestionUnitOfWork
 from backend.app.domain.events import WorkflowEvent
-from backend.app.domain.models import PersistedQuote, Quote, QuoteRefreshPersistenceResult
+from backend.app.domain.models import (
+    EventSport,
+    PersistedQuote,
+    Quote,
+    QuoteRefreshPersistenceResult,
+)
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
@@ -135,6 +140,22 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         if self._session is None:
             raise RuntimeError("Quote ingestion unit of work must be entered before use.")
         return self._session
+
+    def get_event_sport(self, event_id: str) -> EventSport | None:
+        """The stored sport and league for an event, or None if it was never stored."""
+        row = (
+            self._require_session()
+            .execute(
+                select(events_table.c.sport, events_table.c.league).where(
+                    events_table.c.external_id == event_id
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            return None
+        return EventSport(sport=row["sport"], league=row["league"])
 
     def _ensure_event(
         self,

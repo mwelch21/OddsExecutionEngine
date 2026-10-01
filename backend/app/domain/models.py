@@ -222,6 +222,17 @@ class ProviderFetchReport(DomainModel):
     quota: UpstreamQuota | None = None
 
 
+class EventSport(DomainModel):
+    """What a stored event records about its sport, in our vocabulary.
+
+    Both fields are nullable because the columns are: an event first seen through
+    a bare per-event refresh was stored before anything told us its sport.
+    """
+
+    sport: str | None = None
+    league: str | None = None
+
+
 class SupportedSport(DomainModel):
     """A sport this system knows how to ingest, named in both vocabularies.
 

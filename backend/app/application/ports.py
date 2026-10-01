@@ -5,6 +5,7 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventFilter,
     EventInfo,
+    EventSport,
     EventSummary,
     ExecutionRecommendation,
     MarketQuotes,
@@ -55,7 +56,7 @@ class WorkflowEventPublisher(Protocol):
 
 
 class QuoteIngestionProvider(Protocol):
-    def list_quotes(self, event_id: str) -> list[Quote]: ...
+    def list_quotes(self, event_id: str, sport: str) -> list[Quote]: ...
 
     def list_quotes_for_sport(
         self, sport: str
@@ -82,6 +83,8 @@ class QuoteIngestionUnitOfWork(Protocol):
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshPersistenceResult: ...
+
+    def get_event_sport(self, event_id: str) -> EventSport | None: ...
 
     def stage_event(self, event: WorkflowEvent) -> None: ...
 

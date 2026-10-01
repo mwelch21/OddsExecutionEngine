@@ -29,7 +29,7 @@ class CountingQuoteProvider:
         self.sport_fetches: list[str] = []
         self.event_fetches: list[str] = []
 
-    def list_quotes(self, event_id: str) -> list[Quote]:
+    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
         self.event_fetches.append(event_id)
         return []
 
@@ -65,7 +65,6 @@ def _supported() -> list[SupportedSport]:
 def test_odds_api_catalog_is_read_from_the_single_sport_map() -> None:
     provider = TheOddsApiProvider(
         api_key="unused",
-        sports=["americanfootball_nfl"],
         regions=["us"],
         markets=["h2h"],
         response_cache=InProcessProviderCache(ttl_seconds=0),
@@ -78,11 +77,10 @@ def test_odds_api_catalog_is_read_from_the_single_sport_map() -> None:
     assert (nfl.sport, nfl.league) == ("american_football", "NFL")
 
 
-def test_catalog_is_not_narrowed_to_the_configured_sports() -> None:
-    """ODDS_API_SPORTS bounds the per-event loop; it is not a whitelist."""
+def test_catalog_covers_every_mapped_sport() -> None:
+    """Any mapped sport may be refreshed; nothing narrows the catalog."""
     provider = TheOddsApiProvider(
         api_key="unused",
-        sports=["americanfootball_nfl"],
         regions=["us"],
         markets=["h2h"],
         response_cache=InProcessProviderCache(ttl_seconds=0),

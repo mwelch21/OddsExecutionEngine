@@ -6,8 +6,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect, select
 
 from backend.app.config import Settings
+from backend.app.domain.models import EventSport
 from backend.app.infrastructure.persistence.commands import odds_db_seed_demo_main
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quote_ingestion_uow import (
+    SqlAlchemyQuoteIngestionUnitOfWork,
+)
 from backend.app.infrastructure.persistence.schema import (
     events_table,
     execution_recommendations_table,
@@ -117,6 +121,40 @@ def test_quote_refresh_endpoint_validates_request(sqlite_database_url: str) -> N
         response = client.post("/ingestion/quotes/refresh", json={"event_id": ""})
 
     assert response.status_code == 422
+
+
+def test_quote_refresh_endpoint_rejects_an_event_it_has_never_seen(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_empty_test_app(sqlite_database_url)) as client:
+        response = client.post("/ingestion/quotes/refresh", json={"event_id": "no-such-event"})
+
+    assert response.status_code == 404
+    assert "no-such-event" in response.json()["detail"]
+
+
+def test_quote_refresh_endpoint_rejects_an_event_whose_sport_cannot_be_resolved(
+    sqlite_database_url: str,
+) -> None:
+    app = _build_empty_test_app(sqlite_database_url)
+    session_factory = DatabaseSessionFactory(sqlite_database_url)
+    with session_factory.create_session() as session:
+        session.execute(
+            events_table.insert().values(
+                id="evt-row-1",
+                external_id="curling-event",
+                sport="curling",
+                league="WCF",
+                provider="test",
+            )
+        )
+        session.commit()
+
+    with TestClient(app) as client:
+        response = client.post("/ingestion/quotes/refresh", json={"event_id": "curling-event"})
+
+    assert response.status_code == 422
+    assert "curling" in response.json()["detail"]
 
 
 def test_recommendation_endpoint_reads_quotes_ingested_by_stage4_flow(
@@ -458,6 +496,24 @@ def test_postgres_is_required_truth_path_for_persistence_correctness() -> None:
         assert len(stored_intent) == 1
         assert len(stored_recommendations) == 1
         assert stored_recommendations[0]["best_quote"]["sportsbook"] == "DraftKings"
+    finally:
+        truncate_application_tables(session_factory)
+
+
+def test_postgres_resolves_a_stored_events_sport_for_per_event_refresh() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    session_factory = prepare_test_database(database_url, seed_demo=True, drop_existing=True)
+
+    try:
+        with SqlAlchemyQuoteIngestionUnitOfWork(session_factory) as unit_of_work:
+            stored = unit_of_work.get_event_sport("nba-knicks-celtics-2026-04-11")
+            missing = unit_of_work.get_event_sport("no-such-event")
+
+        assert stored == EventSport(sport="basketball", league="NBA")
+        assert missing is None
     finally:
         truncate_application_tables(session_factory)
 

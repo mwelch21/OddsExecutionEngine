@@ -18,7 +18,7 @@ class InMemoryQuoteProvider:
         self._quotes = quotes or build_fixture_quotes()
         self._events = _build_fixture_events()
 
-    def list_quotes(self, event_id: str) -> list[Quote]:
+    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
         return [quote for quote in self._quotes if quote.event_id == event_id]
 
     def list_quotes_for_sport(
