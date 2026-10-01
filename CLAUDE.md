@@ -234,10 +234,10 @@ Non-negotiable. Read before touching ingestion, the provider, or anything that r
 - **A deliberate refresh always pulls live.** The provider cache coalesces simultaneous
   refreshes into one call and reuses responses for incidental repeats, but never answers
   a refresh with data that predates it. See ADR-011.
-- `ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
-  walks every entry, so each extra sport multiplies the cost of refreshing one event.
-  Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
-  body and is validated against `GET /sports`, so a client may drive any supported sport.
+- **No sport list is configured.** Sport-wide refresh takes its sport from the request
+  body, validated against `GET /sports`. Per-event refresh is **one** call to the
+  single-event endpoint, its sport resolved from the stored event; it never scans sport
+  feeds (404 unknown event, 422 unresolvable sport). See ADR-012.
 - Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
   Only `POST /ingestion/quotes/refresh*` spends.
 

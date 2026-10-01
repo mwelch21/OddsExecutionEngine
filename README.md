@@ -71,7 +71,6 @@ To enable live odds data, add:
 ```env
 QUOTE_PROVIDER=odds_api
 ODDS_API_KEY=your_api_key_here
-ODDS_API_SPORTS=icehockey_nhl,baseball_mlb
 ODDS_API_REGIONS=us,us2
 ODDS_API_MARKETS=h2h,spreads,totals
 ```
@@ -303,7 +302,6 @@ so a checkout with no `.env` behaves exactly as before. See
 | `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused by an *incidental* repeat fetch. `0` disables reuse. A deliberate refresh always pulls live regardless (ADR-011) |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
-| `ODDS_API_SPORTS` | `americanfootball_nfl` | Comma-separated sport keys. Bounds the per-event refresh loop, **not** a whitelist — each extra entry multiplies the cost of refreshing one event |
 | `ODDS_API_REGIONS` | `us` | Comma-separated regions. Each region multiplies the credit cost of every call |
 | `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types. Each market multiplies the credit cost of every call |
 
