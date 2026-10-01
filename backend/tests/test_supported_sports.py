@@ -7,8 +7,9 @@ from backend.app.application.quote_ingestion_service import (
     UnsupportedSportError,
 )
 from backend.app.config import Settings
-from backend.app.domain.models import Quote, SupportedSport
+from backend.app.domain.models import ProviderFetchReport, Quote, SupportedSport
 from backend.app.engines.normalization_engine import NormalizationEngine
+from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.odds_api_provider import (
     SPORT_LEAGUE_MAP,
     TheOddsApiProvider,
@@ -32,9 +33,11 @@ class CountingQuoteProvider:
         self.event_fetches.append(event_id)
         return []
 
-    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]:
+    def list_quotes_for_sport(
+        self, sport: str
+    ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
         self.sport_fetches.append(sport)
-        return {}
+        return {}, ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def get_event_info(self, event_id: str) -> None:
         return None
@@ -65,6 +68,7 @@ def test_odds_api_catalog_is_read_from_the_single_sport_map() -> None:
         sports=["americanfootball_nfl"],
         regions=["us"],
         markets=["h2h"],
+        response_cache=InProcessProviderCache(ttl_seconds=0),
     )
 
     catalog = provider.list_supported_sports()
@@ -81,6 +85,7 @@ def test_catalog_is_not_narrowed_to_the_configured_sports() -> None:
         sports=["americanfootball_nfl"],
         regions=["us"],
         markets=["h2h"],
+        response_cache=InProcessProviderCache(ttl_seconds=0),
     )
 
     keys = {entry.key for entry in provider.list_supported_sports()}
@@ -104,9 +109,10 @@ def test_supported_sport_outside_the_configured_list_still_refreshes() -> None:
     provider = CountingQuoteProvider(_supported())
     service = _build_service(provider)
 
-    summaries = service.refresh_sport("baseball_mlb")
+    result = service.refresh_sport("baseball_mlb")
 
-    assert summaries == []
+    assert result.sport == "baseball_mlb"
+    assert result.summaries == []
     assert provider.sport_fetches == ["baseball_mlb"]
 
 

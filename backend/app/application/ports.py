@@ -11,6 +11,7 @@ from backend.app.domain.models import (
     MarketType,
     Opportunity,
     OrderIntent,
+    ProviderFetchReport,
     Quote,
     QuoteRefreshPersistenceResult,
     SupportedSport,
@@ -56,7 +57,9 @@ class WorkflowEventPublisher(Protocol):
 class QuoteIngestionProvider(Protocol):
     def list_quotes(self, event_id: str) -> list[Quote]: ...
 
-    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]: ...
+    def list_quotes_for_sport(
+        self, sport: str
+    ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]: ...
 
     def get_event_info(self, event_id: str) -> EventInfo | None: ...
 

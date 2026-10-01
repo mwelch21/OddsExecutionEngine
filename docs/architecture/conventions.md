@@ -52,6 +52,14 @@
 - Quote normalization should stay deterministic and map into canonical `Quote` values before persistence.
 - Quote ingestion persistence should upsert `market_quotes_latest`, append `market_quotes_history`, and emit workflow events through the same post-commit publisher path.
 
+## Upstream quota and refresh
+
+- Refresh is **manual**. No scheduler, no polling timer, no background job may call a provider. Manual refresh is the primary limiter on API spend and stays that way until testing is done.
+- The Odds API bills **credits, not requests**: `cost = [markets] x [regions]` per call. Reason about spend in credits.
+- A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
+- `ODDS_API_SPORTS` bounds the per-event refresh loop, which walks every entry. It is not a whitelist, and each extra sport multiplies the cost of refreshing one event.
+- Credit figures are reported only when upstream was actually contacted, and a missing figure is `None`, never `0`.
+
 ## Decisions log policy
 
 - Add a decision entry when changing migration strategy, schema ownership, persistence layout, layer boundaries, event model boundaries, or other major architectural rules.

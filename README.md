@@ -300,12 +300,16 @@ so a checkout with no `.env` behaves exactly as before. See
 | `FRONTEND_PORT` | `5173` | Host port the frontend dev server binds |
 | `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds |
 | `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
-| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
+| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused by an *incidental* repeat fetch. `0` disables reuse. A deliberate refresh always pulls live regardless (ADR-011) |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
-| `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
-| `ODDS_API_REGIONS` | `us,us2` | Comma-separated regions |
-| `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types |
+| `ODDS_API_SPORTS` | `americanfootball_nfl` | Comma-separated sport keys. Bounds the per-event refresh loop, **not** a whitelist — each extra entry multiplies the cost of refreshing one event |
+| `ODDS_API_REGIONS` | `us` | Comma-separated regions. Each region multiplies the credit cost of every call |
+| `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types. Each market multiplies the credit cost of every call |
+
+Upstream bills **credits, not requests**: `cost = [markets] x [regions]` per call. The
+defaults above cost 3 credits per sport per call. Refresh is manual by design — nothing
+polls — and that is the main thing keeping spend down.
 
 ## Running Tests
 

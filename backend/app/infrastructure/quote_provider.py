@@ -4,6 +4,7 @@ from backend.app.domain.models import (
     EventInfo,
     EventParticipant,
     MarketType,
+    ProviderFetchReport,
     Quote,
     SupportedSport,
 )
@@ -20,13 +21,17 @@ class InMemoryQuoteProvider:
     def list_quotes(self, event_id: str) -> list[Quote]:
         return [quote for quote in self._quotes if quote.event_id == event_id]
 
-    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]:
+    def list_quotes_for_sport(
+        self, sport: str
+    ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
         event_ids = {e.id for e in self._events.values() if e.sport == sport}
         result: dict[str, list[Quote]] = {}
         for quote in self._quotes:
             if quote.event_id in event_ids:
                 result.setdefault(quote.event_id, []).append(quote)
-        return result
+        # Fixtures are built in memory, so there is no upstream and nothing to
+        # bill. Reporting contact with an age of zero keeps the shape honest.
+        return result, ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)
