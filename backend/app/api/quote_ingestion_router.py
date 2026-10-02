@@ -10,6 +10,8 @@ from backend.app.api.quote_ingestion_schemas import (
 )
 from backend.app.application.quote_ingestion_service import (
     QuoteIngestionService,
+    UnknownEventError,
+    UnresolvableEventSportError,
     UnsupportedSportError,
 )
 
@@ -22,7 +24,12 @@ def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
         response_model=QuoteRefreshResponse,
     )
     def refresh_quotes(request: QuoteRefreshRequest) -> QuoteRefreshResponse:
-        summary = service.refresh_quotes(request.event_id)
+        try:
+            summary = service.refresh_quotes(request.event_id)
+        except UnknownEventError as err:
+            raise HTTPException(status_code=404, detail=str(err)) from err
+        except UnresolvableEventSportError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
         return QuoteRefreshResponse.from_domain(summary)
 
     @router.get(

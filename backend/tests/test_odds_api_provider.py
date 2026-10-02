@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -7,7 +8,7 @@ from backend.app.domain.models import MarketType, Quote, UpstreamQuota
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 
-# _fetch_sport_odds returns (payload, quota); these tests are about the mapping,
+# The fetch helpers return (payload, quota); these tests are about the mapping,
 # so they hand back an unreported quota.
 NO_QUOTA = UpstreamQuota()
 
@@ -87,6 +88,16 @@ SAMPLE_API_RESPONSE = [
 
 SAMPLE_FETCH = (SAMPLE_API_RESPONSE, NO_QUOTA)
 EMPTY_FETCH: tuple[list[dict], UpstreamQuota] = ([], NO_QUOTA)
+SPORT_KEY = "icehockey_nhl"
+
+
+def _serve_events(response: list[dict]) -> Callable[[str, str], tuple[list[dict], UpstreamQuota]]:
+    """Stand in for the single-event endpoint: answer with just the named event."""
+
+    def fetch(sport: str, event_id: str) -> tuple[list[dict], UpstreamQuota]:
+        return [event for event in response if event["id"] == event_id], NO_QUOTA
+
+    return fetch
 
 
 def _make_mock_response(json_data: list[dict]) -> MagicMock:
@@ -105,7 +116,6 @@ def _create_provider(ttl_seconds: int = 0) -> TheOddsApiProvider:
     # not an artefact of reuse between calls within the test.
     return TheOddsApiProvider(
         api_key="test-key",
-        sports=["icehockey_nhl"],
         regions=["us", "us2"],
         markets=["h2h", "spreads", "totals"],
         response_cache=InProcessProviderCache(ttl_seconds=ttl_seconds),
@@ -113,25 +123,31 @@ def _create_provider(ttl_seconds: int = 0) -> TheOddsApiProvider:
 
 
 class TestListQuotes:
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_returns_quotes_for_matching_event(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         assert len(quotes) > 0
         assert all(q.event_id == "abc123" for q in quotes)
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_returns_empty_for_unknown_event(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("nonexistent")
+        quotes = provider.list_quotes("nonexistent", SPORT_KEY)
 
         assert quotes == []
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_maps_h2h_to_moneyline(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         ml_quotes = [q for q in quotes if q.market_type == MarketType.MONEYLINE]
         assert len(ml_quotes) >= 2
@@ -145,10 +161,12 @@ class TestListQuotes:
         assert len(dk_bruins) == 1
         assert dk_bruins[0].price == -145
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_maps_spreads_with_line(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         spread_quotes = [q for q in quotes if q.market_type == MarketType.SPREAD]
         assert len(spread_quotes) == 2
@@ -159,10 +177,12 @@ class TestListQuotes:
         assert bruins_spread[0].line == -1.5
         assert bruins_spread[0].price == -110
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_maps_totals_with_over_under(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         total_quotes = [q for q in quotes if q.market_type == MarketType.TOTAL]
         assert len(total_quotes) == 2
@@ -170,10 +190,12 @@ class TestListQuotes:
         assert selections == {"over", "under"}
         assert all(q.line == 5.5 for q in total_quotes)
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=SAMPLE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_multiple_sportsbooks(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         sportsbooks = {q.sportsbook for q in quotes}
         assert "draftkings" in sportsbooks
@@ -228,15 +250,15 @@ class TestListQuotesForSport:
 
 
 class TestEdgeCases:
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=EMPTY_FETCH)
+    @patch.object(TheOddsApiProvider, "_fetch_event_odds", return_value=EMPTY_FETCH)
     def test_empty_response(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
         assert quotes == []
 
     @patch.object(
         TheOddsApiProvider,
-        "_fetch_sport_odds",
+        "_fetch_event_odds",
         return_value=(
             [
                 {
@@ -252,15 +274,15 @@ class TestEdgeCases:
     )
     def test_event_with_no_bookmakers(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("evt1")
+        quotes = provider.list_quotes("evt1", SPORT_KEY)
         assert quotes == []
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds")
+    @patch.object(TheOddsApiProvider, "_fetch_event_odds")
     def test_api_error_propagates(self, mock_fetch: MagicMock) -> None:
         mock_fetch.side_effect = Exception("API error")
         provider = _create_provider()
         with pytest.raises(Exception, match="API error"):
-            provider.list_quotes("abc123")
+            provider.list_quotes("abc123", SPORT_KEY)
 
 
 LAST_UPDATE_RESPONSE = [
@@ -315,47 +337,52 @@ LAST_UPDATE_RESPONSE = [
     },
 ]
 
-LAST_UPDATE_FETCH = (LAST_UPDATE_RESPONSE, NO_QUOTA)
-
-
 class TestLineMovementTime:
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(LAST_UPDATE_RESPONSE)
+    )
     def test_market_last_update_becomes_the_books_quote_time(
         self, mock_fetch: MagicMock
     ) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         quote = _only(quotes, "draftkings", MarketType.MONEYLINE)
         assert quote.quoted_at == datetime(2026, 4, 17, 9, 30, tzinfo=UTC)
         assert quote.line_age_known is True
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(LAST_UPDATE_RESPONSE)
+    )
     def test_falls_back_to_bookmaker_last_update_when_the_market_has_none(
         self, mock_fetch: MagicMock
     ) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         quote = _only(quotes, "draftkings", MarketType.SPREAD)
         assert quote.quoted_at == datetime(2026, 4, 20, 21, 0, tzinfo=UTC)
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(LAST_UPDATE_RESPONSE)
+    )
     def test_offsetless_last_update_is_read_as_utc(self, mock_fetch: MagicMock) -> None:
         """A naive timestamp would land in a tz-aware column and shift by the
         server's offset — silently wrong on the one fact this data exists to state."""
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         quote = _only(quotes, "caesars", MarketType.MONEYLINE)
         assert quote.quoted_at == datetime(2026, 4, 17, 9, 30, tzinfo=UTC)
 
-    @patch.object(TheOddsApiProvider, "_fetch_sport_odds", return_value=LAST_UPDATE_FETCH)
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(LAST_UPDATE_RESPONSE)
+    )
     def test_absent_last_update_leaves_the_quote_unknown_age(
         self, mock_fetch: MagicMock
     ) -> None:
         provider = _create_provider()
-        quotes = provider.list_quotes("abc123")
+        quotes = provider.list_quotes("abc123", SPORT_KEY)
 
         quote = _only(quotes, "fanduel", MarketType.MONEYLINE)
         assert quote.quoted_at is None

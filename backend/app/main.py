@@ -82,12 +82,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if app_settings.quote_provider == "odds_api":
         quote_provider = TheOddsApiProvider(
             api_key=app_settings.odds_api_key,
-            sports=[s.strip() for s in app_settings.odds_api_sports.split(",")],
             regions=[r.strip() for r in app_settings.odds_api_regions.split(",")],
             markets=[m.strip() for m in app_settings.odds_api_markets.split(",")],
             # One cache per provider, living as long as the process. A deliberate
             # refresh still pulls live; this only collapses simultaneous pulls and
-            # the incidental repeats inside a single-event scan.
+            # repeats of incidental reads such as listing a sport's events.
             response_cache=InProcessProviderCache(
                 ttl_seconds=app_settings.provider_cache_ttl_seconds,
             ),

@@ -57,7 +57,7 @@
 - Refresh is **manual**. No scheduler, no polling timer, no background job may call a provider. Manual refresh is the primary limiter on API spend and stays that way until testing is done.
 - The Odds API bills **credits, not requests**: `cost = [markets] x [regions]` per call. Reason about spend in credits.
 - A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
-- `ODDS_API_SPORTS` bounds the per-event refresh loop, which walks every entry. It is not a whitelist, and each extra sport multiplies the cost of refreshing one event.
+- Per-event refresh is one call to the single-event endpoint. The sport comes from the stored event (or the provider's in-process knowledge), matched against the provider catalog; an event whose sport cannot be resolved fails loudly, never by scanning sport feeds. See ADR-012.
 - Credit figures are reported only when upstream was actually contacted, and a missing figure is `None`, never `0`.
 
 ## Decisions log policy
