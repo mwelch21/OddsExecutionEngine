@@ -70,6 +70,11 @@ These raw commands are canonical. A `Justfile` wraps the common sequences
 (`just up`, `just fresh`, `just dev`, `just check`, `just test`) but is optional
 convenience — nothing requires `just` to be installed.
 
+After a pull or branch switch, run `just refresh` (or `just dev`, which runs it)
+before testing endpoints: the raw `docker compose up` serves the image as last
+built. Dev recipes mount `backend/` with uvicorn `--reload`; `just status` says
+whether the running stack matches the checkout. See README "Local Development Loop".
+
 Host ports are configurable so two worktrees can run their stacks at once.
 Create one with `./scripts/new-worktree.sh <branch>`; see
 `docs/development/worktrees.md`. A checkout with no `.env` uses the long-standing

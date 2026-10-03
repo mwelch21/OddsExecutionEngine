@@ -127,6 +127,44 @@ open http://localhost:5173
 The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
 The frontend application provides the product-style lines board: sportsbook filtering, best-line mode, fillability checks, and watch creation.
 
+## Local Development Loop
+
+With [`just`](https://github.com/casey/just) installed, the loop is two commands:
+
+```bash
+just fresh   # first run only: refresh + seed the demo fixtures
+just dev     # every session, and after every pull or branch switch
+```
+
+`just dev` runs `just refresh` first, so the API is rebuilt, recreated, and migrated
+for the checked-out branch before Vite starts. Local data is never touched.
+
+### What reloads on its own, and what does not
+
+| You changed | Picked up by | You run |
+|---|---|---|
+| Frontend source | Vite HMR | nothing |
+| Backend source (`backend/`) | uvicorn `--reload` (source is mounted in dev mode) | nothing |
+| `pyproject.toml`, `Dockerfile` | image rebuild | `just refresh` |
+| A new migration | Alembic | `just refresh` (or `just migrate`) |
+| `frontend/package.json` | `npm install` | restart `just dev` |
+| Branch (pull, switch, new worktree) | all of the above | `just refresh` / `just dev` |
+
+`just status` reports whether the running stack matches the checkout (reload on,
+image built from this `pyproject.toml`, schema at head) and exits non-zero when it
+does not.
+
+### Dev mode vs image mode
+
+| Recipe | API runs | Use for |
+|---|---|---|
+| `just up`, `just refresh`, `just dev`, `just up-all` | mounted `backend/`, reload on save | day-to-day work |
+| `just up-image`, raw `docker compose up` | the built image as-is, no reload | production-like checks |
+
+Dev mode is `docker-compose.dev.yml` layered over `docker-compose.yml`; the image and
+the base compose file are unchanged. Destructive resets stay explicit:
+`just down-hard` (asks first) deletes the volume, `just reset-db` truncates tables.
+
 ## Common Commands
 
 ```bash
