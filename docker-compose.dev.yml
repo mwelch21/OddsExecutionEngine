@@ -1,0 +1,23 @@
+# Local-development override: the API serves the checked-out source and reloads
+# on save. The Justfile's dev recipes layer this over docker-compose.yml.
+#
+# Plain `docker compose up` does not load this file, so it still runs the image
+# exactly as built — the production-like path. Only backend/ is mounted: the
+# virtualenv baked into the image stays authoritative, which is why dependency
+# changes (pyproject.toml, uv.lock) and Dockerfile changes still need a rebuild.
+services:
+  api:
+    volumes:
+      - ./backend:/app/backend
+    command:
+      - uv
+      - run
+      - uvicorn
+      - backend.app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/backend

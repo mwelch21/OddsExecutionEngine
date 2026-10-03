@@ -14,39 +14,72 @@ postgres_host_port := env_var_or_default("POSTGRES_HOST_PORT", "5433")
 
 alembic := "uv run alembic -c backend/db/alembic.ini"
 
+# Dev recipes layer docker-compose.dev.yml on top: the API serves the mounted
+# checkout and reloads on save. `up-image` and raw `docker compose` skip it and
+# run the built image as-is, which is the production-like path.
+dc := "docker compose -f docker-compose.yml -f docker-compose.dev.yml"
+
 # Show available recipes.
 default:
     @just --list --unsorted
 
-# Start api + postgres and migrate. Safe to re-run; never touches data.
+# Safe to re-run; never touches data. Does not rebuild: after a branch switch
+# use `refresh` instead.
+# Start api (reload mode) + postgres and migrate.
 up:
-    docker compose up -d --wait api postgres
+    {{dc}} up -d --wait api postgres
+    {{dc}} exec -T api {{alembic}} upgrade head
+    @echo "api  http://localhost:{{app_port}}  (reloads on save)"
+
+# Rebuilds the API image so dependency and Dockerfile changes land (cached
+# layers make this quick when nothing changed), recreates the API in reload
+# mode, and migrates. Never touches data.
+# Run after pulling or switching branches: rebuild, reload mode, migrate.
+refresh:
+    {{dc}} build api
+    {{dc}} up -d --wait api postgres
+    {{dc}} exec -T api {{alembic}} upgrade head
+    @echo "api  http://localhost:{{app_port}}  (reloads on save)"
+
+# Production-like: the built image, no source mount, no reload.
+up-image:
+    docker compose up -d --build --wait api postgres
     docker compose exec -T api {{alembic}} upgrade head
-    @echo "api  http://localhost:{{app_port}}"
+    @echo "api  http://localhost:{{app_port}}  (image mode: no reload)"
+
+# Is the running stack in step with this checkout? Read-only.
+status:
+    @./scripts/dev-status.sh
 
 # Seeding is additive and no-ops when quotes already exist, so this is as safe
 # as `up`. It is a separate recipe because it is the deliberate first-run path,
 # not because it is destructive.
 
-# Cold start: up, then seed the demo fixtures.
-fresh: up
-    docker compose exec -T api uv run odds-db-seed-demo
+# Cold start: refresh, then seed the demo fixtures.
+fresh: refresh
+    {{dc}} exec -T api uv run odds-db-seed-demo
     @echo "seeded"
 
-# Backend in Docker, frontend native for fast HMR. Blocks until you stop it.
-dev: up
+# Refreshes first, so it is the one command to run after a branch switch.
+# Blocks until you stop it.
+# Backend in Docker (reload on save), frontend native (Vite HMR).
+dev: refresh
+    @# A frontend container left by up-all holds the same port as native Vite.
+    docker compose stop frontend
     @echo "frontend http://localhost:{{frontend_port}} -> api http://localhost:{{app_port}}"
     cd frontend && npm install && npm run dev
 
-# Everything in Docker, including the frontend container.
+# Everything in Docker, including the frontend container. API in reload mode.
 up-all:
-    docker compose up -d --wait
-    docker compose exec -T api {{alembic}} upgrade head
+    {{dc}} build api
+    {{dc}} up -d --wait
+    {{dc}} exec -T api {{alembic}} upgrade head
 
 down:
     docker compose down
 
 # Stop and delete this stack's database volume.
+[confirm("Delete this stack's database volume? All local data is lost. [y/N]")]
 down-hard:
     docker compose down -v
 
