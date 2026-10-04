@@ -8,6 +8,13 @@
 - SQLAlchemy schema definitions in application code are the canonical app-side schema reference, but migrations are the operational source of schema changes.
 - Demo or fixture data must be loaded explicitly, never as an implicit side effect of normal app boot.
 
+## Product surfaces
+
+- The UI is the primary surface for the operator. Design and scope new work with its UI flow in mind.
+- API parity: every UI capability has a public API endpoint, and the UI reaches it only through that endpoint. Nothing is UI-only.
+- Events that leave the system (notifications today, webhook or SDK later) are a versioned public contract, not a dump of internal `workflow_events`.
+- The system notifies; it never places bets. Programmatic execution belongs in the consumer's code.
+
 ## Layering
 
 - Dependency direction stays `api -> application -> domain`.
