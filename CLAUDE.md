@@ -18,7 +18,7 @@ Build backend-first sports market execution platform. System answers:
 - What watch or opportunity signals should fire?
 - Optional: AI parse/explain/suggest, never AI decide pricing logic.
 
-Optimize for backend/system design signal, not frontend polish.
+The UI is the primary surface; the API is the full contract behind it. Every UI capability has a public API path, and events are designed as a public contract so a future programmatic consumer (webhook, SDK) needs no redesign. See "Product surfaces" in `docs/architecture/conventions.md`.
 
 ## Product Scope
 
@@ -134,7 +134,7 @@ backend/
 - Routes stay thin and must not own business logic.
 - Deterministic engines hold pricing, matching, ranking, and watch logic.
 
-Full details in `docs/architecture/conventions.md` and `docs/architecture/decisions.md`.
+Full details in `docs/architecture/conventions.md` and the ADRs in `docs/adr/`.
 
 ### Core Domain Objects
 
@@ -329,14 +329,14 @@ Required coverage: quote matching, odds comparison, ranking, nearest miss, monit
 - When editing, keep scope tight. Touch smallest valid set of files.
 - Prefer existing patterns over exploratory rewrites.
 - When blocked by ambiguity, inspect codebase first, ask user last.
-- Before changing architecture/migrations/persistence/repo-wide rules, read `docs/architecture/decisions.md` and `docs/architecture/conventions.md`.
-- If task changes major architectural choice, update `docs/architecture/decisions.md`.
+- Before changing architecture/migrations/persistence/repo-wide rules, read the relevant ADRs in `docs/adr/` and `docs/architecture/conventions.md`.
+- If task changes major architectural choice, add the next-numbered ADR in `docs/adr/` and list it in `docs/architecture/decisions.md`.
 - If task introduces/changes standing rule, update `docs/architecture/conventions.md`.
 
 ## Anti-Goals
 
-- No UI-heavy betting app
-- No premature microservices/infrastructure
+- No UI that owns logic: the UI drives public APIs and stays a client of the deterministic core
+- No premature microservices/infrastructure: a new service must pass the extraction rule in ADR-013 and ship with its own ADR
 - No replacing deterministic logic with AI
 - No social/community features
 - No optimizing for novelty over system behavior
