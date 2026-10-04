@@ -25,3 +25,13 @@ The notification for one `OpportunityIdentified`: selection, best price and book
 
 **Quota warning**:
 The notification sent when remaining provider credits fall below a floor. Informs only; it does not switch Auto-Refresh off.
+
+### Events
+
+**Workflow event**:
+An internal record of something that happened in a workflow, kept for audit. Never seen outside the system.
+_Avoid_: Domain event (when you mean the stored record)
+
+**Public event**:
+A versioned event the system publishes to anything outside it (the notifier today, webhooks or an SDK later). Only explicitly chosen workflow events have a public counterpart.
+_Avoid_: External event, outbound message, notification (a notification is one channel's rendering of a public event)
