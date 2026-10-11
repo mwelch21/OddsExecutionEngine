@@ -8,7 +8,17 @@ Answers whether a target price is fillable across sportsbooks right now, where t
 
 **Operator**:
 The person who owns and runs the system: sets watches, controls Auto-Refresh, and receives every notification, including system warnings. There is no multi-user model yet.
-_Avoid_: User, account, customer, admin
+_Avoid_: User, account, customer, admin (for the person; the operator's controls are the Admin view)
+
+### Surfaces
+
+**Admin view**:
+The operator-only controls for running the system: Auto-Refresh, provider credits and quota warnings. Seen on desktop while using the app. Stays with the operator when other people arrive.
+_Avoid_: Settings, dashboard, console
+
+**User view**:
+What someone placing watches sees: events, line boards, watches, notifications, and the screen a tapped notification opens. Phone-first. Today the operator is also its only user.
+_Avoid_: Client, front end, app (when you mean this surface specifically)
 
 ### Monitoring
 
