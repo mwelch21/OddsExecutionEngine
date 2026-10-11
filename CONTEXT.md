@@ -22,6 +22,14 @@ _Avoid_: Client, front end, app (when you mean this surface specifically)
 
 ### Monitoring
 
+**Event status**:
+Where a sporting event is in its life: upcoming, live, or ended.
+_Avoid_: Phase (for the event; `phase` is only a field on a live or pre-game opportunity), state
+
+**Watch window**:
+The part of an event's life in which a watch may fire: pre-game only, live only, or the full game. Every watch has one; the same target price means a different bet before and during a game.
+_Avoid_: Scope, mode, timing
+
 **Auto-Refresh**:
 The operator's on/off switch that lets the system refresh quotes on its own: each sport with an active watch it can act on is kept within about one interval of fresh. Off means refresh is manual only. Manual refresh works either way.
 _Avoid_: Session, polling, scheduler
