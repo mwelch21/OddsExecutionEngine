@@ -231,9 +231,11 @@ Planned, not yet implemented:
 
 Non-negotiable. Read before touching ingestion, the provider, or anything that refreshes.
 
-- **Refresh is manual.** No scheduler, no polling timer, no background job, no `useEffect`
-  that pulls on mount. Manual refresh is the primary limiter on API spend and stays that
-  way until testing is done. If a task seems to need automatic refresh, stop and ask.
+- **Manual refresh, plus Auto-Refresh when the operator turns it on.** Manual refresh
+  always works. Auto-Refresh is the only automatic path: an operator-controlled switch that
+  refreshes sports with actionable watches on a per-sport cooldown (ADR-016). No other
+  scheduler, timer, background job or `useEffect` may pull upstream. If a task seems to
+  need another automatic path, stop and ask.
 - **Billing is in credits, not requests:** `cost = [markets] x [regions]` per call. The
   default config (`h2h,spreads,totals` x `us`) is **3 credits per sport per call**.
 - **A deliberate refresh always pulls live.** The provider cache coalesces simultaneous

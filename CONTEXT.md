@@ -13,7 +13,7 @@ _Avoid_: User, account, customer, admin
 ### Monitoring
 
 **Auto-Refresh**:
-The operator's on/off switch that lets the system refresh quotes on its own, on an interval, for every sport with at least one active watch. Off means refresh is manual only.
+The operator's on/off switch that lets the system refresh quotes on its own: each sport with an active watch it can act on is kept within about one interval of fresh. Off means refresh is manual only. Manual refresh works either way.
 _Avoid_: Session, polling, scheduler
 
 **Notification**:

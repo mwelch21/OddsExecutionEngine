@@ -61,7 +61,7 @@
 
 ## Upstream quota and refresh
 
-- Refresh is **manual**. No scheduler, no polling timer, no background job may call a provider. Manual refresh is the primary limiter on API spend and stays that way until testing is done.
+- Refresh is **manual**, plus **Auto-Refresh** when the operator turns it on (ADR-016). Auto-Refresh is the only automatic path to a provider; no other scheduler, timer or background job may call one. Manual refresh always works, on or off.
 - The Odds API bills **credits, not requests**: `cost = [markets] x [regions]` per call. Reason about spend in credits.
 - A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
 - Per-event refresh is one call to the single-event endpoint. The sport comes from the stored event (or the provider's in-process knowledge), matched against the provider catalog; an event whose sport cannot be resolved fails loudly, never by scanning sport feeds. See ADR-012.
