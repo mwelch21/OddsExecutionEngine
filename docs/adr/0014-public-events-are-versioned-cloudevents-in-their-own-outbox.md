@@ -16,6 +16,7 @@ Public events are a separate, versioned contract, written to their own outbox.
 - **Public set.** Nothing is public by default. v1 has two types:
   - `oddsengine.opportunity.identified.v1`: `opportunity_id`, `watch_intent_id`, `event {id, sport, league, home, away, starts_at}`, `market_type`, `selection`, `line`, `target_price`, `best {sportsbook, price, quoted_at}`, `matching [{sportsbook, price}]`. `quoted_at` is the book's clock (ADR-009). A live/pre-game phase field is added as optional once event status exists.
   - `oddsengine.quota.warning.v1`: `remaining`, `used`, `floor`, `observed_at`. Emitted once per crossing below the floor, not on every refresh. This is a new domain event; there was no internal counterpart.
+  - `oddsengine.destination.test.v1`: `destination_id`, `requested_at`. Written when the operator asks for a test notification; it targets a single destination (its CloudEvents `subject` is the destination id) instead of fanning out.
 - **Rendering belongs to the channel.** The public event is pure data. The notifier renders the Web Push title, body and URL from it (the payload limit is 4 KB). A future webhook sends the event itself.
 - **Compatibility.** Adding a field keeps the version. Removing a field or changing its meaning is a new type (`.v2`), emitted alongside `.v1` for a deprecation window. Schemas live as JSON Schema files under `contracts/events/`, and Python and Go contract tests validate against them.
 

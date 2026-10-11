@@ -43,7 +43,7 @@ A kind of transport that public events leave by: Web Push today, a webhook later
 _Avoid_: Provider, transport (when naming the kind)
 
 **Destination**:
-One address on a channel: one device's push subscription, one webhook URL. The operator may have several.
+One address on a channel: one browser's push subscription, one webhook URL. The operator may have several. A destination is active or disabled, either removed by the operator or gone because the channel rejected it. A gone destination comes back only through a fresh subscription.
 _Avoid_: Subscriber, endpoint, device (a device can hold more than one destination)
 
 **Delivery**:
