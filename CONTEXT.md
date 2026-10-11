@@ -35,3 +35,17 @@ _Avoid_: Domain event (when you mean the stored record)
 **Public event**:
 A versioned event the system publishes to anything outside it (the notifier today, webhooks or an SDK later). Only explicitly chosen workflow events have a public counterpart.
 _Avoid_: External event, outbound message, notification (a notification is one channel's rendering of a public event)
+
+### Delivery
+
+**Channel**:
+A kind of transport that public events leave by: Web Push today, a webhook later.
+_Avoid_: Provider, transport (when naming the kind)
+
+**Destination**:
+One address on a channel: one device's push subscription, one webhook URL. The operator may have several.
+_Avoid_: Subscriber, endpoint, device (a device can hold more than one destination)
+
+**Delivery**:
+One public event going to one destination, with its attempts and final outcome: delivered, gone, failed or expired.
+_Avoid_: Send, dispatch (dispatch is the fan-out that creates deliveries)
