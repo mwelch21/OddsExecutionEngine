@@ -39,7 +39,7 @@ class DestinationService:
             "destination.web_push.registered",
             extra={
                 "destination_id": destination.id,
-                "created": created,
+                "is_new": created,
                 "active": destination.is_active,
             },
         )

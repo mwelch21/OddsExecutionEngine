@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import UTC, datetime
 
@@ -6,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
+from backend.app.application.destination_service import DestinationService
 from backend.app.config import Settings
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import destinations_table
@@ -57,7 +59,10 @@ def test_vapid_public_key_is_served_when_configured(sqlite_database_url: str) ->
 
 def test_vapid_public_key_is_unavailable_until_configured(sqlite_database_url: str) -> None:
     prepare_test_database(sqlite_database_url, seed_demo=False)
-    app = create_app(Settings(database_url_override=sqlite_database_url))
+    # Explicitly empty: Settings would otherwise read a developer's real .env key.
+    app = create_app(
+        Settings(database_url_override=sqlite_database_url, vapid_public_key="")
+    )
 
     response = TestClient(app).get("/push/vapid-public-key")
 
@@ -88,6 +93,22 @@ def test_subscribing_creates_one_active_destination_without_exposing_secrets(
     rows = _stored_rows(session_factory)
     assert len(rows) == 1
     assert rows[0]["config"] == {"p256dh": "p256dh-1", "auth": "auth-secret-1"}
+
+
+def test_subscribing_works_with_info_logging_enabled(
+    sqlite_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The running API logs at INFO, and a log `extra` key that collides with a
+    # LogRecord attribute raises only when the logger is live. In tests, Alembic's
+    # in-process fileConfig disables loggers that already exist, which hid exactly
+    # that crash, so the service logger is switched back on here.
+    app, _ = _build(sqlite_database_url)
+    monkeypatch.setattr(DestinationService._logger, "disabled", False)
+    monkeypatch.setattr(DestinationService._logger, "level", logging.INFO)
+
+    response = TestClient(app).post("/destinations/web-push", json=_subscription())
+
+    assert response.status_code == 201
 
 
 def test_subscribing_again_updates_the_same_destination(sqlite_database_url: str) -> None:
