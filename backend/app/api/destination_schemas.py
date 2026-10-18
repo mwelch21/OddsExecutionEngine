@@ -52,3 +52,10 @@ class DestinationResponse(BaseModel):
 
 class DestinationListResponse(BaseModel):
     destinations: list[DestinationResponse]
+
+
+class SendTestResponse(BaseModel):
+    """The test was queued. Delivery happens asynchronously via the notifier."""
+
+    public_event_id: str
+    destination_id: str

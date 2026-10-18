@@ -100,3 +100,14 @@ function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+export async function sendTestNotification(destinationId: string): Promise<void> {
+  const response = await fetch(`/destinations/${encodeURIComponent(destinationId)}/test`, {
+    method: "POST"
+  });
+  if (response.status === 429) {
+    const wait = response.headers.get("Retry-After") ?? "a few";
+    throw new Error(`Test sent recently. Try again in ${wait}s.`);
+  }
+  if (!response.ok) throw new Error(`Test failed: ${response.status}`);
+}

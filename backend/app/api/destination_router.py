@@ -4,9 +4,15 @@ from backend.app.api.destination_schemas import (
     DestinationListResponse,
     DestinationResponse,
     RegisterWebPushRequest,
+    SendTestResponse,
     VapidPublicKeyResponse,
 )
-from backend.app.application.destination_service import DestinationService
+from backend.app.application.destination_service import (
+    DestinationInactiveError,
+    DestinationNotFoundError,
+    DestinationService,
+    SendTestRateLimitedError,
+)
 from backend.app.domain.destinations import WebPushKeys
 
 
@@ -42,6 +48,28 @@ def create_destination_router(
             destinations=[
                 DestinationResponse.from_domain(d) for d in service.list_destinations()
             ]
+        )
+
+    @router.post(
+        "/destinations/{destination_id}/test",
+        response_model=SendTestResponse,
+        status_code=202,
+    )
+    def send_test(destination_id: str) -> SendTestResponse:
+        try:
+            event = service.send_test(destination_id)
+        except DestinationNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except DestinationInactiveError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SendTestRateLimitedError as error:
+            raise HTTPException(
+                status_code=429,
+                detail=str(error),
+                headers={"Retry-After": str(error.retry_after_seconds)},
+            ) from error
+        return SendTestResponse(
+            public_event_id=event.id, destination_id=destination_id
         )
 
     return router

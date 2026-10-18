@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { BellOff, BellRing } from "lucide-react";
+import { BellOff, BellRing, Send } from "lucide-react";
 import {
   currentSubscriptionEndpoint,
   enablePush,
   listDestinations,
-  pushSupport
+  pushSupport,
+  sendTestNotification
 } from "../lib/push";
 import { Button, Pill } from "./primitives";
 
@@ -18,6 +19,8 @@ export function PushToggle() {
   const support = pushSupport();
   const [state, setState] = useState<PushState>("checking");
   const [detail, setDetail] = useState("");
+  const [destinationId, setDestinationId] = useState<string | null>(null);
+  const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
   useEffect(() => {
     if (support !== "supported") return;
@@ -26,8 +29,12 @@ export function PushToggle() {
       .then(([endpoint, destinations]) => {
         if (cancelled) return;
         const mine = destinations.find((destination) => destination.address === endpoint);
-        if (!endpoint || !mine) setState("off");
-        else setState(mine.active ? "on" : "disabled");
+        if (!endpoint || !mine) {
+          setState("off");
+          return;
+        }
+        setDestinationId(mine.id);
+        setState(mine.active ? "on" : "disabled");
       })
       .catch(() => {
         if (!cancelled) setState("off");
@@ -53,12 +60,42 @@ export function PushToggle() {
       </Pill>
     );
   }
+  async function handleTest() {
+    if (!destinationId) return;
+    setTestState("sending");
+    setDetail("");
+    try {
+      await sendTestNotification(destinationId);
+      setTestState("sent");
+    } catch (error: unknown) {
+      setTestState("error");
+      setDetail(error instanceof Error ? error.message : "Test failed");
+    }
+  }
+
   if (state === "on") {
     return (
-      <Pill tone="good">
-        <BellRing size={14} />
-        Notifications on
-      </Pill>
+      <>
+        <Pill tone="good">
+          <BellRing size={14} />
+          Notifications on
+        </Pill>
+        <Button
+          variant="ghost"
+          onClick={handleTest}
+          disabled={!destinationId || testState === "sending"}
+          title={detail || "Sends one push to this device through the notifier"}
+        >
+          <Send size={14} />
+          {testState === "sending"
+            ? "Sending…"
+            : testState === "sent"
+              ? "Test sent"
+              : testState === "error"
+                ? "Retry test"
+                : "Send test"}
+        </Button>
+      </>
     );
   }
   if (state === "disabled") {
@@ -75,6 +112,7 @@ export function PushToggle() {
     setDetail("");
     try {
       const destination = await enablePush();
+      setDestinationId(destination.id);
       setState(destination.active ? "on" : "disabled");
     } catch (error: unknown) {
       setState("error");

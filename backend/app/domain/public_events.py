@@ -17,6 +17,7 @@ from backend.app.domain.models import MarketType, Opportunity
 
 PUBLIC_EVENT_SOURCE = "/oddsengine"
 OPPORTUNITY_IDENTIFIED_V1 = "oddsengine.opportunity.identified.v1"
+DESTINATION_TEST_V1 = "oddsengine.destination.test.v1"
 _SCHEMA_BASE_URL = (
     "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events"
 )
@@ -158,6 +159,26 @@ def build_opportunity_identified_public_event(
                 for quote in opportunity.matching_quotes
             ],
         ),
+    )
+
+
+def build_destination_test_public_event(*, destination_id: str) -> PublicEvent:
+    """A test notification aimed at exactly one destination, named by `subject`.
+
+    It goes through the same outbox, claim and send path as any other event, so a
+    test that arrives proves the whole pipeline for that device.
+    """
+    requested_at = datetime.now(UTC)
+    return PublicEvent(
+        id=str(uuid4()),
+        type=DESTINATION_TEST_V1,
+        time=requested_at,
+        subject=destination_id,
+        dataschema=_dataschema(DESTINATION_TEST_V1),
+        data={
+            "destination_id": destination_id,
+            "requested_at": requested_at.isoformat(),
+        },
     )
 
 

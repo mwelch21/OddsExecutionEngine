@@ -318,3 +318,13 @@ def test_postgres_public_event_insert_notifies_listeners_after_commit() -> None:
         assert notifications[0].channel == NOTIFY_CHANNEL
     finally:
         session_factory.engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "example",
+    sorted((CONTRACTS_DIR / "examples").glob("*.json")),
+    ids=lambda path: path.stem,
+)
+def test_contract_examples_validate_against_their_schema(example: Path) -> None:
+    # Go decodes these same examples; both sides agreeing on them is the contract.
+    _validator(example.stem).validate(json.loads(example.read_text()))

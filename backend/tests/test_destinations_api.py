@@ -1,21 +1,29 @@
+import json
 import logging
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 from sqlalchemy import select, update
 
 from backend.app.application.destination_service import DestinationService
 from backend.app.config import Settings
+from backend.app.domain.public_events import DESTINATION_TEST_V1
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
-from backend.app.infrastructure.persistence.schema import destinations_table
+from backend.app.infrastructure.persistence.schema import (
+    destinations_table,
+    public_events_table,
+)
 from backend.app.main import create_app
 from backend.tests.db_helpers import prepare_test_database
 
 ENDPOINT = "https://web.push.apple.com/QFakeSubscriptionToken"
 PUBLIC_KEY = "BPublicKeyForTests"
+CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts" / "events"
 
 
 def _build(
@@ -192,3 +200,60 @@ def test_postgres_subscription_is_idempotent_on_its_endpoint() -> None:
         assert len(_stored_rows(session_factory)) == 1
     finally:
         session_factory.engine.dispose()
+
+
+def test_send_test_queues_one_targeted_public_event(sqlite_database_url: str) -> None:
+    app, session_factory = _build(sqlite_database_url)
+    client = TestClient(app)
+    destination_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+
+    response = client.post(f"/destinations/{destination_id}/test")
+
+    assert response.status_code == 202
+    with session_factory.create_session() as session:
+        rows = session.execute(select(public_events_table)).mappings().all()
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert rows[0]["id"] == response.json()["public_event_id"]
+    assert payload["type"] == DESTINATION_TEST_V1
+    assert payload["subject"] == destination_id
+    schema = json.loads((CONTRACTS_DIR / f"{DESTINATION_TEST_V1}.json").read_text())
+    Draft202012Validator(
+        schema, format_checker=Draft202012Validator.FORMAT_CHECKER
+    ).validate(payload)
+
+
+def test_send_test_is_rate_limited_per_destination(sqlite_database_url: str) -> None:
+    app, _ = _build(sqlite_database_url)
+    client = TestClient(app)
+    first_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    second_id = client.post(
+        "/destinations/web-push",
+        json=_subscription(endpoint="https://fcm.googleapis.com/other-device"),
+    ).json()["id"]
+
+    assert client.post(f"/destinations/{first_id}/test").status_code == 202
+    limited = client.post(f"/destinations/{first_id}/test")
+    other_device = client.post(f"/destinations/{second_id}/test")
+
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) >= 1
+    assert other_device.status_code == 202
+
+
+def test_send_test_rejects_unknown_and_disabled_destinations(
+    sqlite_database_url: str,
+) -> None:
+    app, session_factory = _build(sqlite_database_url)
+    client = TestClient(app)
+    destination_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    with session_factory.create_session() as session:
+        session.execute(
+            update(destinations_table)
+            .where(destinations_table.c.id == destination_id)
+            .values(disabled_at=datetime.now(UTC), disabled_reason="gone")
+        )
+        session.commit()
+
+    assert client.post("/destinations/missing/test").status_code == 404
+    assert client.post(f"/destinations/{destination_id}/test").status_code == 409
