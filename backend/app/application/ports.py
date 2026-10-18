@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Protocol, Self
 
+from backend.app.domain.destinations import Destination, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventFilter,
@@ -202,3 +203,30 @@ class EventReadUnitOfWork(Protocol):
 
 class EventReadUnitOfWorkFactory(Protocol):
     def __call__(self) -> EventReadUnitOfWork: ...
+
+
+class DestinationUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def get_web_push_destination(self, address: str) -> Destination | None: ...
+
+    def create_web_push_destination(
+        self, address: str, keys: WebPushKeys, label: str
+    ) -> Destination: ...
+
+    def refresh_web_push_destination(
+        self, destination_id: str, keys: WebPushKeys, reactivate: bool
+    ) -> Destination: ...
+
+    def list_destinations(self) -> list[Destination]: ...
+
+
+class DestinationUnitOfWorkFactory(Protocol):
+    def __call__(self) -> DestinationUnitOfWork: ...

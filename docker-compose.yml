@@ -29,6 +29,9 @@ services:
       ODDS_API_MARKETS: ${ODDS_API_MARKETS:-h2h,spreads,totals}
       OPPORTUNITY_TTL_MINUTES: ${OPPORTUNITY_TTL_MINUTES:-720}
       PROVIDER_CACHE_TTL_SECONDS: ${PROVIDER_CACHE_TTL_SECONDS:-300}
+      # Public key only. VAPID_PRIVATE_KEY must never be listed here: only the
+      # notifier receives it.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
     ports:
       - "${APP_PORT:-8000}:8000"
   frontend:

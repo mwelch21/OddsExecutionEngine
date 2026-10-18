@@ -9,6 +9,7 @@ from backend.app.domain.models import Quote
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
+    destinations_table,
     event_participants_table,
     events_table,
     execution_recommendations_table,
@@ -44,6 +45,7 @@ def seed_demo_quotes(session_factory: DatabaseSessionFactory) -> None:
 def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None:
     with session_factory.create_session() as session:
         for table in (
+            destinations_table,
             public_events_table,
             opportunities_table,
             watch_intents_table,

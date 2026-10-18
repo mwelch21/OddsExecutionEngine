@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -219,6 +219,12 @@ Monitoring:
 - `DELETE /watch-intents/{id}` (409 if the watch already `triggered`)
 - `GET /opportunities` (optional `event_id` filter)
 - `GET /opportunities/{id}`
+
+Notifications:
+
+- `GET /push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
+- `POST /destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
+- `GET /destinations` (safe fields and status; channel secrets are never returned)
 
 Dev only:
 
