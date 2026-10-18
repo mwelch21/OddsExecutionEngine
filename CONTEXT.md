@@ -8,12 +8,30 @@ Answers whether a target price is fillable across sportsbooks right now, where t
 
 **Operator**:
 The person who owns and runs the system: sets watches, controls Auto-Refresh, and receives every notification, including system warnings. There is no multi-user model yet.
-_Avoid_: User, account, customer, admin
+_Avoid_: User, account, customer, admin (for the person; the operator's controls are the Admin view)
+
+### Surfaces
+
+**Admin view**:
+The operator-only controls for running the system: Auto-Refresh, provider credits and quota warnings. Seen on desktop while using the app. Stays with the operator when other people arrive.
+_Avoid_: Settings, dashboard, console
+
+**User view**:
+What someone placing watches sees: events, line boards, watches, notifications, and the screen a tapped notification opens. Phone-first. Today the operator is also its only user.
+_Avoid_: Client, front end, app (when you mean this surface specifically)
 
 ### Monitoring
 
+**Event status**:
+Where a sporting event is in its life: upcoming, live, or ended.
+_Avoid_: Phase (for the event; `phase` is only a field on a live or pre-game opportunity), state
+
+**Watch window**:
+The part of an event's life in which a watch may fire: pre-game only, live only, or the full game. Every watch has one; the same target price means a different bet before and during a game.
+_Avoid_: Scope, mode, timing
+
 **Auto-Refresh**:
-The operator's on/off switch that lets the system refresh quotes on its own, on an interval, for every sport with at least one active watch. Off means refresh is manual only.
+The operator's on/off switch that lets the system refresh quotes on its own: each sport with an active watch it can act on is kept within about one interval of fresh. Off means refresh is manual only. Manual refresh works either way.
 _Avoid_: Session, polling, scheduler
 
 **Notification**:
@@ -25,3 +43,27 @@ The notification for one `OpportunityIdentified`: selection, best price and book
 
 **Quota warning**:
 The notification sent when remaining provider credits fall below a floor. Informs only; it does not switch Auto-Refresh off.
+
+### Events
+
+**Workflow event**:
+An internal record of something that happened in a workflow, kept for audit. Never seen outside the system.
+_Avoid_: Domain event (when you mean the stored record)
+
+**Public event**:
+A versioned event the system publishes to anything outside it (the notifier today, webhooks or an SDK later). Only explicitly chosen workflow events have a public counterpart.
+_Avoid_: External event, outbound message, notification (a notification is one channel's rendering of a public event)
+
+### Delivery
+
+**Channel**:
+A kind of transport that public events leave by: Web Push today, a webhook later.
+_Avoid_: Provider, transport (when naming the kind)
+
+**Destination**:
+One address on a channel: one browser's push subscription, one webhook URL. The operator may have several. A destination is active or disabled, either removed by the operator or gone because the channel rejected it. A gone destination comes back only through a fresh subscription.
+_Avoid_: Subscriber, endpoint, device (a device can hold more than one destination)
+
+**Delivery**:
+One public event going to one destination, with its attempts and final outcome: delivered, gone, failed or expired.
+_Avoid_: Send, dispatch (dispatch is the fan-out that creates deliveries)

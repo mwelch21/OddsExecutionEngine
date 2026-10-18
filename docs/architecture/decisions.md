@@ -15,3 +15,7 @@ ADRs live one per file in [`docs/adr/`](../adr/), numbered `NNNN-slug.md`. Add a
 - [ADR-011: A deliberate refresh always pulls live; the cache only collapses simultaneity](../adr/0011-a-deliberate-refresh-always-pulls-live-the-cache-only-collap.md)
 - [ADR-012: Per-event refresh is one single-event call, its sport resolved from what we already store](../adr/0012-per-event-refresh-is-one-single-event-call-its-sport-resolve.md)
 - [ADR-013: Notification delivery is a Go service reading the Postgres outbox](../adr/0013-notification-delivery-is-a-go-service-reading-the-postgres-outbox.md)
+- [ADR-014: Public events are versioned CloudEvents in their own outbox](../adr/0014-public-events-are-versioned-cloudevents-in-their-own-outbox.md)
+- [ADR-015: Public events fan out into independently retryable deliveries](../adr/0015-public-events-fan-out-into-independently-retryable-deliveries.md)
+- [ADR-016: Auto-Refresh is the only automatic refresh path](../adr/0016-auto-refresh-is-the-only-automatic-refresh-path.md)
+- [ADR-017: A watch has an explicit window across the event lifecycle](../adr/0017-a-watch-has-an-explicit-window-across-the-event-lifecycle.md)

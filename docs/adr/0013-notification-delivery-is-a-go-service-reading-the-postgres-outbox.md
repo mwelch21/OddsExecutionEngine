@@ -14,7 +14,7 @@ The standing anti-goal was "no premature microservices". That phrase reads as "n
 Notification delivery runs as a separate **notifier** service, written in **Go**, in this repo under `services/notifier/`.
 
 - **Scope.** The notifier is an internal delivery worker. It reads the outbox, renders the public event, sends Web Push, and records the outcome. It exposes no public API beyond a health check. The Python API stays the single public API surface (API parity).
-- **Transport.** The notifier reads `workflow_events` from the shared Postgres. `LISTEN/NOTIFY` wakes it rather than a polling timer. Read, claim and acknowledge semantics are decided separately (the outbox-consumption ticket).
+- **Transport.** The notifier reads the public outbox from the shared Postgres (amended by ADR-014; it never reads `workflow_events`). `LISTEN/NOTIFY` wakes it rather than a polling timer. Read, claim and acknowledge semantics are decided separately (the outbox-consumption ticket).
 - **Schema.** Alembic remains the only schema owner, including tables only the notifier uses. The Go service never migrates.
 - **Contract.** The public event schema is pinned by a contract test both languages run, so the Python producer and the Go consumer cannot drift.
 - **Runtime.** It is a `notifier` service in compose (started by `just up`), configured from the shared `.env` (database URL, VAPID keys). CI runs `go vet`, `golangci-lint` and `go test` against migrated Postgres.
