@@ -17,6 +17,7 @@ from backend.app.infrastructure.persistence.schema import (
     markets_table,
     opportunities_table,
     order_intents_table,
+    public_events_table,
     watch_intents_table,
     workflow_events_table,
 )
@@ -43,6 +44,7 @@ def seed_demo_quotes(session_factory: DatabaseSessionFactory) -> None:
 def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None:
     with session_factory.create_session() as session:
         for table in (
+            public_events_table,
             opportunities_table,
             watch_intents_table,
             workflow_events_table,

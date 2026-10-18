@@ -10,6 +10,11 @@ from backend.app.domain.models import (
     WatchIntent,
     WatchStatus,
 )
+from backend.app.domain.public_events import (
+    OPPORTUNITY_IDENTIFIED_V1,
+    OpportunityEventContext,
+    PublicEvent,
+)
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.recommendation_engine import RecommendationEngine
@@ -34,6 +39,8 @@ class RecordingWatchIntentUnitOfWork:
         self._starts_at = starts_at
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
+        self._staged_public_events: list[PublicEvent] = []
+        self.committed_public_events: tuple[PublicEvent, ...] = ()
         self.created_batches: list[list[Opportunity]] = []
 
         self.expired_ids: list[str] = []
@@ -53,9 +60,12 @@ class RecordingWatchIntentUnitOfWork:
     ) -> None:
         if exc_type is None:
             self._committed_events = tuple(self._staged_events)
+            self.committed_public_events = tuple(self._staged_public_events)
         else:
             self._committed_events = ()
+            self.committed_public_events = ()
         self._staged_events = []
+        self._staged_public_events = []
 
     def create_watch_intent(
         self,
@@ -157,8 +167,16 @@ class RecordingWatchIntentUnitOfWork:
     def get_event_starts_at(self, event_external_id: str) -> datetime | None:
         return self._starts_at
 
+    def get_opportunity_event_context(
+        self, opportunity: Opportunity
+    ) -> OpportunityEventContext:
+        return OpportunityEventContext(sport="basketball_nba", home="Celtics", away="Knicks")
+
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)
+
+    def stage_public_event(self, event: PublicEvent) -> None:
+        self._staged_public_events.append(event)
 
     @property
     def committed_events(self) -> tuple[WorkflowEvent, ...]:
@@ -273,6 +291,11 @@ def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
     ]
     assert len(identified) == 1
     assert uow.triggered_ids == ["wi-1"]
+    assert [event.type for event in uow.committed_public_events] == [
+        OPPORTUNITY_IDENTIFIED_V1
+    ]
+    assert uow.committed_public_events[0].data["opportunity_id"] == "opp-1"
+    assert len(uow.committed_public_events[0].data["matching"]) == 3
 
 
 def test_evaluate_for_event_does_not_re_evaluate_a_triggered_watch() -> None:
@@ -338,6 +361,7 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
 
     assert result == []
     assert publisher.published_events == []
+    assert uow.committed_public_events == ()
     assert uow.triggered_ids == []
     assert [opp.id for opp in uow.created_batches[0]] == ["opp-1"]
 
