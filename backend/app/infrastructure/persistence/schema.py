@@ -152,3 +152,16 @@ workflow_events_table = Table(
     Column("occurred_at", DateTime(timezone=True), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
+
+# The public outbox (ADR-014, ADR-015). Each row is one CloudEvents envelope, written
+# in the same transaction as the domain change it describes. `dispatched_at` is set by
+# the notifier once fan-out into deliveries is complete; Python never sets it.
+public_events_table = Table(
+    "public_events",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("type", String(length=128), nullable=False),
+    Column("payload", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("dispatched_at", DateTime(timezone=True), nullable=True),
+)

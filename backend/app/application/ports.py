@@ -19,6 +19,7 @@ from backend.app.domain.models import (
     WatchIntent,
     WatchStatus,
 )
+from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 
 
 class RecommendationUnitOfWork(Protocol):
@@ -156,7 +157,13 @@ class WatchIntentUnitOfWork(Protocol):
 
     def get_event_starts_at(self, event_external_id: str) -> datetime | None: ...
 
+    def get_opportunity_event_context(
+        self, opportunity: Opportunity
+    ) -> OpportunityEventContext: ...
+
     def stage_event(self, event: WorkflowEvent) -> None: ...
+
+    def stage_public_event(self, event: PublicEvent) -> None: ...
 
     @property
     def committed_events(self) -> tuple[WorkflowEvent, ...]: ...
