@@ -204,6 +204,21 @@ def test_payload_serializes_fully_when_held_as_the_generic_bound(
     assert rewrapped.to_cloudevent() == typed.to_cloudevent()
 
 
+def test_bare_public_event_is_rejected_with_a_clear_message(
+    opportunity: Opportunity,
+) -> None:
+    payload = build_opportunity_identified_public_event(
+        opportunity=opportunity, context=OpportunityEventContext()
+    ).to_cloudevent()
+
+    with pytest.raises(TypeError, match="must be parametrized"):
+        PublicEvent(**payload)
+    with pytest.raises(TypeError, match="must be parametrized"):
+        PublicEvent.model_validate(payload)
+    # Parametrized at the bound is fine: that is how staging ports hold events.
+    assert PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload).id == payload["id"]
+
+
 def test_triggered_watch_writes_one_public_event_matching_the_contract(
     sqlite_database_url: str,
 ) -> None:
