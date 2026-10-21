@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Generic, TypeVar
 from uuid import uuid4
 
-from pydantic import Field, PlainSerializer, SerializeAsAny
+from pydantic import Field, PlainSerializer, SerializeAsAny, model_validator
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import MarketType, Opportunity
@@ -52,6 +52,19 @@ class PublicEvent(DomainModel, Generic[PayloadT]):
     subject: str | None = None
     dataschema: str
     data: SerializeAsAny[PayloadT]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _require_payload_type(cls, values: Any) -> Any:
+        # mypy reads a bare PublicEvent as PublicEvent[Any] and lets it through;
+        # fail here, at the call site, with the fix in the message, instead of
+        # with a ValidationError about every field of `data`.
+        if not cls.__pydantic_generic_metadata__["args"]:
+            raise TypeError(
+                "PublicEvent must be parametrized with its payload model, "
+                "e.g. PublicEvent[OpportunityIdentifiedDataV1](...)"
+            )
+        return values
 
     def to_cloudevent(self) -> dict[str, Any]:
         """The structured-mode JSON form. Unset optional attributes are absent, not null;
