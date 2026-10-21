@@ -1,12 +1,13 @@
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 from jsonschema import Draft202012Validator
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from backend.app.application.watch_intent_service import WatchIntentService
@@ -14,6 +15,8 @@ from backend.app.domain.models import MarketType, MatchingQuote, Opportunity
 from backend.app.domain.public_events import (
     OPPORTUNITY_IDENTIFIED_V1,
     OpportunityEventContext,
+    OpportunityIdentifiedDataV1,
+    PublicEvent,
     build_opportunity_identified_public_event,
 )
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
@@ -77,21 +80,26 @@ def _create_fillable_watch(service: WatchIntentService) -> str:
     return result.opportunity.id
 
 
-def test_built_event_with_unknown_context_still_validates() -> None:
+@pytest.fixture
+def opportunity() -> Opportunity:
+    return Opportunity(
+        id="opp-1",
+        watch_intent_id="wi-1",
+        event_id="event-1",
+        market_id="market-1",
+        market_type=MarketType.TOTAL,
+        selection="over",
+        line=221.5,
+        target_price=-110,
+        best_sportsbook="FanDuel",
+        best_price=-105,
+        matching_quotes=[MatchingQuote(sportsbook="FanDuel", price=-105)],
+    )
+
+
+def test_built_event_with_unknown_context_still_validates(opportunity: Opportunity) -> None:
     event = build_opportunity_identified_public_event(
-        opportunity=Opportunity(
-            id="opp-1",
-            watch_intent_id="wi-1",
-            event_id="event-1",
-            market_id="market-1",
-            market_type=MarketType.TOTAL,
-            selection="over",
-            line=221.5,
-            target_price=-110,
-            best_sportsbook="FanDuel",
-            best_price=-105,
-            matching_quotes=[MatchingQuote(sportsbook="FanDuel", price=-105)],
-        ),
+        opportunity=opportunity,
         context=OpportunityEventContext(),
     )
 
@@ -100,6 +108,86 @@ def test_built_event_with_unknown_context_still_validates() -> None:
     _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
     assert payload["data"]["best"]["quoted_at"] is None
     assert payload["data"]["event"]["home"] is None
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        datetime(2026, 10, 18, 15, 30),
+        datetime(2026, 10, 18, 15, 30, tzinfo=UTC),
+        datetime(2026, 10, 18, 15, 30, tzinfo=timezone(timedelta(hours=-4))),
+    ],
+)
+def test_typed_payload_preserves_wire_shape_and_timestamps(
+    opportunity: Opportunity,
+    timestamp: datetime,
+) -> None:
+    event = build_opportunity_identified_public_event(
+        opportunity=opportunity,
+        context=OpportunityEventContext(
+            sport="basketball",
+            league="NBA",
+            home="Celtics",
+            away="Knicks",
+            starts_at=timestamp,
+            best_quoted_at=timestamp,
+        ),
+    )
+
+    assert event.data.opportunity_id == opportunity.id
+    assert event.data.market_type is MarketType.TOTAL
+    assert event.data.best.quoted_at == timestamp
+    expected_time = (timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=UTC)).isoformat()
+    payload = event.to_cloudevent()
+    assert payload["data"] == {
+        "opportunity_id": "opp-1",
+        "watch_intent_id": "wi-1",
+        "event": {
+            "id": "event-1",
+            "sport": "basketball",
+            "league": "NBA",
+            "home": "Celtics",
+            "away": "Knicks",
+            "starts_at": expected_time,
+        },
+        "market_type": "total",
+        "selection": "over",
+        "line": 221.5,
+        "target_price": -110,
+        "best": {"sportsbook": "FanDuel", "price": -105, "quoted_at": expected_time},
+        "matching": [{"sportsbook": "FanDuel", "price": -105}],
+    }
+    _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
+    restored = PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload)
+    assert restored.to_cloudevent() == payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("opportunity_id", ""),
+        ("market_type", "unknown"),
+        ("target_price", "not odds"),
+        ("matching", []),
+        ("matching", [{"sportsbook": "FanDuel"}]),
+        ("best", {"sportsbook": "FanDuel", "price": -105, "quoted_at": None, "typo": 1}),
+        ("typo", "extra field"),
+    ],
+)
+def test_typed_payload_rejects_invalid_contract_data(
+    opportunity: Opportunity,
+    field: str,
+    value: Any,
+) -> None:
+    event = build_opportunity_identified_public_event(
+        opportunity=opportunity,
+        context=OpportunityEventContext(),
+    )
+    payload = event.to_cloudevent()
+    payload["data"][field] = value
+
+    with pytest.raises(ValidationError):
+        PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload)
 
 
 def test_triggered_watch_writes_one_public_event_matching_the_contract(

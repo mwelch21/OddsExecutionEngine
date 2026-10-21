@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Protocol, Self
 
+from backend.app.domain.base import DomainModel
 from backend.app.domain.destinations import Destination, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
@@ -164,7 +165,7 @@ class WatchIntentUnitOfWork(Protocol):
 
     def stage_event(self, event: WorkflowEvent) -> None: ...
 
-    def stage_public_event(self, event: PublicEvent) -> None: ...
+    def stage_public_event(self, event: PublicEvent[DomainModel]) -> None: ...
 
     @property
     def committed_events(self) -> tuple[WorkflowEvent, ...]: ...
