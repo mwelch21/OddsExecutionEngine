@@ -108,6 +108,17 @@ class OpportunityIdentifiedDataV1(DomainModel):
     matching: list[BookPriceV1] = Field(min_length=1)
 
 
+class DestinationTestDataV1(DomainModel):
+    """Producer-side model for the destination.test.v1 data contract."""
+
+    destination_id: str = Field(min_length=1)
+    requested_at: datetime
+
+    @field_serializer("requested_at", when_used="json")
+    def serialize_requested_at(self, value: datetime) -> str | None:
+        return _iso(value)
+
+
 class OpportunityEventContext(DomainModel):
     """What a consumer needs to render an opportunity without a further lookup.
 
@@ -162,23 +173,25 @@ def build_opportunity_identified_public_event(
     )
 
 
-def build_destination_test_public_event(*, destination_id: str) -> PublicEvent:
+def build_destination_test_public_event(
+    *, destination_id: str
+) -> PublicEvent[DestinationTestDataV1]:
     """A test notification aimed at exactly one destination, named by `subject`.
 
     It goes through the same outbox, claim and send path as any other event, so a
     test that arrives proves the whole pipeline for that device.
     """
     requested_at = datetime.now(UTC)
-    return PublicEvent(
+    return PublicEvent[DestinationTestDataV1](
         id=str(uuid4()),
         type=DESTINATION_TEST_V1,
         time=requested_at,
         subject=destination_id,
         dataschema=_dataschema(DESTINATION_TEST_V1),
-        data={
-            "destination_id": destination_id,
-            "requested_at": requested_at.isoformat(),
-        },
+        data=DestinationTestDataV1(
+            destination_id=destination_id,
+            requested_at=requested_at,
+        ),
     )
 
 

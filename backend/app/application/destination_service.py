@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 
 from backend.app.application.ports import DestinationUnitOfWorkFactory
 from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
-from backend.app.domain.public_events import PublicEvent, build_destination_test_public_event
+from backend.app.domain.public_events import (
+    DestinationTestDataV1,
+    PublicEvent,
+    build_destination_test_public_event,
+)
 
 # One test per destination per window. A test is a real push through the real
 # pipeline, so a held-down button must not become a burst at the push service.
@@ -73,7 +77,7 @@ class DestinationService:
         with self._unit_of_work_factory() as uow:
             return uow.list_destinations()
 
-    def send_test(self, destination_id: str) -> PublicEvent:
+    def send_test(self, destination_id: str) -> PublicEvent[DestinationTestDataV1]:
         """Queue a test notification for one destination.
 
         This only writes `destination.test.v1` to the public outbox. The notifier

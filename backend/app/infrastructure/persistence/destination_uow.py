@@ -4,6 +4,7 @@ from uuid import uuid4
 from sqlalchemy import RowMapping, func, insert, select, update
 from sqlalchemy.orm import Session
 
+from backend.app.domain.base import DomainModel
 from backend.app.domain.destinations import (
     Channel,
     Destination,
@@ -112,7 +113,7 @@ class SqlAlchemyDestinationUnitOfWork:
             )
         ).scalar_one_or_none()
 
-    def add_public_event(self, event: PublicEvent) -> None:
+    def add_public_event(self, event: PublicEvent[DomainModel]) -> None:
         self._require_session().execute(
             insert(public_events_table).values(
                 id=event.id,

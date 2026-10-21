@@ -14,10 +14,13 @@ from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import MarketType, MatchingQuote, Opportunity
 from backend.app.domain.public_events import (
+    DESTINATION_TEST_V1,
     OPPORTUNITY_IDENTIFIED_V1,
+    DestinationTestDataV1,
     OpportunityEventContext,
     OpportunityIdentifiedDataV1,
     PublicEvent,
+    build_destination_test_public_event,
     build_opportunity_identified_public_event,
 )
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
@@ -328,3 +331,29 @@ def test_postgres_public_event_insert_notifies_listeners_after_commit() -> None:
 def test_contract_examples_validate_against_their_schema(example: Path) -> None:
     # Go decodes these same examples; both sides agreeing on them is the contract.
     _validator(example.stem).validate(json.loads(example.read_text()))
+
+
+def test_destination_test_payload_is_typed_and_round_trips() -> None:
+    event = build_destination_test_public_event(destination_id="dest-1")
+
+    assert isinstance(event.data, DestinationTestDataV1)
+    payload = event.to_cloudevent()
+    _validator(DESTINATION_TEST_V1).validate(payload)
+    assert payload["subject"] == payload["data"]["destination_id"] == "dest-1"
+    assert datetime.fromisoformat(payload["data"]["requested_at"]).tzinfo is not None
+    restored = PublicEvent[DestinationTestDataV1].model_validate(payload)
+    assert restored.to_cloudevent() == payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("destination_id", ""), ("requested_at", "not a time"), ("typo", "extra field")],
+)
+def test_destination_test_payload_rejects_invalid_contract_data(
+    field: str, value: Any
+) -> None:
+    payload = build_destination_test_public_event(destination_id="dest-1").to_cloudevent()
+    payload["data"][field] = value
+
+    with pytest.raises(ValidationError):
+        PublicEvent[DestinationTestDataV1].model_validate(payload)
