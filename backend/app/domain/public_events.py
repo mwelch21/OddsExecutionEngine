@@ -7,10 +7,10 @@ Nothing is public by default; each type here is a deliberate choice.
 """
 
 from datetime import UTC, datetime
-from typing import Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 from uuid import uuid4
 
-from pydantic import Field, field_serializer
+from pydantic import Field, PlainSerializer, SerializeAsAny
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import MarketType, Opportunity
@@ -22,14 +22,26 @@ _SCHEMA_BASE_URL = (
 )
 
 
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    aware = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return aware.isoformat()
+
+
+# A timestamp on the wire: ISO 8601 with an offset, a naive value read as UTC.
+UtcIso = Annotated[datetime, PlainSerializer(_iso, return_type=str, when_used="json")]
+
 PayloadT = TypeVar("PayloadT", bound=DomainModel, covariant=True)
 
 
 class PublicEvent(DomainModel, Generic[PayloadT]):
-    """Keep payloads typed until serialization into the public outbox.
+    """A CloudEvents 1.0 envelope, stored whole in the public outbox.
 
-    Concrete builders specify their payload model. Shared staging ports accept
-    PublicEvent[DomainModel] so new event types need no persistence changes.
+    The payload stays typed until serialization: concrete builders specify their
+    payload model, and shared staging ports accept PublicEvent[DomainModel] so new
+    event types need no persistence changes. Always parametrize it; a bare
+    PublicEvent validates `data` against DomainModel and rejects every field.
     """
 
     id: str
@@ -39,7 +51,7 @@ class PublicEvent(DomainModel, Generic[PayloadT]):
     time: datetime
     subject: str | None = None
     dataschema: str
-    data: PayloadT
+    data: SerializeAsAny[PayloadT]
 
     def to_cloudevent(self) -> dict[str, Any]:
         """The structured-mode JSON form. Unset optional attributes are absent, not null;
@@ -56,11 +68,7 @@ class OpportunityEventDetailsV1(DomainModel):
     league: str | None
     home: str | None
     away: str | None
-    starts_at: datetime | None
-
-    @field_serializer("starts_at", when_used="json")
-    def serialize_starts_at(self, value: datetime | None) -> str | None:
-        return _iso(value)
+    starts_at: UtcIso | None
 
 
 class BookPriceV1(DomainModel):
@@ -69,11 +77,7 @@ class BookPriceV1(DomainModel):
 
 
 class BestBookPriceV1(BookPriceV1):
-    quoted_at: datetime | None
-
-    @field_serializer("quoted_at", when_used="json")
-    def serialize_quoted_at(self, value: datetime | None) -> str | None:
-        return _iso(value)
+    quoted_at: UtcIso | None
 
 
 class OpportunityIdentifiedDataV1(DomainModel):
@@ -146,10 +150,3 @@ def build_opportunity_identified_public_event(
 
 def _dataschema(event_type: str) -> str:
     return f"{_SCHEMA_BASE_URL}/{event_type}.json"
-
-
-def _iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    aware = value if value.tzinfo else value.replace(tzinfo=UTC)
-    return aware.isoformat()

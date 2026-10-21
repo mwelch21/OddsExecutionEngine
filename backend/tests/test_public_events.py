@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from backend.app.application.watch_intent_service import WatchIntentService
+from backend.app.domain.base import DomainModel
 from backend.app.domain.models import MarketType, MatchingQuote, Opportunity
 from backend.app.domain.public_events import (
     OPPORTUNITY_IDENTIFIED_V1,
@@ -188,6 +189,19 @@ def test_typed_payload_rejects_invalid_contract_data(
 
     with pytest.raises(ValidationError):
         PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload)
+
+
+def test_payload_serializes_fully_when_held_as_the_generic_bound(
+    opportunity: Opportunity,
+) -> None:
+    # Staging ports hold PublicEvent[DomainModel]. Serialization must follow the
+    # payload's runtime type, or an event re-wrapped at the bound would dump `{}`.
+    typed = build_opportunity_identified_public_event(
+        opportunity=opportunity, context=OpportunityEventContext()
+    )
+    rewrapped = PublicEvent[DomainModel](**typed.model_dump(exclude={"data"}), data=typed.data)
+
+    assert rewrapped.to_cloudevent() == typed.to_cloudevent()
 
 
 def test_triggered_watch_writes_one_public_event_matching_the_contract(
