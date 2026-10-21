@@ -112,11 +112,7 @@ class DestinationTestDataV1(DomainModel):
     """Producer-side model for the destination.test.v1 data contract."""
 
     destination_id: str = Field(min_length=1)
-    requested_at: datetime
-
-    @field_serializer("requested_at", when_used="json")
-    def serialize_requested_at(self, value: datetime) -> str | None:
-        return _iso(value)
+    requested_at: UtcIso
 
 
 class OpportunityEventContext(DomainModel):
