@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     MarketType,
@@ -39,7 +40,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         self._session_factory = session_factory
         self._session: Session | None = None
         self._staged_events: list[WorkflowEvent] = []
-        self._staged_public_events: list[PublicEvent] = []
+        self._staged_public_events: list[PublicEvent[DomainModel]] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
 
     def __enter__(self) -> "SqlAlchemyWatchIntentUnitOfWork":
@@ -370,7 +371,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)
 
-    def stage_public_event(self, event: PublicEvent) -> None:
+    def stage_public_event(self, event: PublicEvent[DomainModel]) -> None:
         self._staged_public_events.append(event)
 
     @property

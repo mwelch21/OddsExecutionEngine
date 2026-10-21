@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from backend.app.application.watch_intent_service import WatchIntentService
+from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     MarketType,
@@ -39,8 +40,8 @@ class RecordingWatchIntentUnitOfWork:
         self._starts_at = starts_at
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
-        self._staged_public_events: list[PublicEvent] = []
-        self.committed_public_events: tuple[PublicEvent, ...] = ()
+        self._staged_public_events: list[PublicEvent[DomainModel]] = []
+        self.committed_public_events: tuple[PublicEvent[DomainModel], ...] = ()
         self.created_batches: list[list[Opportunity]] = []
 
         self.expired_ids: list[str] = []
@@ -175,7 +176,7 @@ class RecordingWatchIntentUnitOfWork:
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)
 
-    def stage_public_event(self, event: PublicEvent) -> None:
+    def stage_public_event(self, event: PublicEvent[DomainModel]) -> None:
         self._staged_public_events.append(event)
 
     @property
@@ -294,8 +295,9 @@ def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
     assert [event.type for event in uow.committed_public_events] == [
         OPPORTUNITY_IDENTIFIED_V1
     ]
-    assert uow.committed_public_events[0].data["opportunity_id"] == "opp-1"
-    assert len(uow.committed_public_events[0].data["matching"]) == 3
+    data = uow.committed_public_events[0].to_cloudevent()["data"]
+    assert data["opportunity_id"] == "opp-1"
+    assert len(data["matching"]) == 3
 
 
 def test_evaluate_for_event_does_not_re_evaluate_a_triggered_watch() -> None:
