@@ -19,6 +19,7 @@ import {
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
+import { PushToggle } from "./components/PushToggle";
 import { WatchPanel } from "./components/WatchPanel";
 import { Button, Panel, Pill } from "./components/primitives";
 
@@ -226,6 +227,7 @@ export function App() {
             <Bell size={14} />
             {watches.length} watches
           </Pill>
+          <PushToggle />
         </div>
       </header>
 

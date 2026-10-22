@@ -9,6 +9,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.sql import func
@@ -164,4 +165,22 @@ public_events_table = Table(
     Column("payload", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("dispatched_at", DateTime(timezone=True), nullable=True),
+)
+
+# Where public events are delivered (ADR-015). `config` holds channel secrets such as
+# the Web Push `auth` key and is never returned by the API. Rows are soft-disabled,
+# never deleted.
+destinations_table = Table(
+    "destinations",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("channel", String(length=32), nullable=False),
+    Column("label", String(length=128), nullable=False),
+    Column("address", Text, nullable=False),
+    Column("config", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("last_delivered_at", DateTime(timezone=True), nullable=True),
+    Column("disabled_at", DateTime(timezone=True), nullable=True),
+    Column("disabled_reason", String(length=32), nullable=True),
+    UniqueConstraint("channel", "address", name="uq_destinations_channel_address"),
 )
