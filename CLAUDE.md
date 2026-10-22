@@ -361,4 +361,4 @@ Default label vocabulary (labels match canonical role names). See `docs/agents/t
 
 ### Domain docs
 
-Single-context layout: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context layout: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
