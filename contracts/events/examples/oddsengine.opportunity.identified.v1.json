@@ -1,0 +1,31 @@
+{
+  "id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "source": "/oddsengine",
+  "specversion": "1.0",
+  "type": "oddsengine.opportunity.identified.v1",
+  "time": "2026-10-18T18:00:00+00:00",
+  "subject": "opp-1",
+  "dataschema": "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events/oddsengine.opportunity.identified.v1.json",
+  "data": {
+    "opportunity_id": "opp-1",
+    "watch_intent_id": "wi-1",
+    "event": {
+      "id": "nba-knicks-celtics-2026-04-11",
+      "sport": "basketball",
+      "league": "NBA",
+      "home": "Celtics",
+      "away": "Knicks",
+      "starts_at": "2026-10-21T23:30:00+00:00"
+    },
+    "market_type": "moneyline",
+    "selection": "knicks",
+    "line": null,
+    "target_price": 100,
+    "best": { "sportsbook": "DraftKings", "price": 125, "quoted_at": "2026-10-18T17:59:20+00:00" },
+    "matching": [
+      { "sportsbook": "DraftKings", "price": 125 },
+      { "sportsbook": "FanDuel", "price": 125 },
+      { "sportsbook": "BetMGM", "price": 120 }
+    ]
+  }
+}

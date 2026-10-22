@@ -1,16 +1,22 @@
+from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import RowMapping, insert, select, update
+from sqlalchemy import RowMapping, func, insert, select, update
 from sqlalchemy.orm import Session
 
+from backend.app.domain.base import DomainModel
 from backend.app.domain.destinations import (
     Channel,
     Destination,
     DisabledReason,
     WebPushKeys,
 )
+from backend.app.domain.public_events import DESTINATION_TEST_V1, PublicEvent
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
-from backend.app.infrastructure.persistence.schema import destinations_table
+from backend.app.infrastructure.persistence.schema import (
+    destinations_table,
+    public_events_table,
+)
 
 
 class SqlAlchemyDestinationUnitOfWork:
@@ -89,6 +95,32 @@ class SqlAlchemyDestinationUnitOfWork:
             .all()
         )
         return [_row_to_destination(row) for row in rows]
+
+    def get_destination(self, destination_id: str) -> Destination | None:
+        row = (
+            self._require_session()
+            .execute(select(destinations_table).where(destinations_table.c.id == destination_id))
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _row_to_destination(row)
+
+    def latest_test_requested_at(self, destination_id: str) -> datetime | None:
+        return self._require_session().execute(
+            select(func.max(public_events_table.c.created_at)).where(
+                public_events_table.c.type == DESTINATION_TEST_V1,
+                public_events_table.c.payload["subject"].as_string() == destination_id,
+            )
+        ).scalar_one_or_none()
+
+    def add_public_event(self, event: PublicEvent[DomainModel]) -> None:
+        self._require_session().execute(
+            insert(public_events_table).values(
+                id=event.id,
+                type=event.type,
+                payload=event.to_cloudevent(),
+            )
+        )
 
     def _get(self, destination_id: str) -> Destination:
         row = (

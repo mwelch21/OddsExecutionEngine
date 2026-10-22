@@ -34,6 +34,21 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
     ports:
       - "${APP_PORT:-8000}:8000"
+  # Delivers public events over Web Push (ADR-013). The only service that
+  # receives VAPID_PRIVATE_KEY. Alembic (run via the api) owns its tables; it
+  # retries until they exist.
+  notifier:
+    build:
+      context: services/notifier
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-odds_execution}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+    restart: unless-stopped
   frontend:
     image: node:22-slim
     depends_on:

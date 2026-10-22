@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -225,6 +225,7 @@ Notifications:
 - `GET /push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
 - `POST /destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
 - `GET /destinations` (safe fields and status; channel secrets are never returned)
+- `POST /destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
 
 Dev only:
 
@@ -273,6 +274,8 @@ See `docs/flows/_index.md` for full flow documentation.
 | RecommendationEngine | `engines/recommendation_engine.py` | Ranks matched quotes, determines fillability |
 | WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Evaluates watch intents against quotes, produces opportunities |
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
+| DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
+| notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |
 | TheOddsApiProvider | `infrastructure/odds_api_provider.py` | Live sportsbook quote provider (The Odds API) |
 
 ## Build Order

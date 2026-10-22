@@ -63,7 +63,34 @@ from a Safari tab.
 In a Safari tab the app shows "Add to Home Screen to get notifications" instead
 of the button.
 
-## 4. Desktop
+## 4. Send a test notification
+
+The notifier must be running: it is the only service with the private key.
+
+```bash
+docker compose up -d --build notifier
+docker compose logs -f notifier      # expect "notifier.listening"
+```
+
+Next to "Notifications on", tap **Send test**. Within a second the device shows
+"OddsCafe test: Notifications are working on <label>." The same is available
+from the API:
+
+```bash
+curl -s -X POST localhost:8000/destinations/<id>/test   # 202, then 429 for 10s
+```
+
+Check what happened:
+
+```sql
+SELECT status, attempts, last_error, delivered_at FROM deliveries ORDER BY created_at DESC LIMIT 5;
+```
+
+`delivered` means the push service accepted it. `failed` carries the push
+service's answer in `last_error`. `expired` means the test sat more than 10
+minutes before the notifier saw it (was the notifier down?).
+
+## 5. Desktop
 
 Open the app (`http://localhost:5173`, or the tailnet URL) in Chrome, Edge,
 Firefox or Safari and tap **Enable notifications**. Each browser is its own
@@ -72,5 +99,6 @@ destination.
 ## Limits in v1
 
 - Notifications arrive only while the Mac is awake, online, and running the stack.
-- A test notification and real deliveries arrive once the notifier ships
-  ("Send a test notification end to end").
+- Only test notifications are delivered so far. Opportunity notifications come
+  with "Opportunity notifications reach the operator" (#72); retries and
+  handling of dead subscriptions with "Delivery resilience" (#73).

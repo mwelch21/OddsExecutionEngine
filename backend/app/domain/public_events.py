@@ -17,6 +17,7 @@ from backend.app.domain.models import MarketType, Opportunity
 
 PUBLIC_EVENT_SOURCE = "/oddsengine"
 OPPORTUNITY_IDENTIFIED_V1 = "oddsengine.opportunity.identified.v1"
+DESTINATION_TEST_V1 = "oddsengine.destination.test.v1"
 _SCHEMA_BASE_URL = (
     "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events"
 )
@@ -107,6 +108,13 @@ class OpportunityIdentifiedDataV1(DomainModel):
     matching: list[BookPriceV1] = Field(min_length=1)
 
 
+class DestinationTestDataV1(DomainModel):
+    """Producer-side model for the destination.test.v1 data contract."""
+
+    destination_id: str = Field(min_length=1)
+    requested_at: UtcIso
+
+
 class OpportunityEventContext(DomainModel):
     """What a consumer needs to render an opportunity without a further lookup.
 
@@ -157,6 +165,28 @@ def build_opportunity_identified_public_event(
                 BookPriceV1(sportsbook=quote.sportsbook, price=quote.price)
                 for quote in opportunity.matching_quotes
             ],
+        ),
+    )
+
+
+def build_destination_test_public_event(
+    *, destination_id: str
+) -> PublicEvent[DestinationTestDataV1]:
+    """A test notification aimed at exactly one destination, named by `subject`.
+
+    It goes through the same outbox, claim and send path as any other event, so a
+    test that arrives proves the whole pipeline for that device.
+    """
+    requested_at = datetime.now(UTC)
+    return PublicEvent[DestinationTestDataV1](
+        id=str(uuid4()),
+        type=DESTINATION_TEST_V1,
+        time=requested_at,
+        subject=destination_id,
+        dataschema=_dataschema(DESTINATION_TEST_V1),
+        data=DestinationTestDataV1(
+            destination_id=destination_id,
+            requested_at=requested_at,
         ),
     )
 
