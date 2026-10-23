@@ -5,11 +5,13 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 
+from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
+from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.ports import QuoteIngestionProvider
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
@@ -22,6 +24,7 @@ from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
+from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.observability.logging import configure_logging
 from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
@@ -29,6 +32,9 @@ from backend.app.infrastructure.observability.request_context import (
 )
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.destination_uow import (
+    SqlAlchemyDestinationUnitOfWork,
+)
 from backend.app.infrastructure.persistence.event_read_uow import (
     SqlAlchemyEventReadUnitOfWork,
 )
@@ -77,13 +83,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
         recommendation_engine=recommendation_engine,
     )
+    destination_service = DestinationService(
+        unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
+    )
     quote_provider: QuoteIngestionProvider
     if app_settings.quote_provider == "odds_api":
         quote_provider = TheOddsApiProvider(
             api_key=app_settings.odds_api_key,
-            sports=[s.strip() for s in app_settings.odds_api_sports.split(",")],
             regions=[r.strip() for r in app_settings.odds_api_regions.split(",")],
             markets=[m.strip() for m in app_settings.odds_api_markets.split(",")],
+            # One cache per provider, living as long as the process. A deliberate
+            # refresh still pulls live; this only collapses simultaneous pulls and
+            # repeats of incidental reads such as listing a sport's events.
+            response_cache=InProcessProviderCache(
+                ttl_seconds=app_settings.provider_cache_ttl_seconds,
+            ),
         )
     else:
         quote_provider = InMemoryQuoteProvider()
@@ -150,6 +164,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_watch_intent_router(watch_intent_service))
     app.include_router(create_opportunity_router(watch_intent_service))
     app.include_router(create_event_router(event_query_service))
+    app.include_router(
+        create_destination_router(destination_service, app_settings.vapid_public_key)
+    )
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router

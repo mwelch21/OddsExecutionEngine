@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     MarketType,
@@ -17,13 +18,16 @@ from backend.app.domain.models import (
     WatchIntent,
     WatchStatus,
 )
+from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.quote_reads import list_latest_quotes
 from backend.app.infrastructure.persistence.schema import (
+    event_participants_table,
     events_table,
     market_quotes_latest_table,
     markets_table,
     opportunities_table,
+    public_events_table,
     watch_intents_table,
     workflow_events_table,
 )
@@ -36,11 +40,13 @@ class SqlAlchemyWatchIntentUnitOfWork:
         self._session_factory = session_factory
         self._session: Session | None = None
         self._staged_events: list[WorkflowEvent] = []
+        self._staged_public_events: list[PublicEvent[DomainModel]] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
 
     def __enter__(self) -> "SqlAlchemyWatchIntentUnitOfWork":
         self._session = self._session_factory.create_session()
         self._staged_events = []
+        self._staged_public_events = []
         self._committed_events = ()
         return self
 
@@ -54,6 +60,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         try:
             if exc_type is None:
                 self._persist_staged_events()
+                self._persist_staged_public_events()
                 session.commit()
                 self._committed_events = tuple(self._staged_events)
                 self._logger.info(
@@ -73,6 +80,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 self._logger.warning("watch_intent_uow.rolled_back")
         finally:
             self._staged_events = []
+            self._staged_public_events = []
             session.close()
             self._session = None
 
@@ -321,8 +329,50 @@ class SqlAlchemyWatchIntentUnitOfWork:
             )
         ).scalar_one_or_none()
 
+    def get_opportunity_event_context(
+        self, opportunity: Opportunity
+    ) -> OpportunityEventContext:
+        session = self._require_session()
+        event_row = session.execute(
+            select(
+                events_table.c.id,
+                events_table.c.sport,
+                events_table.c.league,
+                events_table.c.starts_at,
+            ).where(events_table.c.external_id == opportunity.event_id)
+        ).mappings().one_or_none()
+        if event_row is None:
+            return OpportunityEventContext()
+
+        sides = {
+            row["side"]: row["participant_name"]
+            for row in session.execute(
+                select(
+                    event_participants_table.c.side,
+                    event_participants_table.c.participant_name,
+                ).where(event_participants_table.c.event_id == event_row["id"])
+            ).mappings()
+        }
+        best_quoted_at = session.execute(
+            select(market_quotes_latest_table.c.quoted_at).where(
+                market_quotes_latest_table.c.market_id == opportunity.market_id,
+                market_quotes_latest_table.c.sportsbook == opportunity.best_sportsbook,
+            )
+        ).scalar_one_or_none()
+        return OpportunityEventContext(
+            sport=event_row["sport"],
+            league=event_row["league"],
+            home=sides.get("home"),
+            away=sides.get("away"),
+            starts_at=event_row["starts_at"],
+            best_quoted_at=best_quoted_at,
+        )
+
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)
+
+    def stage_public_event(self, event: PublicEvent[DomainModel]) -> None:
+        self._staged_public_events.append(event)
 
     @property
     def committed_events(self) -> tuple[WorkflowEvent, ...]:
@@ -356,6 +406,22 @@ class SqlAlchemyWatchIntentUnitOfWork:
                     "occurred_at": event.occurred_at,
                 }
                 for event in self._staged_events
+            ],
+        )
+
+    def _persist_staged_public_events(self) -> None:
+        if not self._staged_public_events:
+            return
+
+        self._require_session().execute(
+            insert(public_events_table),
+            [
+                {
+                    "id": event.id,
+                    "type": event.type,
+                    "payload": event.to_cloudevent(),
+                }
+                for event in self._staged_public_events
             ],
         )
 

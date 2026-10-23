@@ -1,15 +1,19 @@
 import logging
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 
+from backend.app.application.provider_cache import ProviderPayload, ProviderResponseCache
 from backend.app.domain.models import (
     EventInfo,
     EventParticipant,
     MarketType,
+    ProviderFetchReport,
     Quote,
     SupportedSport,
+    UpstreamQuota,
 )
 
 SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
@@ -35,6 +39,29 @@ def _parse_timestamp(raw: object) -> datetime | None:
     # The API reports UTC. An offsetless value left naive would be read against the
     # server's timezone once stored, shifting the very age this column exists to state.
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _parse_credit_header(raw: object) -> int | None:
+    """Parse a credit count, treating anything unparsable as unreported.
+
+    The provider is not obliged to send these headers and an error response may
+    carry none. None means "not reported"; it must never be flattened to 0,
+    which would read as a free call or an exhausted balance.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        logger.warning("odds_api.unparsable_quota_header", extra={"value": raw})
+        return None
+
+
+def _parse_quota(headers: Mapping[str, str]) -> UpstreamQuota:
+    return UpstreamQuota(
+        credits_spent=_parse_credit_header(headers.get("x-requests-last")),
+        credits_remaining=_parse_credit_header(headers.get("x-requests-remaining")),
+    )
 
 
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
@@ -63,49 +90,68 @@ class TheOddsApiProvider:
     def __init__(
         self,
         api_key: str,
-        sports: list[str],
         regions: list[str],
         markets: list[str],
+        response_cache: ProviderResponseCache,
     ) -> None:
         self._api_key = api_key
-        self._sports = sports
         self._regions = ",".join(regions)
         self._markets = ",".join(markets)
+        self._response_cache = response_cache
         self._client = httpx.Client(timeout=30.0)
         # Cache: event_id → EventInfo, populated on fetch
         self._event_cache: dict[str, EventInfo] = {}
 
-    def list_quotes(self, event_id: str) -> list[Quote]:
-        """Fetch quotes for a single event by its Odds API event ID."""
-        for sport in self._sports:
-            raw_events = self._fetch_sport_odds(sport)
-            for event in raw_events:
-                if event["id"] == event_id:
-                    self._cache_event(event, sport)
-                    return self._map_event_to_quotes(event)
-        return []
+    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+        """Fetch one event's quotes in a single call to the single-event endpoint.
+
+        This is a deliberate refresh, so it pulls live; the cache only coalesces
+        simultaneous refreshes of the same event. The caller supplies the sport --
+        scanning sport feeds to find the event is what made one event cost more
+        than a whole sport.
+        """
+        raw_events, _ = self._fetch_cached(
+            f"event:{sport}:{event_id}",
+            lambda: self._fetch_event_odds(sport, event_id),
+            live=True,
+        )
+        quotes: list[Quote] = []
+        for event in raw_events:
+            self._cache_event(event, sport)
+            quotes.extend(self._map_event_to_quotes(event))
+        return quotes
 
     def list_events_for_sport(self, sport: str) -> list[EventInfo]:
         """Fetch all upcoming events for a sport. Returns event metadata."""
-        raw_events = self._fetch_sport_odds(sport)
+        raw_events, _ = self._fetch_cached(
+            sport, lambda: self._fetch_sport_odds(sport), live=False
+        )
         events: list[EventInfo] = []
         for event in raw_events:
             info = self._cache_event(event, sport)
             events.append(info)
         return events
 
-    def list_quotes_for_sport(self, sport: str) -> dict[str, list[Quote]]:
+    def list_quotes_for_sport(
+        self, sport: str
+    ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
         """Fetch all quotes for all events in a sport.
 
-        Returns dict of event_id → quotes. Single API call per sport.
+        This is the deliberate-refresh path, so it always pulls live -- it will
+        never be handed a response that predates the caller. It returns the fetch
+        report alongside the quotes rather than leaving it on the instance: one
+        provider serves every request thread, so a stashed report would be
+        clobbered by a concurrent refresh of another sport.
         """
-        raw_events = self._fetch_sport_odds(sport)
+        raw_events, report = self._fetch_cached(
+            sport, lambda: self._fetch_sport_odds(sport), live=True
+        )
         result: dict[str, list[Quote]] = {}
         for event in raw_events:
             event_id = event["id"]
             self._cache_event(event, sport)
             result[event_id] = self._map_event_to_quotes(event)
-        return result
+        return result, report
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         """Get cached event metadata. Call list_events_for_sport first."""
@@ -115,17 +161,70 @@ class TheOddsApiProvider:
         """Sports this adapter can split into a sport and a league.
 
         Read straight off `SPORT_LEAGUE_MAP` so the catalog and the parsing
-        cannot disagree. Deliberately not filtered by the configured sport list:
-        that setting bounds the per-event refresh loop, and is not a whitelist.
+        cannot disagree.
         """
         return [
             SupportedSport(key=key, sport=sport, league=league or None)
             for key, (sport, league) in SPORT_LEAGUE_MAP.items()
         ]
 
-    def _fetch_sport_odds(self, sport: str) -> list[dict[str, Any]]:
+    def _fetch_cached(
+        self,
+        key: str,
+        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota]],
+        *,
+        live: bool,
+    ) -> tuple[ProviderPayload, ProviderFetchReport]:
+        """Fetch a payload through the response cache.
+
+        The quota is captured into a local rather than onto the instance, so it
+        belongs to this call and cannot be read by another thread. It stays None
+        when the cache answered, which is what keeps a reused response from
+        reporting someone else's credit figures as though they were current.
+        """
+        quota: UpstreamQuota | None = None
+
+        def load() -> ProviderPayload:
+            nonlocal quota
+            payload, quota = fetch()
+            return payload
+
+        cached = self._response_cache.fetch(key, load, live=live)
+        report = ProviderFetchReport(
+            upstream_contacted=cached.upstream_contacted,
+            data_age_seconds=cached.age_seconds,
+            quota=quota if cached.upstream_contacted else None,
+        )
+        return cached.payload, report
+
+    def _fetch_sport_odds(self, sport: str) -> tuple[ProviderPayload, UpstreamQuota]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
-        url = f"{ODDS_API_BASE}/{sport}/odds"
+        response = self._get(f"{ODDS_API_BASE}/{sport}/odds", sport)
+        quota = self._read_quota(response, sport)
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json()), quota
+
+    def _fetch_event_odds(
+        self, sport: str, event_id: str
+    ) -> tuple[ProviderPayload, UpstreamQuota]:
+        """GET /v4/sports/{sport}/events/{eventId}/odds from The Odds API.
+
+        Costs [markets returned] x [regions], independent of how many events the
+        sport has. A 404 means upstream no longer offers the event (finished or
+        pulled), which is an empty answer rather than a failure.
+        """
+        response = self._get(f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds", sport)
+        quota = self._read_quota(response, sport)
+        if response.status_code == 404:
+            logger.info(
+                "odds_api.event_not_offered",
+                extra={"sport": sport, "event_id": event_id},
+            )
+            return [], quota
+        response.raise_for_status()
+        return [cast(dict[str, Any], response.json())], quota
+
+    def _get(self, url: str, sport: str) -> httpx.Response:
         params = {
             "apiKey": self._api_key,
             "regions": self._regions,
@@ -136,21 +235,22 @@ class TheOddsApiProvider:
             "odds_api.fetch",
             extra={"sport": sport, "url": url},
         )
-        response = self._client.get(url, params=params)
-        response.raise_for_status()
+        return self._client.get(url, params=params)
 
-        remaining = response.headers.get("x-requests-remaining", "?")
-        used = response.headers.get("x-requests-used", "?")
+    def _read_quota(self, response: httpx.Response, sport: str) -> UpstreamQuota:
+        """Read the quota off a response. Callers do this before raising on it:
+        a rejected call is still a call, and what it cost is exactly what an
+        operator needs to know when upstream starts failing."""
+        quota = _parse_quota(response.headers)
         logger.info(
             "odds_api.quota",
             extra={
                 "sport": sport,
-                "requests_remaining": remaining,
-                "requests_used": used,
+                "credits_spent": quota.credits_spent,
+                "credits_remaining": quota.credits_remaining,
             },
         )
-
-        return cast(list[dict[str, Any]], response.json())
+        return quota
 
     def _cache_event(self, event: dict, sport_key: str) -> EventInfo:
         """Extract and cache event metadata."""

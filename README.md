@@ -71,7 +71,6 @@ To enable live odds data, add:
 ```env
 QUOTE_PROVIDER=odds_api
 ODDS_API_KEY=your_api_key_here
-ODDS_API_SPORTS=icehockey_nhl,baseball_mlb
 ODDS_API_REGIONS=us,us2
 ODDS_API_MARKETS=h2h,spreads,totals
 ```
@@ -127,6 +126,44 @@ open http://localhost:5173
 
 The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
 The frontend application provides the product-style lines board: sportsbook filtering, best-line mode, fillability checks, and watch creation.
+
+## Local Development Loop
+
+With [`just`](https://github.com/casey/just) installed, the loop is two commands:
+
+```bash
+just fresh   # first run only: refresh + seed the demo fixtures
+just dev     # every session, and after every pull or branch switch
+```
+
+`just dev` runs `just refresh` first, so the API is rebuilt, recreated, and migrated
+for the checked-out branch before Vite starts. Local data is never touched.
+
+### What reloads on its own, and what does not
+
+| You changed | Picked up by | You run |
+|---|---|---|
+| Frontend source | Vite HMR | nothing |
+| Backend source (`backend/`) | uvicorn `--reload` (source is mounted in dev mode) | nothing |
+| `pyproject.toml`, `Dockerfile` | image rebuild | `just refresh` |
+| A new migration | Alembic | `just refresh` (or `just migrate`) |
+| `frontend/package.json` | `npm install` | restart `just dev` |
+| Branch (pull, switch, new worktree) | all of the above | `just refresh` / `just dev` |
+
+`just status` reports whether the running stack matches the checkout (reload on,
+image built from this `pyproject.toml`, schema at head) and exits non-zero when it
+does not.
+
+### Dev mode vs image mode
+
+| Recipe | API runs | Use for |
+|---|---|---|
+| `just up`, `just refresh`, `just dev`, `just up-all` | mounted `backend/`, reload on save | day-to-day work |
+| `just up-image`, raw `docker compose up` | the built image as-is, no reload | production-like checks |
+
+Dev mode is `docker-compose.dev.yml` layered over `docker-compose.yml`; the image and
+the base compose file are unchanged. Destructive resets stay explicit:
+`just down-hard` (asks first) deletes the volume, `just reset-db` truncates tables.
 
 ## Common Commands
 
@@ -300,12 +337,15 @@ so a checkout with no `.env` behaves exactly as before. See
 | `FRONTEND_PORT` | `5173` | Host port the frontend dev server binds |
 | `POSTGRES_HOST_PORT` | `5433` | Host port the Docker Postgres binds |
 | `OPPORTUNITY_TTL_MINUTES` | `720` | How long opportunities remain valid. Sized for manual refresh; tighten once a scheduler exists |
-| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused before another upstream call. `0` disables reuse |
+| `PROVIDER_CACHE_TTL_SECONDS` | `300` | How long a provider response may be reused by an *incidental* repeat fetch. `0` disables reuse. A deliberate refresh always pulls live regardless (ADR-011) |
 | `QUOTE_PROVIDER` | `in_memory` | `odds_api` for live sportsbook data |
 | `ODDS_API_KEY` | `""` | API key from the-odds-api.com |
-| `ODDS_API_SPORTS` | `icehockey_nhl,baseball_mlb` | Comma-separated sport keys |
-| `ODDS_API_REGIONS` | `us,us2` | Comma-separated regions |
-| `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types |
+| `ODDS_API_REGIONS` | `us` | Comma-separated regions. Each region multiplies the credit cost of every call |
+| `ODDS_API_MARKETS` | `h2h,spreads,totals` | Comma-separated market types. Each market multiplies the credit cost of every call |
+
+Upstream bills **credits, not requests**: `cost = [markets] x [regions]` per call. The
+defaults above cost 3 credits per sport per call. Refresh is manual by design — nothing
+polls — and that is the main thing keeping spend down.
 
 ## Running Tests
 

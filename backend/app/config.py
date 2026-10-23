@@ -29,14 +29,15 @@ class Settings(BaseSettings):
     quote_provider: str = "in_memory"
     odds_api_key: str = ""
     # Cost is billed per market per region per call (markets x regions credits),
-    # not per request, and every configured sport is a separate call.
-    # Only gates the per-event refresh loop, which walks every entry. Sport-wide
-    # refresh takes its sport from the request, so the UI can drive any supported
-    # sport without this list changing. Keep it to one in-season sport: each extra
-    # entry multiplies the cost of refreshing a single event.
-    odds_api_sports: str = "americanfootball_nfl"
+    # not per request. Every refresh names its own sport, whether in the request
+    # (sport-wide) or via the stored event (per-event), so no sport list is configured.
     odds_api_regions: str = "us"
     odds_api_markets: str = "h2h,spreads,totals"
+
+    # Web Push. The API holds only the public key, which browsers need to subscribe.
+    # The private key belongs to the notifier alone and is deliberately not a setting
+    # here. Generate both with `uv run python scripts/generate_vapid_keys.py`.
+    vapid_public_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

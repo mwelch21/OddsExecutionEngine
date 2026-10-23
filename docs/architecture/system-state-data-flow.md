@@ -76,7 +76,7 @@ Important property: recommendation reads only latest quote state; history is not
 
 `POST /ingestion/quotes/refresh`
 
-1. `QuoteIngestionService` fetches provider quotes for one event.
+1. `QuoteIngestionService` resolves the event's provider sport key without a paid call: the stored `events.sport`/`league` (falling back to the provider's in-process event cache), matched against the provider catalog. Unknown event → 404, unresolvable sport → 422. It then fetches that one event's quotes in a single upstream call (`GET /v4/sports/{sport}/events/{eventId}/odds`).
 2. `NormalizationEngine` drops malformed or mismatched quotes and preserves only canonical `Quote` values.
 3. `SqlAlchemyQuoteIngestionUnitOfWork`:
    - upserts/refreshes event metadata

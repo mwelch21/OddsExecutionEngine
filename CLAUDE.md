@@ -18,7 +18,7 @@ Build backend-first sports market execution platform. System answers:
 - What watch or opportunity signals should fire?
 - Optional: AI parse/explain/suggest, never AI decide pricing logic.
 
-Optimize for backend/system design signal, not frontend polish.
+The UI is the primary surface; the API is the full contract behind it. Every UI capability has a public API path, and events are designed as a public contract so a future programmatic consumer (webhook, SDK) needs no redesign. See "Product surfaces" in `docs/architecture/conventions.md`.
 
 ## Product Scope
 
@@ -69,6 +69,11 @@ docker compose exec -T api uv run pytest
 These raw commands are canonical. A `Justfile` wraps the common sequences
 (`just up`, `just fresh`, `just dev`, `just check`, `just test`) but is optional
 convenience — nothing requires `just` to be installed.
+
+After a pull or branch switch, run `just refresh` (or `just dev`, which runs it)
+before testing endpoints: the raw `docker compose up` serves the image as last
+built. Dev recipes mount `backend/` with uvicorn `--reload`; `just status` says
+whether the running stack matches the checkout. See README "Local Development Loop".
 
 Host ports are configurable so two worktrees can run their stacks at once.
 Create one with `./scripts/new-worktree.sh <branch>`; see
@@ -129,7 +134,7 @@ backend/
 - Routes stay thin and must not own business logic.
 - Deterministic engines hold pricing, matching, ranking, and watch logic.
 
-Full details in `docs/architecture/conventions.md` and `docs/architecture/decisions.md`.
+Full details in `docs/architecture/conventions.md` and the ADRs in `docs/adr/`.
 
 ### Core Domain Objects
 
@@ -165,7 +170,9 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`.
+
+- `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
 - latest drives recommendation/read paths
 - history drives audit/future analytics
@@ -199,11 +206,6 @@ Ingestion:
 - `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
 - `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
 
-`ODDS_API_SPORTS` is **not** a whitelist. It bounds the per-event refresh loop, which
-walks every entry, so each extra sport multiplies the cost of refreshing one event.
-Keep it to one in-season sport. Sport-wide refresh takes its sport from the request
-body and is validated against `GET /sports`, so a client may drive any supported sport.
-
 Browse:
 
 - `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
@@ -218,6 +220,13 @@ Monitoring:
 - `GET /opportunities` (optional `event_id` filter)
 - `GET /opportunities/{id}`
 
+Notifications:
+
+- `GET /push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
+- `POST /destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
+- `GET /destinations` (safe fields and status; channel secrets are never returned)
+- `POST /destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
+
 Dev only:
 
 - `GET /test-ui`
@@ -226,6 +235,29 @@ Planned, not yet implemented:
 
 - `GET /events/{event_id}/markets`
 - `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
+
+## Upstream Quota Discipline
+
+Non-negotiable. Read before touching ingestion, the provider, or anything that refreshes.
+
+- **Manual refresh, plus Auto-Refresh when the operator turns it on.** Manual refresh
+  always works. Auto-Refresh is the only automatic path: an operator-controlled switch that
+  refreshes sports with actionable watches on a per-sport cooldown (ADR-016). No other
+  scheduler, timer, background job or `useEffect` may pull upstream. If a task seems to
+  need another automatic path, stop and ask.
+- **Billing is in credits, not requests:** `cost = [markets] x [regions]` per call. The
+  default config (`h2h,spreads,totals` x `us`) is **3 credits per sport per call**.
+- **A deliberate refresh always pulls live.** The provider cache coalesces simultaneous
+  refreshes into one call and reuses responses for incidental repeats, but never answers
+  a refresh with data that predates it. See ADR-011.
+- **No sport list is configured.** Sport-wide refresh takes its sport from the request
+  body, validated against `GET /sports`. Per-event refresh is **one** call to the
+  single-event endpoint, its sport resolved from the stored event; it never scans sport
+  feeds (404 unknown event, 422 unresolvable sport). See ADR-012.
+- Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
+  Only `POST /ingestion/quotes/refresh*` spends.
+
+`agents.md` is a symlink to this file, so one edit serves both.
 
 ## Service Catalog
 
@@ -242,6 +274,8 @@ See `docs/flows/_index.md` for full flow documentation.
 | RecommendationEngine | `engines/recommendation_engine.py` | Ranks matched quotes, determines fillability |
 | WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Evaluates watch intents against quotes, produces opportunities |
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
+| DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
+| notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |
 | TheOddsApiProvider | `infrastructure/odds_api_provider.py` | Live sportsbook quote provider (The Odds API) |
 
 ## Build Order
@@ -308,14 +342,14 @@ Required coverage: quote matching, odds comparison, ranking, nearest miss, monit
 - When editing, keep scope tight. Touch smallest valid set of files.
 - Prefer existing patterns over exploratory rewrites.
 - When blocked by ambiguity, inspect codebase first, ask user last.
-- Before changing architecture/migrations/persistence/repo-wide rules, read `docs/architecture/decisions.md` and `docs/architecture/conventions.md`.
-- If task changes major architectural choice, update `docs/architecture/decisions.md`.
+- Before changing architecture/migrations/persistence/repo-wide rules, read the relevant ADRs in `docs/adr/` and `docs/architecture/conventions.md`.
+- If task changes major architectural choice, add the next-numbered ADR in `docs/adr/` and list it in `docs/architecture/decisions.md`.
 - If task introduces/changes standing rule, update `docs/architecture/conventions.md`.
 
 ## Anti-Goals
 
-- No UI-heavy betting app
-- No premature microservices/infrastructure
+- No UI that owns logic: the UI drives public APIs and stays a client of the deterministic core
+- No premature microservices/infrastructure: a new service must pass the extraction rule in ADR-013 and ship with its own ADR
 - No replacing deterministic logic with AI
 - No social/community features
 - No optimizing for novelty over system behavior
@@ -336,4 +370,4 @@ Default label vocabulary (labels match canonical role names). See `docs/agents/t
 
 ### Domain docs
 
-Single-context layout: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context layout: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

@@ -8,6 +8,13 @@
 - SQLAlchemy schema definitions in application code are the canonical app-side schema reference, but migrations are the operational source of schema changes.
 - Demo or fixture data must be loaded explicitly, never as an implicit side effect of normal app boot.
 
+## Product surfaces
+
+- The UI is the primary surface for the operator. Design and scope new work with its UI flow in mind.
+- API parity: every UI capability has a public API endpoint, and the UI reaches it only through that endpoint. Nothing is UI-only.
+- Events that leave the system (notifications today, webhook or SDK later) are a versioned public contract, not a dump of internal `workflow_events`.
+- The system notifies; it never places bets. Programmatic execution belongs in the consumer's code.
+
 ## Layering
 
 - Dependency direction stays `api -> application -> domain`.
@@ -51,6 +58,14 @@
 - Provider abstractions should be application-facing ports with mock implementations under `backend/app/infrastructure`.
 - Quote normalization should stay deterministic and map into canonical `Quote` values before persistence.
 - Quote ingestion persistence should upsert `market_quotes_latest`, append `market_quotes_history`, and emit workflow events through the same post-commit publisher path.
+
+## Upstream quota and refresh
+
+- Refresh is **manual**, plus **Auto-Refresh** when the operator turns it on (ADR-016). Auto-Refresh is the only automatic path to a provider; no other scheduler, timer or background job may call one. Manual refresh always works, on or off.
+- The Odds API bills **credits, not requests**: `cost = [markets] x [regions]` per call. Reason about spend in credits.
+- A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
+- Per-event refresh is one call to the single-event endpoint. The sport comes from the stored event (or the provider's in-process knowledge), matched against the provider catalog; an event whose sport cannot be resolved fails loudly, never by scanning sport feeds. See ADR-012.
+- Credit figures are reported only when upstream was actually contacted, and a missing figure is `None`, never `0`.
 
 ## Decisions log policy
 

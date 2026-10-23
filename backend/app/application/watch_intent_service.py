@@ -22,6 +22,7 @@ from backend.app.domain.models import (
     WatchIntentCreationResult,
     WatchStatus,
 )
+from backend.app.domain.public_events import build_opportunity_identified_public_event
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
 
@@ -276,9 +277,11 @@ class WatchIntentService:
         the insert race leaves the watch correctly retired by the winner.
 
         `OpportunityIdentified` is the single user-facing alert no matter how many
-        books matched. `WatchIntentTriggered` is the audit record of the terminal
-        transition, so the watch lifecycle stays answerable without joining to
-        opportunities.
+        books matched. Its public counterpart, `opportunity.identified.v1`, is staged
+        in the same transaction, so the public outbox can never hold an event for a
+        rolled-back opportunity nor miss one for a committed one (ADR-014).
+        `WatchIntentTriggered` is the audit record of the terminal transition, so
+        the watch lifecycle stays answerable without joining to opportunities.
         """
         if not opportunities:
             return []
@@ -298,6 +301,12 @@ class WatchIntentService:
                 build_watch_intent_triggered_event(
                     watch_intent_id=opp.watch_intent_id,
                     opportunity=opp,
+                )
+            )
+            uow.stage_public_event(
+                build_opportunity_identified_public_event(
+                    opportunity=opp,
+                    context=uow.get_opportunity_event_context(opp),
                 )
             )
 

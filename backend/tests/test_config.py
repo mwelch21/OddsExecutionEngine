@@ -127,3 +127,11 @@ def test_zero_ttls_remain_accepted(monkeypatch: pytest.MonkeyPatch, variable: st
     monkeypatch.setenv(variable, "0")
 
     assert Settings().model_dump()[variable.lower()] == 0
+
+
+def test_tests_never_build_the_live_provider_from_a_developers_env() -> None:
+    """Guards the conftest pin: a live-odds .env must not reach the test suite."""
+    settings = Settings()
+
+    assert settings.quote_provider == "in_memory"
+    assert settings.odds_api_key == ""
