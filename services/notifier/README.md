@@ -10,15 +10,24 @@ public_events --NOTIFY / 30s sweep--> fan-out --> deliveries --claim--> Web Push
 
 | Package | Job |
 |---|---|
-| `internal/config` | Environment: `DATABASE_URL`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` |
-| `internal/events` | Public event types, max age per type, rendering to a notification |
+| `internal/config` | Environment: `DATABASE_URL`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `APP_ORIGIN` |
+| `internal/events` | Public event types, expiry per event, rendering to a notification |
 | `internal/store` | Fan-out, `SKIP LOCKED` claims with lease + claim token, fenced results |
-| `internal/push` | VAPID-signed Web Push via `webpush-go` |
+| `internal/push` | VAPID-signed Web Push via `webpush-go`; Declarative Web Push for Apple endpoints |
 | `internal/notifier` | The loop: work, then wait for NOTIFY or the sweep |
 
-Delivered today: `destination.test.v1`. Opportunity notifications arrive with
-"Opportunity notifications reach the operator" (#72); retries, `gone` and lease
-recovery tests with "Delivery resilience" (#73).
+Delivered today:
+
+| Type | Goes to | Expires | Tap opens |
+|---|---|---|---|
+| `destination.test.v1` | the one destination in `subject` | 10 min after the request | `/` |
+| `opportunity.identified.v1` | every active destination | `data.expires_at` (the opportunity TTL) | `/?event=<id>&opportunity=<id>` |
+
+Links are absolute under `APP_ORIGIN`, the PWA's origin (your `*.ts.net` URL on
+a phone). Apple endpoints get Declarative Web Push (`"web_push": 8030`), so iOS
+18.4+ opens the link itself without the service worker.
+
+Retries, `gone` and lease recovery tests arrive with "Delivery resilience" (#73).
 
 ## Run
 

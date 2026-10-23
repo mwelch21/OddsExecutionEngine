@@ -48,6 +48,9 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # Origin of the PWA that notification taps open. Set it to the *.ts.net
+      # URL in .env to test on a phone.
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:${FRONTEND_PORT:-5173}}
     restart: unless-stopped
   frontend:
     image: node:22-slim
