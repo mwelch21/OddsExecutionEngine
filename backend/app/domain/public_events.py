@@ -6,7 +6,7 @@ the version, and whose `data` matches a JSON Schema under `contracts/events/`.
 Nothing is public by default; each type here is a deliberate choice.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Generic, TypeVar
 from uuid import uuid4
 
@@ -106,6 +106,7 @@ class OpportunityIdentifiedDataV1(DomainModel):
     target_price: int
     best: BestBookPriceV1
     matching: list[BookPriceV1] = Field(min_length=1)
+    expires_at: UtcIso
 
 
 class DestinationTestDataV1(DomainModel):
@@ -133,12 +134,19 @@ class OpportunityEventContext(DomainModel):
 def build_opportunity_identified_public_event(
     *,
     opportunity: Opportunity,
+    valid_for: timedelta,
     context: OpportunityEventContext,
 ) -> PublicEvent[OpportunityIdentifiedDataV1]:
+    """`expires_at` is the boundary the validity engine applies: created_at + TTL.
+    Past it, a consumer should drop the event rather than act on it."""
+    now = datetime.now(UTC)
+    created_at = opportunity.created_at or now
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
     return PublicEvent[OpportunityIdentifiedDataV1](
         id=str(uuid4()),
         type=OPPORTUNITY_IDENTIFIED_V1,
-        time=datetime.now(UTC),
+        time=now,
         subject=opportunity.id,
         dataschema=_dataschema(OPPORTUNITY_IDENTIFIED_V1),
         data=OpportunityIdentifiedDataV1(
@@ -165,6 +173,7 @@ def build_opportunity_identified_public_event(
                 BookPriceV1(sportsbook=quote.sportsbook, price=quote.price)
                 for quote in opportunity.matching_quotes
             ],
+            expires_at=created_at + valid_for,
         ),
     )
 

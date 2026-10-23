@@ -96,6 +96,7 @@ func newHarness(t *testing.T) *harness {
 			BatchSize: 20,
 			Lease:     time.Minute,
 			Now:       time.Now,
+			AppOrigin: "https://phone.tailnet.ts.net",
 		},
 	}
 }
@@ -139,6 +140,30 @@ func (h *harness) addTestEvent(destinationID string, at time.Time) string {
 	if _, err := h.pool.Exec(h.ctx,
 		`INSERT INTO public_events (id, type, payload) VALUES ($1, $2, $3::json)`,
 		id, events.TypeDestinationTestV1, string(payload)); err != nil {
+		h.t.Fatal(err)
+	}
+	return id
+}
+
+// addOpportunityEvent writes opportunity.identified.v1 to the outbox the way the
+// API does, from the contract example, with three matching books.
+func (h *harness) addOpportunityEvent(at, expiresAt time.Time) string {
+	h.t.Helper()
+	raw, err := os.ReadFile("../../../../contracts/events/examples/" + events.TypeOpportunityIdentifiedV1 + ".json")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		h.t.Fatal(err)
+	}
+	id := uuid.NewString()
+	payload["id"], payload["time"] = id, at.Format(time.RFC3339Nano)
+	payload["data"].(map[string]any)["expires_at"] = expiresAt.Format(time.RFC3339Nano)
+	body, _ := json.Marshal(payload)
+	if _, err := h.pool.Exec(h.ctx,
+		`INSERT INTO public_events (id, type, payload) VALUES ($1, $2, $3::json)`,
+		id, events.TypeOpportunityIdentifiedV1, string(body)); err != nil {
 		h.t.Fatal(err)
 	}
 	return id
@@ -196,6 +221,56 @@ func TestTestEventIsDeliveredToItsDestinationOnly(t *testing.T) {
 		target).Scan(&stamped) //nolint:errcheck // asserted below
 	if !dispatched || !stamped {
 		t.Fatalf("dispatched=%v last_delivered_at stamped=%v", dispatched, stamped)
+	}
+}
+
+func TestOpportunityReachesEveryActiveDestinationOnce(t *testing.T) {
+	h := newHarness(t)
+	phone := h.addDestination("iPhone")
+	mac := h.addDestination("Mac")
+	removed := h.addDestination("Old iPad")
+	if _, err := h.pool.Exec(h.ctx,
+		`UPDATE destinations SET disabled_at = now(), disabled_reason = 'gone' WHERE id = $1`,
+		removed); err != nil {
+		t.Fatal(err)
+	}
+	eventID := h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour))
+
+	// A second cycle must not notify again: one opportunity, one push per device,
+	// however many books matched.
+	for range 2 {
+		if err := h.notifier.RunOnce(h.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := map[string]string{}
+	for _, d := range h.deliveries(eventID) {
+		got[d.destinationID] = d.status
+	}
+	want := map[string]string{phone: store.StatusDelivered, mac: store.StatusDelivered}
+	if len(got) != len(want) || got[phone] != want[phone] || got[mac] != want[mac] {
+		t.Fatalf("deliveries = %v, want delivered to the two active destinations only", got)
+	}
+	if n := len(h.push.requests()); n != 2 {
+		t.Fatalf("push service saw %d requests, want 2", n)
+	}
+}
+
+func TestOpportunityPastItsValidityExpiresUnsent(t *testing.T) {
+	h := newHarness(t)
+	h.addDestination("iPhone")
+	eventID := h.addOpportunityEvent(time.Now().Add(-2*time.Hour), time.Now().Add(-time.Minute))
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusExpired {
+		t.Fatalf("deliveries = %+v, want one expired", got)
+	}
+	if n := len(h.push.requests()); n != 0 {
+		t.Fatalf("expired opportunity was sent %d times", n)
 	}
 }
 

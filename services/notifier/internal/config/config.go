@@ -4,7 +4,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,7 @@ type Config struct {
 	VAPIDPublicKey  string
 	VAPIDPrivateKey string
 	VAPIDSubject    string
+	AppOrigin       string
 	SweepInterval   time.Duration
 	ClaimLease      time.Duration
 	BatchSize       int
@@ -28,6 +31,7 @@ func Load() (Config, error) {
 		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
 		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
 		VAPIDSubject:    os.Getenv("VAPID_SUBJECT"),
+		AppOrigin:       strings.TrimRight(os.Getenv("APP_ORIGIN"), "/"),
 		SweepInterval:   30 * time.Second,
 		ClaimLease:      60 * time.Second,
 		BatchSize:       20,
@@ -39,6 +43,7 @@ func Load() (Config, error) {
 		"VAPID_PUBLIC_KEY":  cfg.VAPIDPublicKey,
 		"VAPID_PRIVATE_KEY": cfg.VAPIDPrivateKey,
 		"VAPID_SUBJECT":     cfg.VAPIDSubject,
+		"APP_ORIGIN":        cfg.AppOrigin,
 	} {
 		if value == "" {
 			missing = append(missing, fmt.Errorf("%s is not set", name))
@@ -46,6 +51,13 @@ func Load() (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, errors.Join(missing...)
+	}
+	// Notification links are built under this origin, and Declarative Web Push
+	// needs them absolute: a bare host or a path would ship broken taps.
+	if origin, err := url.Parse(cfg.AppOrigin); err != nil ||
+		(origin.Scheme != "https" && origin.Scheme != "http") || origin.Host == "" ||
+		origin.Path != "" || origin.RawQuery != "" {
+		return Config{}, fmt.Errorf("APP_ORIGIN must be an origin such as https://phone.tailnet.ts.net, got %q", cfg.AppOrigin)
 	}
 	return cfg, nil
 }

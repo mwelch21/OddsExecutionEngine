@@ -27,6 +27,8 @@ type Notifier struct {
 	BatchSize int
 	Lease     time.Duration
 	Now       func() time.Time
+	// AppOrigin is the PWA's origin; notification links are absolute under it.
+	AppOrigin string
 }
 
 // RunOnce fans out every pending event, then works every due delivery. It is
@@ -63,13 +65,13 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 	log := n.Log.With("delivery_id", claim.DeliveryID, "event_id", claim.Event.ID,
 		"type", claim.Event.Type, "destination_id", claim.DestinationID)
 
-	remaining := events.MaxAge(claim.Event.Type) - n.Now().Sub(claim.Event.Time)
+	remaining := events.ExpiresAt(claim.Event).Sub(n.Now())
 	if remaining <= 0 {
-		n.record(ctx, log, claim, store.StatusExpired, "past max age before send")
+		n.record(ctx, log, claim, store.StatusExpired, "past its expiry before send")
 		return
 	}
 
-	notification, err := events.Render(claim.Event, claim.Label)
+	notification, err := events.Render(claim.Event, claim.Label, n.AppOrigin)
 	if err != nil {
 		n.record(ctx, log, claim, store.StatusFailed, err.Error())
 		return
