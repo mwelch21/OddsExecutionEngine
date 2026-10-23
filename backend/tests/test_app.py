@@ -430,6 +430,8 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
 
     assert sorted(inspector.get_table_names()) == [
         "alembic_version",
+        "deliveries",
+        "destinations",
         "event_participants",
         "events",
         "execution_recommendations",

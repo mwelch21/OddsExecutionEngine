@@ -17,6 +17,10 @@ export default defineConfig({
   server: {
     port: frontendPort,
     strictPort: true,
+    // Tailscale Serve proxies https://<machine>.<tailnet>.ts.net to this server so
+    // the iPhone gets the HTTPS that Web Push requires. Vite rejects unknown Host
+    // headers by default, so tailnet names are allowed explicitly.
+    allowedHosts: [".ts.net"],
     proxy: {
       "/health": apiTarget,
       "/execution": apiTarget,
@@ -24,7 +28,9 @@ export default defineConfig({
       "/events": apiTarget,
       "/sports": apiTarget,
       "/watch-intents": apiTarget,
-      "/opportunities": apiTarget
+      "/opportunities": apiTarget,
+      "/push": apiTarget,
+      "/destinations": apiTarget
     }
   }
 });

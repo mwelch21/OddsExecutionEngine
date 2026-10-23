@@ -9,6 +9,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.sql import func
@@ -164,4 +165,43 @@ public_events_table = Table(
     Column("payload", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("dispatched_at", DateTime(timezone=True), nullable=True),
+)
+
+# Where public events are delivered (ADR-015). `config` holds channel secrets such as
+# the Web Push `auth` key and is never returned by the API. Rows are soft-disabled,
+# never deleted.
+destinations_table = Table(
+    "destinations",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("channel", String(length=32), nullable=False),
+    Column("label", String(length=128), nullable=False),
+    Column("address", Text, nullable=False),
+    Column("config", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("last_delivered_at", DateTime(timezone=True), nullable=True),
+    Column("disabled_at", DateTime(timezone=True), nullable=True),
+    Column("disabled_reason", String(length=32), nullable=True),
+    UniqueConstraint("channel", "address", name="uq_destinations_channel_address"),
+)
+
+# One public event going to one destination (ADR-015). Only the Go notifier writes
+# here; the API reads it for status. Alembic still owns the schema (ADR-013).
+deliveries_table = Table(
+    "deliveries",
+    metadata,
+    Column("id", String(length=36), primary_key=True),
+    Column("event_id", String(length=36), ForeignKey("public_events.id"), nullable=False),
+    Column(
+        "destination_id", String(length=36), ForeignKey("destinations.id"), nullable=False
+    ),
+    Column("status", String(length=16), nullable=False, server_default="pending"),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("next_attempt_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("locked_until", DateTime(timezone=True), nullable=True),
+    Column("claim_token", String(length=36), nullable=True),
+    Column("delivered_at", DateTime(timezone=True), nullable=True),
+    Column("last_error", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("event_id", "destination_id", name="uq_deliveries_event_destination"),
 )

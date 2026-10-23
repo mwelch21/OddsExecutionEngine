@@ -15,6 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "cryptography>=43,<47",
     "httpx>=0.28.0,<1.0.0",
     "jsonschema>=4.23,<5",
     "mypy>=1.18.0,<2.0.0",

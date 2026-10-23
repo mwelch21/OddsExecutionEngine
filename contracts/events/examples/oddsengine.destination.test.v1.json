@@ -1,0 +1,13 @@
+{
+  "id": "6f1c2a9e-3b4d-4e5f-8a7b-9c0d1e2f3a4b",
+  "source": "/oddsengine",
+  "specversion": "1.0",
+  "type": "oddsengine.destination.test.v1",
+  "time": "2026-10-18T18:00:00+00:00",
+  "subject": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+  "dataschema": "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events/oddsengine.destination.test.v1.json",
+  "data": {
+    "destination_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "requested_at": "2026-10-18T18:00:00+00:00"
+  }
+}

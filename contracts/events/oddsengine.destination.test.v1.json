@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events/oddsengine.destination.test.v1.json",
+  "title": "oddsengine.destination.test.v1",
+  "description": "The operator asked for a test notification on one destination. Targeted: it becomes exactly one delivery, to the destination named in `subject`. CloudEvents 1.0 structured mode (ADR-014).",
+  "type": "object",
+  "required": ["id", "source", "specversion", "type", "time", "subject", "dataschema", "data"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": { "const": "/oddsengine" },
+    "specversion": { "const": "1.0" },
+    "type": { "const": "oddsengine.destination.test.v1" },
+    "time": { "type": "string", "format": "date-time" },
+    "subject": { "type": "string", "minLength": 1, "description": "The destination id." },
+    "dataschema": { "type": "string", "format": "uri" },
+    "data": {
+      "type": "object",
+      "required": ["destination_id", "requested_at"],
+      "properties": {
+        "destination_id": { "type": "string", "minLength": 1 },
+        "requested_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

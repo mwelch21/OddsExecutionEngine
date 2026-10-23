@@ -113,6 +113,23 @@ test:
     STAGE2_TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:${port}/odds_execution_test" \
         uv run pytest
 
+# Go notifier tests against Postgres. Alembic owns the schema, so the test DB is
+# migrated first (pytest drops and re-creates it, so run this after `just test`
+# or on its own).
+test-notifier:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    port="$(docker compose port postgres 5432 | cut -d: -f2)"
+    docker compose exec -T postgres psql -U app -d postgres -tc \
+        "SELECT 1 FROM pg_database WHERE datname='odds_execution_test'" | grep -q 1 \
+        || docker compose exec -T postgres psql -U app -d postgres -c \
+            "CREATE DATABASE odds_execution_test OWNER app"
+    DATABASE_URL_OVERRIDE="postgresql+psycopg://app:app@localhost:${port}/odds_execution_test" \
+        uv run alembic -c backend/db/alembic.ini upgrade head
+    cd services/notifier && \
+        NOTIFIER_TEST_DATABASE_URL="postgres://app:app@localhost:${port}/odds_execution_test" \
+        go test -p 1 -count=1 ./...
+
 # Fast suite, no Docker. Postgres-gated tests skip.
 test-quick:
     uv run pytest

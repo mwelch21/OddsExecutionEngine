@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     odds_api_regions: str = "us"
     odds_api_markets: str = "h2h,spreads,totals"
 
+    # Web Push. The API holds only the public key, which browsers need to subscribe.
+    # The private key belongs to the notifier alone and is deliberately not a setting
+    # here. Generate both with `uv run python scripts/generate_vapid_keys.py`.
+    vapid_public_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
