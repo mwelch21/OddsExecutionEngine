@@ -987,3 +987,48 @@ select {
 .fill-note.good {
   color: var(--good);
 }
+
+.opportunity-banner,
+.opportunity-note {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: var(--radius);
+}
+
+.opportunity-banner {
+  border: 1px solid var(--good);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.opportunity-banner h2 {
+  text-transform: capitalize;
+  margin: 8px 0 4px;
+}
+
+.opportunity-banner p,
+.opportunity-note p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.opportunity-note {
+  align-items: center;
+  border: 1px solid var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.market-row-pinned {
+  margin: 0 -10px;
+  padding: 10px;
+  border: 1px solid var(--good);
+  border-radius: var(--radius);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.market-group .market-row-pinned + .market-row {
+  border-top: none;
+}

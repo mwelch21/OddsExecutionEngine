@@ -45,6 +45,26 @@ export type WatchList = {
   watch_intents: WatchIntent[];
 };
 
+/**
+ * A watch's terminal hit. `matching_quotes` is the snapshot from detection time;
+ * `is_valid` / `invalid_reason` say whether it still holds now.
+ */
+export type Opportunity = {
+  id: string;
+  watch_intent_id: string;
+  event_id: string;
+  market_type: MarketType;
+  selection: string;
+  target_price: number;
+  line: number | null;
+  best_sportsbook: string;
+  best_price: number;
+  matching_quotes: Array<{ sportsbook: string; price: number }>;
+  created_at: string | null;
+  is_valid: boolean;
+  invalid_reason: string | null;
+};
+
 export type SupportedSport = {
   key: string;
   sport: string;
@@ -177,6 +197,11 @@ export async function listWatches(eventId: string) {
   return request<WatchList>(`/watch-intents?event_id=${encodeURIComponent(eventId)}`);
 }
 
+/** Free, DB-backed. Rejects with `NotFoundError` for an unknown id. */
+export async function getOpportunity(id: string) {
+  return request<Opportunity>(`/opportunities/${encodeURIComponent(id)}`);
+}
+
 export async function cancelWatch(id: string) {
   const response = await fetch(`/watch-intents/${encodeURIComponent(id)}`, {
     method: "DELETE"
@@ -193,7 +218,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`${path} failed: ${response.status} ${body}`);
+    const message = `${path} failed: ${response.status} ${body}`;
+    throw response.status === 404 ? new NotFoundError(message) : new Error(message);
   }
   return response.json() as Promise<T>;
+}
+
+/** Lets a caller tell "no such record" from "the request broke". */
+export class NotFoundError extends Error {
+  override name = "NotFoundError";
 }
