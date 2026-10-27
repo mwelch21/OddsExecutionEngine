@@ -47,6 +47,7 @@ func run(log *slog.Logger) error {
 		BatchSize: cfg.BatchSize,
 		Lease:     cfg.ClaimLease,
 		Now:       time.Now,
+		AppOrigin: cfg.AppOrigin,
 	}
 
 	// Reconnect the listener with backoff: Postgres restarts and a stack that

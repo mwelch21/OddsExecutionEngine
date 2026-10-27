@@ -3,7 +3,6 @@ package push
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,9 +55,9 @@ func NewWebPushSender(publicKey, privateKey, subject string) *WebPushSender {
 // Send encrypts and posts the notification. A non-2xx answer is a Result, not
 // an error: the caller decides what each status means.
 func (s *WebPushSender) Send(ctx context.Context, sub Subscription, n events.Notification, ttl time.Duration) (Result, error) {
-	payload, err := json.Marshal(n)
+	payload, err := Payload(sub.Endpoint, n)
 	if err != nil {
-		return Result{}, fmt.Errorf("encoding notification: %w", err)
+		return Result{}, err
 	}
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 		Endpoint: sub.Endpoint,
