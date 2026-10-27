@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ArrowLeft, Bell, Crown } from "lucide-react";
 import type { LineBoard as LineBoardData, LineBoardMarket } from "../lib/api";
 import {
@@ -6,6 +7,7 @@ import {
   formatLine,
   formatStart,
   marketLabel,
+  sameMarket,
   summarizeFreshness
 } from "../lib/format";
 import { Button, EmptyState, Pill } from "./primitives";
@@ -15,11 +17,13 @@ type Props = {
   loading: boolean;
   onBack: () => void;
   onOpenWatch: (market: LineBoardMarket) => void;
+  /** The pinned opportunity's market: outlined and scrolled into view. */
+  pinnedMarket?: Pick<LineBoardMarket, "market_type" | "selection" | "line"> | null;
 };
 
 const MARKET_ORDER: Record<string, number> = { moneyline: 0, spread: 1, total: 2 };
 
-export function LineBoard({ board, loading, onBack, onOpenWatch }: Props) {
+export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }: Props) {
   if (loading) {
     return (
       <section className="line-board">
@@ -74,6 +78,7 @@ export function LineBoard({ board, loading, onBack, onOpenWatch }: Props) {
                 <MarketRow
                   key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
                   market={market}
+                  pinned={pinnedMarket ? sameMarket(market, pinnedMarket) : false}
                   onOpenWatch={onOpenWatch}
                 />
               ))}
@@ -87,15 +92,22 @@ export function LineBoard({ board, loading, onBack, onOpenWatch }: Props) {
 
 function MarketRow({
   market,
+  pinned,
   onOpenWatch
 }: {
   market: LineBoardMarket;
+  pinned: boolean;
   onOpenWatch: (market: LineBoardMarket) => void;
 }) {
   const lineText = formatLine(market);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (pinned) rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [pinned]);
 
   return (
-    <div className="market-row">
+    <div ref={rowRef} className={pinned ? "market-row market-row-pinned" : "market-row"}>
       <div className="market-identity">
         <span className="bet-label">{marketLabel(market)}</span>
         <strong>{market.selection}</strong>

@@ -1020,3 +1020,15 @@ select {
   border: 1px solid var(--warn);
   background: rgba(251, 191, 36, 0.08);
 }
+
+.market-row-pinned {
+  margin: 0 -10px;
+  padding: 10px;
+  border: 1px solid var(--good);
+  border-radius: var(--radius);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.market-group .market-row-pinned + .market-row {
+  border-top: none;
+}

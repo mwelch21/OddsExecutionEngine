@@ -13,6 +13,13 @@ export function formatLine(market: Pick<LineBoardMarket, "market_type" | "line">
   return `${market.line}`;
 }
 
+type MarketKey = Pick<LineBoardMarket, "market_type" | "selection" | "line">;
+
+/** Same market and side: how an opportunity finds its row on the board. */
+export function sameMarket(a: MarketKey, b: MarketKey) {
+  return a.market_type === b.market_type && a.selection === b.selection && a.line === b.line;
+}
+
 export function marketLabel(market: Pick<LineBoardMarket, "market_type" | "selection">) {
   if (market.market_type === "moneyline") return "ML";
   if (market.market_type === "spread") return "Spread";

@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import type { LineBoard, Opportunity } from "../lib/api";
-import { ageLabel, formatAmerican, formatLine, marketLabel } from "../lib/format";
+import { ageLabel, formatAmerican, formatLine, marketLabel, sameMarket } from "../lib/format";
 import { Button, Pill } from "./primitives";
 
 type Props = {
@@ -51,12 +51,7 @@ export function OpportunityBanner({ opportunity, board, onDismiss }: Props) {
  * board is the source because the opportunity stores no quote timestamp.
  */
 function bookQuoteAge(opportunity: Opportunity, board: LineBoard | null) {
-  const market = board?.markets.find(
-    (candidate) =>
-      candidate.market_type === opportunity.market_type &&
-      candidate.selection === opportunity.selection &&
-      candidate.line === opportunity.line
-  );
+  const market = board?.markets.find((candidate) => sameMarket(candidate, opportunity));
   const quote = market?.quotes.find(
     (candidate) => candidate.sportsbook === opportunity.best_sportsbook
   );

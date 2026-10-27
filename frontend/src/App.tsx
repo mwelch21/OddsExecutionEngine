@@ -340,6 +340,7 @@ export function App() {
               loading={boardLoading}
               onBack={handleBack}
               onOpenWatch={openWatchModal}
+              pinnedMarket={opportunity}
             />
           ) : (
             <EventList
