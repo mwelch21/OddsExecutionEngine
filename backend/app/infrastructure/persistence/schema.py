@@ -1,6 +1,7 @@
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -204,4 +205,35 @@ deliveries_table = Table(
     Column("last_error", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("event_id", "destination_id", name="uq_deliveries_event_destination"),
+)
+
+# Auto-Refresh (ADR-016). A single row, pinned by `id = 1`, holding the operator's
+# switch exactly as last set, plus the worker's most recent refresh outcome. The row
+# may be absent (a fresh or truncated database): readers treat that as the defaults.
+auto_refresh_settings_table = Table(
+    "auto_refresh_settings",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("enabled", Boolean, nullable=False, server_default="false"),
+    Column("interval_minutes", Integer, nullable=False, server_default="5"),
+    Column("quota_floor", Integer, nullable=True),
+    Column("last_outcome_sport", String(length=64), nullable=True),
+    Column("last_outcome_status", String(length=16), nullable=True),
+    Column("last_outcome_at", DateTime(timezone=True), nullable=True),
+    Column("last_outcome_events_refreshed", Integer, nullable=True),
+    Column("last_outcome_error", Text, nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("id = 1", name="ck_auto_refresh_settings_single_row"),
+    CheckConstraint(
+        "interval_minutes BETWEEN 1 AND 60", name="ck_auto_refresh_settings_interval"
+    ),
+)
+
+# When each provider sport key was last pulled sport-wide, manual or automatic. The
+# Auto-Refresh cooldown is derived from it; a per-event refresh does not touch it.
+sport_refreshes_table = Table(
+    "sport_refreshes",
+    metadata,
+    Column("sport_key", String(length=64), primary_key=True),
+    Column("last_refreshed_at", DateTime(timezone=True), nullable=False),
 )

@@ -25,22 +25,25 @@ default:
 
 # Safe to re-run; never touches data. Does not rebuild: after a branch switch
 # use `refresh` instead.
-# Start api (reload mode) + postgres and migrate.
+# Start api (reload mode) + postgres, migrate, then the Auto-Refresh worker.
 up:
     {{dc}} up -d --wait api postgres
     {{dc}} exec -T api {{alembic}} upgrade head
+    {{dc}} up -d auto-refresh
     @echo "api  http://localhost:{{app_port}}  (reloads on save)"
 
-# Rebuilds the API and notifier images so code, dependency and Dockerfile
-# changes land (cached layers make this quick when nothing changed), recreates
-# the API in reload mode, migrates, then restarts the notifier on the new image.
-# The notifier is compiled Go with no source mount, so without the rebuild it
-# keeps running the last branch's code. Never touches data.
+# Rebuilds the API, worker and notifier images so code, dependency and
+# Dockerfile changes land (cached layers make this quick when nothing changed),
+# recreates the API in reload mode, migrates, then restarts the notifier and the
+# Auto-Refresh worker on the new images. The notifier is compiled Go with no
+# source mount, and the worker has no reloader, so without the restart both keep
+# running the last branch's code. Never touches data.
 # Run after pulling or switching branches: rebuild, reload mode, migrate.
 refresh:
-    {{dc}} build api notifier
+    {{dc}} build api auto-refresh notifier
     {{dc}} up -d --wait api postgres
     {{dc}} exec -T api {{alembic}} upgrade head
+    {{dc}} up -d --force-recreate auto-refresh
     {{dc}} up -d notifier
     @echo "api  http://localhost:{{app_port}}  (reloads on save)"
 
@@ -74,7 +77,7 @@ dev: refresh
 
 # Everything in Docker, including the frontend container. API in reload mode.
 up-all:
-    {{dc}} build api notifier
+    {{dc}} build api auto-refresh notifier
     {{dc}} up -d --wait
     {{dc}} exec -T api {{alembic}} upgrade head
 

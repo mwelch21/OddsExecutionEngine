@@ -1,6 +1,8 @@
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol, Self
 
+from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.base import DomainModel
 from backend.app.domain.destinations import Destination, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
@@ -89,6 +91,8 @@ class QuoteIngestionUnitOfWork(Protocol):
 
     def get_event_sport(self, event_id: str) -> EventSport | None: ...
 
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None: ...
+
     def stage_event(self, event: WorkflowEvent) -> None: ...
 
     @property
@@ -97,6 +101,42 @@ class QuoteIngestionUnitOfWork(Protocol):
 
 class QuoteIngestionUnitOfWorkFactory(Protocol):
     def __call__(self) -> QuoteIngestionUnitOfWork: ...
+
+
+class AutoRefreshUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def get_settings(self) -> AutoRefreshSettings: ...
+
+    def save_settings(self, settings: AutoRefreshSettings) -> AutoRefreshSettings: ...
+
+    def get_last_outcome(self) -> AutoRefreshOutcome | None: ...
+
+    def record_outcome(self, outcome: AutoRefreshOutcome) -> None: ...
+
+    def list_watched_event_sports(self, now: datetime) -> list[EventSport]: ...
+
+    def get_sport_refresh_times(self) -> dict[str, datetime]: ...
+
+
+class AutoRefreshUnitOfWorkFactory(Protocol):
+    def __call__(self) -> AutoRefreshUnitOfWork: ...
+
+
+class AutoRefreshCycleLock(Protocol):
+    """At most one refresh cycle at a time, however many workers run.
+
+    The context yields False when another holder has it; the caller skips the cycle.
+    """
+
+    def hold(self) -> AbstractContextManager[bool]: ...
 
 
 class WatchIntentUnitOfWork(Protocol):

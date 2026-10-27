@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -46,9 +48,31 @@ class CountingQuoteProvider:
         return list(self._supported)
 
 
-def _build_service(provider: CountingQuoteProvider) -> QuoteIngestionService:
+class SportStampOnlyUnitOfWork:
+    """Allows only the sport-wide refresh stamp; any quote write fails the test."""
+
+    def __init__(self) -> None:
+        self.stamped: list[str] = []
+
+    def __enter__(self) -> "SportStampOnlyUnitOfWork":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
+        self.stamped.append(sport_key)
+
+    def __getattr__(self, name: str) -> object:
+        pytest.fail(f"unit of work should not be reached: {name}")
+
+
+def _build_service(
+    provider: CountingQuoteProvider, unit_of_work: SportStampOnlyUnitOfWork | None = None
+) -> QuoteIngestionService:
+    stamp_only = unit_of_work or SportStampOnlyUnitOfWork()
     return QuoteIngestionService(
-        unit_of_work_factory=lambda: pytest.fail("unit of work should not be reached"),
+        unit_of_work_factory=lambda: stamp_only,  # type: ignore[arg-type,return-value]
         quote_provider=provider,
         normalization_engine=NormalizationEngine(),
         workflow_event_publisher=InMemoryWorkflowEventPublisher(),
@@ -94,12 +118,15 @@ def test_catalog_covers_every_mapped_sport() -> None:
 
 def test_unsupported_sport_is_rejected_before_any_upstream_call() -> None:
     provider = CountingQuoteProvider(_supported())
-    service = _build_service(provider)
+    unit_of_work = SportStampOnlyUnitOfWork()
+    service = _build_service(provider, unit_of_work)
 
     with pytest.raises(UnsupportedSportError) as excinfo:
         service.refresh_sport("americanfootbal_nfl")
 
     assert provider.sport_fetches == []
+    # A rejected sport was never pulled, so its cooldown must not restart.
+    assert unit_of_work.stamped == []
     assert "americanfootball_nfl" in excinfo.value.supported
 
 

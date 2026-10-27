@@ -65,6 +65,24 @@ export type Opportunity = {
   invalid_reason: string | null;
 };
 
+export type AutoRefreshOutcome = {
+  sport: string;
+  status: "succeeded" | "failed";
+  at: string;
+  events_refreshed: number;
+  error: string | null;
+};
+
+/** The operator's switch. Turning it on spends nothing by itself; the worker does. */
+export type AutoRefresh = {
+  enabled: boolean;
+  interval_minutes: number;
+  quota_floor: number | null;
+  last_outcome: AutoRefreshOutcome | null;
+};
+
+export type AutoRefreshSettings = Pick<AutoRefresh, "enabled" | "interval_minutes" | "quota_floor">;
+
 export type SupportedSport = {
   key: string;
   sport: string;
@@ -195,6 +213,21 @@ export async function createWatch(intent: LineIntent) {
 
 export async function listWatches(eventId: string) {
   return request<WatchList>(`/watch-intents?event_id=${encodeURIComponent(eventId)}`);
+}
+
+export async function getAutoRefresh() {
+  return request<AutoRefresh>("/auto-refresh");
+}
+
+/**
+ * Settings only. The API never refreshes on this call; the Auto-Refresh worker's
+ * next poll does, and only for sports with a watch to serve.
+ */
+export async function putAutoRefresh(settings: AutoRefreshSettings) {
+  return request<AutoRefresh>("/auto-refresh", {
+    method: "PUT",
+    body: JSON.stringify(settings)
+  });
 }
 
 /** Free, DB-backed. Rejects with `NotFoundError` for an unknown id. */

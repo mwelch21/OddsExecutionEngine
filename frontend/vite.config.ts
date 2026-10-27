@@ -30,7 +30,8 @@ export default defineConfig({
       "/watch-intents": apiTarget,
       "/opportunities": apiTarget,
       "/push": apiTarget,
-      "/destinations": apiTarget
+      "/destinations": apiTarget,
+      "/auto-refresh": apiTarget
     }
   }
 });

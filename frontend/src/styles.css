@@ -1032,3 +1032,69 @@ select {
 .market-group .market-row-pinned + .market-row {
   border-top: none;
 }
+
+.auto-refresh {
+  position: relative;
+}
+
+.auto-refresh-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auto-refresh-switch .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.auto-refresh-switch.on .dot {
+  background: var(--good);
+  box-shadow: 0 0 8px var(--good);
+}
+
+.auto-refresh-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  display: grid;
+  gap: 10px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.auto-refresh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.auto-refresh-muted,
+.auto-refresh-warn {
+  margin: 0;
+  font-size: 13px;
+}
+
+.auto-refresh-muted {
+  color: var(--text-muted);
+}
+
+.auto-refresh-warn {
+  color: var(--warn);
+}

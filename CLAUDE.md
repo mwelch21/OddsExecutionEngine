@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -227,6 +227,11 @@ Notifications:
 - `GET /destinations` (safe fields and status; channel secrets are never returned)
 - `POST /destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
 
+Auto-Refresh:
+
+- `GET /auto-refresh` (switch, interval, quota floor, last refresh outcome; defaults to off, 5 minutes)
+- `PUT /auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
+
 Dev only:
 
 - `GET /test-ui`
@@ -275,6 +280,9 @@ See `docs/flows/_index.md` for full flow documentation.
 | WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Evaluates watch intents against quotes, produces opportunities |
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
 | DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
+| AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
+| AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown: which watched sports are due |
+| auto-refresh worker | `auto_refresh_worker.py` (`odds-auto-refresh`) | Polls every 30s under a Postgres advisory lock; the only automatic refresh path |
 | notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |
 | TheOddsApiProvider | `infrastructure/odds_api_provider.py` | Live sportsbook quote provider (The Odds API) |
 

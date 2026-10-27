@@ -34,6 +34,31 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
     ports:
       - "${APP_PORT:-8000}:8000"
+  # The Auto-Refresh worker (ADR-016): the API's image with a different command, and
+  # the only process that refreshes on its own. It does nothing until the operator
+  # turns the switch on, and spends nothing while no watch needs a refresh. Same
+  # provider settings as the api, so an automatic pull costs what a manual one does.
+  auto-refresh:
+    build:
+      context: .
+    command: ["uv", "run", "odds-auto-refresh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      POSTGRES_DB: ${POSTGRES_DB:-odds_execution}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      QUOTE_PROVIDER: ${QUOTE_PROVIDER:-in_memory}
+      ODDS_API_KEY: ${ODDS_API_KEY:-}
+      ODDS_API_REGIONS: ${ODDS_API_REGIONS:-us}
+      ODDS_API_MARKETS: ${ODDS_API_MARKETS:-h2h,spreads,totals}
+      OPPORTUNITY_TTL_MINUTES: ${OPPORTUNITY_TTL_MINUTES:-720}
+      PROVIDER_CACHE_TTL_SECONDS: ${PROVIDER_CACHE_TTL_SECONDS:-300}
+    restart: unless-stopped
   # Delivers public events over Web Push (ADR-013). The only service that
   # receives VAPID_PRIVATE_KEY. Alembic (run via the api) owns its tables; it
   # retries until they exist.

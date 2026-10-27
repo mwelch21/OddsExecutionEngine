@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
 
@@ -221,6 +222,11 @@ class QuoteIngestionService:
                 event_metadata=metadata,
             )
             summaries.append(summary)
+
+        # Every sport-wide pull, manual or automatic, restarts that sport's
+        # Auto-Refresh cooldown (ADR-016). Only reached once the pull succeeded.
+        with self._unit_of_work_factory() as unit_of_work:
+            unit_of_work.record_sport_refreshed(sport, datetime.now(UTC))
 
         self._logger.info(
             "sport_refresh.completed",
