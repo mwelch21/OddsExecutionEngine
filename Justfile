@@ -31,14 +31,17 @@ up:
     {{dc}} exec -T api {{alembic}} upgrade head
     @echo "api  http://localhost:{{app_port}}  (reloads on save)"
 
-# Rebuilds the API image so dependency and Dockerfile changes land (cached
-# layers make this quick when nothing changed), recreates the API in reload
-# mode, and migrates. Never touches data.
+# Rebuilds the API and notifier images so code, dependency and Dockerfile
+# changes land (cached layers make this quick when nothing changed), recreates
+# the API in reload mode, migrates, then restarts the notifier on the new image.
+# The notifier is compiled Go with no source mount, so without the rebuild it
+# keeps running the last branch's code. Never touches data.
 # Run after pulling or switching branches: rebuild, reload mode, migrate.
 refresh:
-    {{dc}} build api
+    {{dc}} build api notifier
     {{dc}} up -d --wait api postgres
     {{dc}} exec -T api {{alembic}} upgrade head
+    {{dc}} up -d notifier
     @echo "api  http://localhost:{{app_port}}  (reloads on save)"
 
 # Production-like: the built image, no source mount, no reload.
@@ -71,7 +74,7 @@ dev: refresh
 
 # Everything in Docker, including the frontend container. API in reload mode.
 up-all:
-    {{dc}} build api
+    {{dc}} build api notifier
     {{dc}} up -d --wait
     {{dc}} exec -T api {{alembic}} upgrade head
 
