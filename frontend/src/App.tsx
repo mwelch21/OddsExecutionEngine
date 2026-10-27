@@ -4,21 +4,26 @@ import {
   cancelWatch,
   createWatch,
   getLineBoard,
+  getOpportunity,
   getRecommendation,
   listEvents,
   listSports,
   listWatches,
+  NotFoundError,
   refreshSport,
   type EventPage,
   type LineBoard as LineBoardData,
   type LineBoardMarket,
+  type Opportunity,
   type Recommendation,
   type SupportedSport,
   type WatchIntent
 } from "./lib/api";
+import { type DeepLink, pushDeepLink, readDeepLink, replaceDeepLink } from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
+import { OpportunityBanner } from "./components/OpportunityBanner";
 import { PushToggle } from "./components/PushToggle";
 import { WatchPanel } from "./components/WatchPanel";
 import { Button, Panel, Pill } from "./components/primitives";
@@ -42,9 +47,18 @@ export function App() {
   const [page, setPage] = useState(1);
   const [eventPage, setEventPage] = useState<EventPage | null>(null);
 
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Seeded from the URL so a notification link or a reload lands on its screen.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(
+    () => readDeepLink().eventId
+  );
   const [board, setBoard] = useState<LineBoardData | null>(null);
   const [boardLoading, setBoardLoading] = useState(false);
+
+  const [pinnedOpportunityId, setPinnedOpportunityId] = useState<string | null>(
+    () => readDeepLink().opportunityId
+  );
+  const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
+  const [opportunityNote, setOpportunityNote] = useState<string | null>(null);
 
   const [watches, setWatches] = useState<WatchIntent[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -118,17 +132,80 @@ export function App() {
     }
   }, []);
 
-  function handleSelectEvent(eventId: string) {
-    setSelectedEventId(eventId);
+  // Keyed on the event alone, so pinning or dismissing an opportunity keeps the board.
+  useEffect(() => {
     setBoard(null);
-    void loadBoard(eventId);
+    if (selectedEventId) void loadBoard(selectedEventId);
+  }, [selectedEventId, loadBoard]);
+
+  // A DB read, like the board: opening a notification spends no credits.
+  useEffect(() => {
+    setOpportunity(null);
+    setOpportunityNote(null);
+    if (!selectedEventId || !pinnedOpportunityId) return;
+    let cancelled = false;
+    getOpportunity(pinnedOpportunityId)
+      .then((response) => {
+        if (cancelled) return;
+        if (response.event_id !== selectedEventId) {
+          setOpportunityNote("That opportunity belongs to another event. Showing this board only.");
+        } else if (!response.is_valid) {
+          setOpportunityNote(
+            `Opportunity no longer valid (${invalidReasonLabel(response.invalid_reason)}). ` +
+              `It was ${formatAmerican(response.best_price)} @ ${response.best_sportsbook} ` +
+              `against a ${formatAmerican(response.target_price)} target.`
+          );
+        } else {
+          setOpportunity(response);
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setOpportunityNote(
+          error instanceof NotFoundError
+            ? "Opportunity not found. Showing this board only."
+            : "Could not load the opportunity. Showing this board only."
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEventId, pinnedOpportunityId]);
+
+  const applyLink = useCallback(
+    (link: DeepLink) => {
+      setSelectedEventId(link.eventId);
+      setPinnedOpportunityId(link.opportunityId);
+      if (!link.eventId) {
+        setWatches([]);
+        void loadEvents();
+      }
+    },
+    [loadEvents]
+  );
+
+  // Back and Forward retrace the entries pushed below.
+  useEffect(() => {
+    const onPopState = () => applyLink(readDeepLink());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [applyLink]);
+
+  function handleSelectEvent(eventId: string) {
+    const link = { eventId, opportunityId: null };
+    pushDeepLink(link);
+    applyLink(link);
   }
 
   function handleBack() {
-    setSelectedEventId(null);
-    setBoard(null);
-    setWatches([]);
-    void loadEvents();
+    const link = { eventId: null, opportunityId: null };
+    pushDeepLink(link);
+    applyLink(link);
+  }
+
+  function handleDismissOpportunity() {
+    replaceDeepLink({ eventId: selectedEventId, opportunityId: null });
+    setPinnedOpportunityId(null);
   }
 
   async function handleRefresh() {
@@ -239,6 +316,22 @@ export function App() {
             <p>{message}</p>
           </div>
         </section>
+
+        {selectedEventId && opportunity && (
+          <OpportunityBanner
+            opportunity={opportunity}
+            board={board}
+            onDismiss={handleDismissOpportunity}
+          />
+        )}
+        {selectedEventId && opportunityNote && (
+          <div className="opportunity-note" role="status">
+            <p>{opportunityNote}</p>
+            <Button variant="ghost" title="Dismiss" onClick={handleDismissOpportunity}>
+              x
+            </Button>
+          </div>
+        )}
 
         <div className="content-grid">
           {selectedEventId ? (
@@ -354,4 +447,15 @@ export function App() {
       )}
     </div>
   );
+}
+
+const INVALID_REASONS: Record<string, string> = {
+  expired: "expired",
+  quote_superseded: "the book has moved since",
+  quote_removed: "the book stopped quoting",
+  missing_timestamp: "no detection time"
+};
+
+function invalidReasonLabel(reason: string | null) {
+  return (reason && INVALID_REASONS[reason]) ?? reason ?? "unknown reason";
 }
