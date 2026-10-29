@@ -22,8 +22,10 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_history_table,
     market_quotes_latest_table,
     markets_table,
+    sport_refreshes_table,
     workflow_events_table,
 )
+from backend.app.infrastructure.persistence.upsert import upsert
 
 
 class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
@@ -156,6 +158,15 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         if row is None:
             return None
         return EventSport(sport=row["sport"], league=row["league"])
+
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
+        """Stamp a sport-wide pull; the Auto-Refresh cooldown runs from here."""
+        upsert(
+            self._require_session(),
+            sport_refreshes_table,
+            {"sport_key": sport_key, "last_refreshed_at": refreshed_at},
+            key_columns=["sport_key"],
+        )
 
     def _ensure_event(
         self,

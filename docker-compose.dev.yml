@@ -21,3 +21,8 @@ services:
       - --reload
       - --reload-dir
       - /app/backend
+  # Same mount, so the worker runs the checked-out code. It has no reloader:
+  # `just refresh` restarts it after a change.
+  auto-refresh:
+    volumes:
+      - ./backend:/app/backend

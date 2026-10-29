@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from backend.app.application.quote_ingestion_service import (
@@ -62,6 +64,7 @@ class RecordingQuoteIngestionUnitOfWork:
         self._fail_on_persist = fail_on_persist
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
+        self.sport_refreshes: list[str] = []
 
     def __enter__(self) -> "RecordingQuoteIngestionUnitOfWork":
         self._staged_events = []
@@ -92,6 +95,9 @@ class RecordingQuoteIngestionUnitOfWork:
 
     def get_event_sport(self, event_id: str) -> EventSport | None:
         return self._event_sport
+
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
+        self.sport_refreshes.append(sport_key)
 
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)

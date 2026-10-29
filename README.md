@@ -145,6 +145,7 @@ for the checked-out branch before Vite starts. Local data is never touched.
 |---|---|---|
 | Frontend source | Vite HMR | nothing |
 | Backend source (`backend/`) | uvicorn `--reload` (source is mounted in dev mode) | nothing |
+| Backend source, for the Auto-Refresh worker | mounted, but no reloader | `just refresh` (restarts the worker) |
 | `pyproject.toml`, `Dockerfile` | image rebuild | `just refresh` |
 | A new migration | Alembic | `just refresh` (or `just migrate`) |
 | `frontend/package.json` | `npm install` | restart `just dev` |
@@ -217,6 +218,8 @@ docker compose logs -f api
 | `GET` | `/watch-intents?event_id=` | List active watch intents |
 | `DELETE` | `/watch-intents/{id}` | Cancel a watch intent |
 | `GET` | `/opportunities?event_id=` | List opportunities with computed validity |
+| `GET` | `/auto-refresh` | Auto-Refresh switch, interval and last refresh outcome |
+| `PUT` | `/auto-refresh` | Turn Auto-Refresh on or off, set the interval (1-60 min) |
 | `GET` | `/test-ui` | Interactive testing dashboard (dev only) |
 
 ### Example: Get a recommendation

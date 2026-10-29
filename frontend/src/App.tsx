@@ -21,6 +21,7 @@ import {
 } from "./lib/api";
 import { type DeepLink, pushDeepLink, readDeepLink, replaceDeepLink } from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
+import { AutoRefreshControl } from "./components/AutoRefreshControl";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
@@ -304,6 +305,7 @@ export function App() {
             <Bell size={14} />
             {watches.length} watches
           </Pill>
+          <AutoRefreshControl />
           <PushToggle />
         </div>
       </header>
