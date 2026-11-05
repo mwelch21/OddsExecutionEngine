@@ -66,6 +66,9 @@
 - A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
 - Per-event refresh is one call to the single-event endpoint. The sport comes from the stored event (or the provider's in-process knowledge), matched against the provider catalog; an event whose sport cannot be resolved fails loudly, never by scanning sport feeds. See ADR-012.
 - Credit figures are reported only when upstream was actually contacted, and a missing figure is `None`, never `0`.
+- Every upstream call, served or refused, hands its quota to the injected `QuotaRecorder` before the provider raises on the response. A recorder failure is logged and never fails the refresh. A response the cache answered records nothing.
+- `OUT_OF_USAGE_CREDITS` is matched on the body's `error_code`, not the status code, and raised as `OutOfUsageCreditsError` (503 from the refresh routes).
+- While Auto-Refresh is paused for credits, its only upstream call is the free `GET /v4/sports` balance check, at most once per interval and only when a watched sport is due.
 
 ## Decisions log policy
 

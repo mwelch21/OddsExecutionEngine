@@ -86,7 +86,8 @@ func (s *Store) FanOut(ctx context.Context, types []string, limit int) (int, err
 	}
 
 	for _, p := range batch {
-		if events.Targeted(p.eventType) {
+		switch events.AudienceOf(p.eventType) {
+		case events.AudienceSubject:
 			// Exactly one delivery, for the destination named in the subject,
 			// and only while it is active.
 			_, err = tx.Exec(ctx, `
@@ -95,7 +96,10 @@ func (s *Store) FanOut(ctx context.Context, types []string, limit int) (int, err
 				WHERE d.id = $3 AND d.disabled_at IS NULL
 				ON CONFLICT (event_id, destination_id) DO NOTHING`,
 				uuid.NewString(), p.id, p.subject)
-		} else {
+		case events.AudienceEveryone, events.AudienceOperator:
+			// Single operator (#14): every active destination is the operator's.
+			// When ownership lands, AudienceOperator must filter to operator
+			// destinations, so a system alert never reaches a user.
 			_, err = tx.Exec(ctx, `
 				INSERT INTO deliveries (id, event_id, destination_id)
 				SELECT gen_random_uuid()::text, $1, d.id FROM destinations d

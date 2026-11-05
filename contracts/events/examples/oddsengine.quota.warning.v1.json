@@ -1,0 +1,14 @@
+{
+  "id": "0b7e4c2a-91d3-4f6e-a5b8-2c9d0e1f3a47",
+  "source": "/oddsengine",
+  "specversion": "1.0",
+  "type": "oddsengine.quota.warning.v1",
+  "time": "2026-11-04T12:00:01+00:00",
+  "dataschema": "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events/oddsengine.quota.warning.v1.json",
+  "data": {
+    "remaining": 47,
+    "used": 453,
+    "floor": 50,
+    "observed_at": "2026-11-04T12:00:00+00:00"
+  }
+}

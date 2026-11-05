@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events/oddsengine.quota.warning.v1.json",
+  "title": "oddsengine.quota.warning.v1",
+  "description": "Remaining upstream credits crossed below the floor (previous >= floor > now). Written once per crossing; re-armed when remaining rises back above the floor. Broadcast to every active destination. It never switches Auto-Refresh off (ADR-016). CloudEvents 1.0 structured mode (ADR-014).",
+  "type": "object",
+  "required": ["id", "source", "specversion", "type", "time", "dataschema", "data"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": { "const": "/oddsengine" },
+    "specversion": { "const": "1.0" },
+    "type": { "const": "oddsengine.quota.warning.v1" },
+    "time": { "type": "string", "format": "date-time" },
+    "dataschema": { "type": "string", "format": "uri" },
+    "data": {
+      "type": "object",
+      "required": ["remaining", "used", "floor", "observed_at"],
+      "properties": {
+        "remaining": { "type": "integer", "minimum": 0, "description": "Credits left after the observed call." },
+        "used": { "type": ["integer", "null"], "minimum": 0, "description": "Credits used this month; null when never reported." },
+        "floor": { "type": "integer", "minimum": 0, "description": "The floor that was crossed: the operator's, or 10% of the plan." },
+        "observed_at": { "type": "string", "format": "date-time", "description": "When the call that crossed the floor was observed." }
+      }
+    }
+  }
+}

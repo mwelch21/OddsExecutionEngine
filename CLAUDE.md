@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`, `quota_observations`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -204,6 +204,7 @@ Ingestion:
 
 - `POST /ingestion/quotes/refresh`
 - `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
+- Both refresh routes return 503 `{code: OUT_OF_USAGE_CREDITS}` when the month's credits are spent
 - `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
 
 Browse:
@@ -229,7 +230,7 @@ Notifications:
 
 Auto-Refresh:
 
-- `GET /auto-refresh` (switch, interval, quota floor, last refresh outcome; defaults to off, 5 minutes)
+- `GET /auto-refresh` (switch, interval, quota floor, last refresh outcome, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
 - `PUT /auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
 
 Dev only:
@@ -261,6 +262,11 @@ Non-negotiable. Read before touching ingestion, the provider, or anything that r
   feeds (404 unknown event, 422 unresolvable sport). See ADR-012.
 - Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
   Only `POST /ingestion/quotes/refresh*` spends.
+- **Every upstream call records a quota observation** (`quota_observations`), served or
+  refused, from headers or the local `markets x regions` count. Crossing below the floor
+  writes one `oddsengine.quota.warning.v1`. Out of credits pauses Auto-Refresh (still on);
+  while paused the worker makes a free `GET /v4/sports` balance check at most once per
+  interval, and resumes once it shows credits. That check is the only other upstream call.
 
 `agents.md` is a symlink to this file, so one edit serves both.
 
@@ -281,6 +287,8 @@ See `docs/flows/_index.md` for full flow documentation.
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
 | DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
 | AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
+| QuotaService | `application/quota_service.py` | Records each upstream call's quota observation; writes the quota warning on a floor crossing (ADR-016) |
+| QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation, derived floor, crossing rule, paused state |
 | AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown: which watched sports are due |
 | auto-refresh worker | `auto_refresh_worker.py` (`odds-auto-refresh`) | Polls every 30s under a Postgres advisory lock; the only automatic refresh path |
 | notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |

@@ -36,6 +36,9 @@ class InMemoryQuoteProvider:
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)
 
+    def check_quota(self) -> None:
+        """Fixtures have no upstream, so there is no balance to check."""
+
     def list_supported_sports(self) -> list[SupportedSport]:
         """Whatever the fixtures cover.
 

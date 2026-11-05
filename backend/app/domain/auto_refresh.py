@@ -12,6 +12,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from backend.app.domain.base import DomainModel
+from backend.app.domain.quota import QuotaStatus
 
 DEFAULT_INTERVAL_MINUTES = 5
 MIN_INTERVAL_MINUTES = 1
@@ -52,12 +53,18 @@ class AutoRefreshOutcome(DomainModel):
 class AutoRefreshStatus(DomainModel):
     settings: AutoRefreshSettings
     last_outcome: AutoRefreshOutcome | None = None
+    quota: QuotaStatus | None = None
 
 
 class AutoRefreshCycleReport(DomainModel):
-    """One poll. `ran` is False when another worker held the cycle lock."""
+    """One poll. `ran` is False when another worker held the cycle lock.
+
+    `paused` is True when credits are exhausted: the switch stays on, but nothing
+    paid is pulled until a balance check shows credits again.
+    """
 
     ran: bool
     enabled: bool = False
+    paused: bool = False
     candidate_sports: list[str] = []
     refreshed: list[AutoRefreshOutcome] = []

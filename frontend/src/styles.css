@@ -1098,3 +1098,51 @@ select {
 .auto-refresh-warn {
   color: var(--warn);
 }
+
+.auto-refresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credit-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.credit-meter {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.credit-meter-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: visible;
+}
+
+.credit-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--good);
+}
+
+.credit-meter-fill.low {
+  background: var(--warn);
+}
+
+.credit-meter-floor {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  background: var(--danger);
+}

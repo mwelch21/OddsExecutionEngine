@@ -102,7 +102,7 @@ func TestOpportunityWithoutExpiryIsAlreadyExpired(t *testing.T) {
 }
 
 func TestOpportunityIsDeliveredToEveryDestination(t *testing.T) {
-	if Targeted(TypeOpportunityIdentifiedV1) {
+	if AudienceOf(TypeOpportunityIdentifiedV1) != AudienceEveryone {
 		t.Fatal("opportunity events fan out to every active destination")
 	}
 	if !slices.Contains(Delivered, TypeOpportunityIdentifiedV1) {
@@ -191,4 +191,45 @@ func loadExample(t *testing.T, eventType string) CloudEvent {
 		t.Fatal(err)
 	}
 	return event
+}
+
+// The quota warning is the operator's alert, never a user's (#14): while there
+// is a single operator that is every active destination.
+func TestQuotaWarningGoesToTheOperatorOnly(t *testing.T) {
+	if AudienceOf(TypeQuotaWarningV1) != AudienceOperator {
+		t.Fatal("quota warnings are for the operator only")
+	}
+	if !slices.Contains(Delivered, TypeQuotaWarningV1) {
+		t.Fatal("quota warnings are not picked up by fan-out")
+	}
+}
+
+func TestQuotaWarningStaysWorthSendingForADay(t *testing.T) {
+	event := loadExample(t, TypeQuotaWarningV1)
+	if got := ExpiresAt(event); !got.Equal(event.Time.Add(24 * time.Hour)) {
+		t.Fatalf("expires at %s, want 24h after %s", got, event.Time)
+	}
+}
+
+func TestRenderQuotaWarning(t *testing.T) {
+	n, err := Render(loadExample(t, TypeQuotaWarningV1), "iPhone", testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Notification{
+		Title: "Credits running low",
+		Body:  "47 credits left · floor 50 · Auto-Refresh stays on",
+		URL:   testOrigin + "/",
+		// One warning per crossing; a later one replaces it rather than stacking.
+		Tag: "quota-warning",
+	}
+	if n != want {
+		t.Fatalf("got  %+v\nwant %+v", n, want)
+	}
+}
+
+func TestDestinationTestGoesToTheDestinationItNames(t *testing.T) {
+	if AudienceOf(TypeDestinationTestV1) != AudienceSubject {
+		t.Fatal("a test notification goes to the one destination in its subject")
+	}
 }

@@ -21,6 +21,7 @@ from backend.app.infrastructure.persistence.schema import (
     opportunities_table,
     order_intents_table,
     public_events_table,
+    quota_observations_table,
     sport_refreshes_table,
     watch_intents_table,
     workflow_events_table,
@@ -50,6 +51,7 @@ def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None
         for table in (
             auto_refresh_settings_table,
             sport_refreshes_table,
+            quota_observations_table,
             deliveries_table,
             destinations_table,
             public_events_table,

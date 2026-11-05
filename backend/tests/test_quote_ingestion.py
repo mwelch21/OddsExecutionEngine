@@ -44,6 +44,9 @@ class RecordingQuoteIngestionProvider:
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._known_event
 
+    def check_quota(self) -> None:
+        pass
+
     def list_supported_sports(self) -> list[SupportedSport]:
         return [
             SupportedSport(key="basketball_nba", sport="basketball", league="NBA"),

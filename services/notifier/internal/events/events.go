@@ -20,10 +20,11 @@ import (
 const (
 	TypeDestinationTestV1       = "oddsengine.destination.test.v1"
 	TypeOpportunityIdentifiedV1 = "oddsengine.opportunity.identified.v1"
+	TypeQuotaWarningV1          = "oddsengine.quota.warning.v1"
 )
 
 // Delivered lists the types fan-out picks up today.
-var Delivered = []string{TypeDestinationTestV1, TypeOpportunityIdentifiedV1}
+var Delivered = []string{TypeDestinationTestV1, TypeOpportunityIdentifiedV1, TypeQuotaWarningV1}
 
 // CloudEvent is the structured-mode envelope stored in public_events.payload.
 type CloudEvent struct {
@@ -63,10 +64,39 @@ type OpportunityIdentifiedData struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
-// Targeted reports whether an event goes to the single destination named in
-// its subject rather than to every active destination.
-func Targeted(eventType string) bool {
-	return eventType == TypeDestinationTestV1
+// QuotaWarningData is the data of quota.warning.v1.
+type QuotaWarningData struct {
+	Remaining  int       `json:"remaining"`
+	Used       *int      `json:"used"`
+	Floor      int       `json:"floor"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+// Audience is who an event type is delivered to.
+type Audience int
+
+const (
+	// AudienceEveryone: every active destination. Once ownership lands (#14)
+	// this narrows to the destinations of the user the event is about.
+	AudienceEveryone Audience = iota
+	// AudienceSubject: exactly the one destination named in the subject.
+	AudienceSubject
+	// AudienceOperator: the operator's destinations only, never a user's. A
+	// system alert such as running out of upstream credits is not for users.
+	// While there is a single operator (#14), that is every active destination.
+	AudienceOperator
+)
+
+// AudienceOf says who receives an event type.
+func AudienceOf(eventType string) Audience {
+	switch eventType {
+	case TypeDestinationTestV1:
+		return AudienceSubject
+	case TypeQuotaWarningV1:
+		return AudienceOperator
+	default:
+		return AudienceEveryone
+	}
 }
 
 // ExpiresAt is when an event stops being worth delivering (ADR-015). Past it,
@@ -84,6 +114,9 @@ func ExpiresAt(event CloudEvent) time.Time {
 			return event.Time
 		}
 		return *data.ExpiresAt
+	case TypeQuotaWarningV1:
+		// Still worth knowing a day later; past that the balance has moved on.
+		return event.Time.Add(24 * time.Hour)
 	default:
 		return event.Time.Add(24 * time.Hour)
 	}
@@ -118,6 +151,18 @@ func Render(event CloudEvent, destinationLabel, appOrigin string) (Notification,
 			return Notification{}, fmt.Errorf("decoding %s data: %w", event.Type, err)
 		}
 		return renderOpportunity(data, appOrigin), nil
+	case TypeQuotaWarningV1:
+		var data QuotaWarningData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return Notification{}, fmt.Errorf("decoding %s data: %w", event.Type, err)
+		}
+		return Notification{
+			Title: "Credits running low",
+			Body: fmt.Sprintf("%d credits left · floor %d · Auto-Refresh stays on",
+				data.Remaining, data.Floor),
+			URL: appOrigin + "/",
+			Tag: "quota-warning",
+		}, nil
 	default:
 		return Notification{}, fmt.Errorf("no renderer for %s", event.Type)
 	}

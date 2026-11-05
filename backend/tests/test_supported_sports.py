@@ -44,6 +44,9 @@ class CountingQuoteProvider:
     def get_event_info(self, event_id: str) -> None:
         return None
 
+    def check_quota(self) -> None:
+        pass
+
     def list_supported_sports(self) -> list[SupportedSport]:
         return list(self._supported)
 

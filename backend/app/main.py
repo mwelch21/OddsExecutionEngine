@@ -17,6 +17,7 @@ from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.recommendation_service import RecommendationService
 from backend.app.composition import (
     build_auto_refresh_service,
+    build_quota_service,
     build_quote_ingestion_service,
     build_watch_intent_service,
 )
@@ -74,10 +75,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     destination_service = DestinationService(
         unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
     )
+    quota_service = build_quota_service(session_factory)
     quote_ingestion_service = build_quote_ingestion_service(
-        app_settings, session_factory, workflow_event_publisher, watch_intent_service
+        app_settings,
+        session_factory,
+        workflow_event_publisher,
+        watch_intent_service,
+        quota_service,
     )
-    auto_refresh_service = build_auto_refresh_service(session_factory, quote_ingestion_service)
+    auto_refresh_service = build_auto_refresh_service(
+        session_factory, quote_ingestion_service, quota_service
+    )
 
     @app.middleware("http")
     async def add_request_context(

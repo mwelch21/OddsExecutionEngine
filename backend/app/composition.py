@@ -6,7 +6,12 @@ without the HTTP hop (ADR-016).
 """
 
 from backend.app.application.auto_refresh_service import AutoRefreshService
-from backend.app.application.ports import QuoteIngestionProvider, WorkflowEventPublisher
+from backend.app.application.ports import (
+    QuotaRecorder,
+    QuoteIngestionProvider,
+    WorkflowEventPublisher,
+)
+from backend.app.application.quota_service import QuotaService
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.config import Settings
@@ -14,6 +19,7 @@ from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEn
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
+from backend.app.engines.quota_engine import QuotaEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
@@ -23,6 +29,7 @@ from backend.app.infrastructure.persistence.auto_refresh_uow import (
     SqlAlchemyAutoRefreshUnitOfWork,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
@@ -32,7 +39,16 @@ from backend.app.infrastructure.persistence.watch_intent_uow import (
 from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 
 
-def build_quote_provider(settings: Settings) -> QuoteIngestionProvider:
+def build_quota_service(session_factory: DatabaseSessionFactory) -> QuotaService:
+    return QuotaService(
+        unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(session_factory),
+        quota_engine=QuotaEngine(),
+    )
+
+
+def build_quote_provider(
+    settings: Settings, quota_recorder: QuotaRecorder | None = None
+) -> QuoteIngestionProvider:
     if settings.quote_provider == "odds_api":
         return TheOddsApiProvider(
             api_key=settings.odds_api_key,
@@ -44,6 +60,8 @@ def build_quote_provider(settings: Settings) -> QuoteIngestionProvider:
             response_cache=InProcessProviderCache(
                 ttl_seconds=settings.provider_cache_ttl_seconds,
             ),
+            # Every upstream call, manual or automatic, records its quota (ADR-016).
+            quota_recorder=quota_recorder,
         )
     return InMemoryQuoteProvider()
 
@@ -72,10 +90,11 @@ def build_quote_ingestion_service(
     session_factory: DatabaseSessionFactory,
     workflow_event_publisher: WorkflowEventPublisher,
     watch_intent_service: WatchIntentService,
+    quota_service: QuotaService,
 ) -> QuoteIngestionService:
     return QuoteIngestionService(
         unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(session_factory),
-        quote_provider=build_quote_provider(settings),
+        quote_provider=build_quote_provider(settings, quota_recorder=quota_service),
         normalization_engine=NormalizationEngine(),
         workflow_event_publisher=workflow_event_publisher,
         watch_intent_service=watch_intent_service,
@@ -85,10 +104,12 @@ def build_quote_ingestion_service(
 def build_auto_refresh_service(
     session_factory: DatabaseSessionFactory,
     quote_ingestion_service: QuoteIngestionService,
+    quota_service: QuotaService,
 ) -> AutoRefreshService:
     return AutoRefreshService(
         unit_of_work_factory=lambda: SqlAlchemyAutoRefreshUnitOfWork(session_factory),
         cycle_lock=PostgresAdvisoryCycleLock(session_factory),
         quote_ingestion_service=quote_ingestion_service,
         cadence_engine=AutoRefreshCadenceEngine(),
+        quota_service=quota_service,
     )

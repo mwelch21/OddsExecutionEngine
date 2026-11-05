@@ -73,12 +73,24 @@ export type AutoRefreshOutcome = {
   error: string | null;
 };
 
+/** The latest credit balance seen upstream; `floor` is the one in force. */
+export type Quota = {
+  remaining: number | null;
+  used: number | null;
+  floor: number | null;
+  source: "headers" | "local";
+  observed_at: string;
+};
+
 /** The operator's switch. Turning it on spends nothing by itself; the worker does. */
 export type AutoRefresh = {
   enabled: boolean;
   interval_minutes: number;
   quota_floor: number | null;
   last_outcome: AutoRefreshOutcome | null;
+  /** Out of credits: still on, but nothing paid is pulled until credits return. */
+  paused: boolean;
+  quota: Quota | null;
 };
 
 export type AutoRefreshSettings = Pick<AutoRefresh, "enabled" | "interval_minutes" | "quota_floor">;

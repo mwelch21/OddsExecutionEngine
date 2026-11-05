@@ -18,6 +18,7 @@ from backend.app.domain.models import MarketType, Opportunity
 PUBLIC_EVENT_SOURCE = "/oddsengine"
 OPPORTUNITY_IDENTIFIED_V1 = "oddsengine.opportunity.identified.v1"
 DESTINATION_TEST_V1 = "oddsengine.destination.test.v1"
+QUOTA_WARNING_V1 = "oddsengine.quota.warning.v1"
 _SCHEMA_BASE_URL = (
     "https://github.com/mwelch21/OddsExecutionEngine/blob/development/contracts/events"
 )
@@ -116,6 +117,15 @@ class DestinationTestDataV1(DomainModel):
     requested_at: UtcIso
 
 
+class QuotaWarningDataV1(DomainModel):
+    """Producer-side model for the quota.warning.v1 data contract."""
+
+    remaining: int = Field(ge=0)
+    used: int | None = Field(ge=0)
+    floor: int = Field(ge=0)
+    observed_at: UtcIso
+
+
 class OpportunityEventContext(DomainModel):
     """What a consumer needs to render an opportunity without a further lookup.
 
@@ -196,6 +206,22 @@ def build_destination_test_public_event(
         data=DestinationTestDataV1(
             destination_id=destination_id,
             requested_at=requested_at,
+        ),
+    )
+
+
+def build_quota_warning_public_event(
+    *, remaining: int, used: int | None, floor: int, observed_at: datetime
+) -> PublicEvent[QuotaWarningDataV1]:
+    """Remaining credits just crossed below the floor (ADR-016). Broadcast to every
+    active destination; it never switches Auto-Refresh off."""
+    return PublicEvent[QuotaWarningDataV1](
+        id=str(uuid4()),
+        type=QUOTA_WARNING_V1,
+        time=datetime.now(UTC),
+        dataschema=_dataschema(QUOTA_WARNING_V1),
+        data=QuotaWarningDataV1(
+            remaining=remaining, used=used, floor=floor, observed_at=observed_at
         ),
     )
 
