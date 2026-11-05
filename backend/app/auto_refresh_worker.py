@@ -13,6 +13,7 @@ from types import FrameType
 
 from backend.app.composition import (
     build_auto_refresh_service,
+    build_quota_service,
     build_quote_ingestion_service,
     build_watch_intent_service,
 )
@@ -43,9 +44,13 @@ def main() -> None:
         price_comparison_service,
         RecommendationEngine(price_comparison_service),
     )
+    quota_service = build_quota_service(session_factory)
     service = build_auto_refresh_service(
         session_factory,
-        build_quote_ingestion_service(settings, session_factory, publisher, watch_intent_service),
+        build_quote_ingestion_service(
+            settings, session_factory, publisher, watch_intent_service, quota_service
+        ),
+        quota_service,
     )
 
     stopping = threading.Event()

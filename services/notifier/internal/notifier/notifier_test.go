@@ -169,6 +169,27 @@ func (h *harness) addOpportunityEvent(at, expiresAt time.Time) string {
 	return id
 }
 
+func (h *harness) addQuotaWarningEvent(at time.Time) string {
+	h.t.Helper()
+	raw, err := os.ReadFile("../../../../contracts/events/examples/" + events.TypeQuotaWarningV1 + ".json")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		h.t.Fatal(err)
+	}
+	id := uuid.NewString()
+	payload["id"], payload["time"] = id, at.Format(time.RFC3339Nano)
+	body, _ := json.Marshal(payload)
+	if _, err := h.pool.Exec(h.ctx,
+		`INSERT INTO public_events (id, type, payload) VALUES ($1, $2, $3::json)`,
+		id, events.TypeQuotaWarningV1, string(body)); err != nil {
+		h.t.Fatal(err)
+	}
+	return id
+}
+
 type deliveryRow struct {
 	destinationID, status string
 	attempts              int
@@ -254,6 +275,26 @@ func TestOpportunityReachesEveryActiveDestinationOnce(t *testing.T) {
 	}
 	if n := len(h.push.requests()); n != 2 {
 		t.Fatalf("push service saw %d requests, want 2", n)
+	}
+}
+
+// Single operator today, so the operator's audience is every active destination.
+func TestQuotaWarningReachesEveryOperatorDestination(t *testing.T) {
+	h := newHarness(t)
+	phone := h.addDestination("iPhone")
+	mac := h.addDestination("Mac")
+	eventID := h.addQuotaWarningEvent(time.Now())
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{}
+	for _, d := range h.deliveries(eventID) {
+		got[d.destinationID] = d.status
+	}
+	if len(got) != 2 || got[phone] != store.StatusDelivered || got[mac] != store.StatusDelivered {
+		t.Fatalf("deliveries = %v, want delivered to both operator destinations", got)
 	}
 }
 

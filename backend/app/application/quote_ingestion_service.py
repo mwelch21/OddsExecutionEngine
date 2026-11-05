@@ -187,6 +187,10 @@ class QuoteIngestionService:
         """The sports a refresh may name."""
         return self._quote_provider.list_supported_sports()
 
+    def check_quota(self) -> None:
+        """A free balance check; the provider records what it reports."""
+        self._quote_provider.check_quota()
+
     def refresh_sport(self, sport: str) -> SportRefreshResult:
         """Refresh all events for a sport."""
         self._assert_sport_supported(sport)

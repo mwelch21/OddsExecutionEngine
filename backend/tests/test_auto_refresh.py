@@ -1,5 +1,5 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -9,17 +9,21 @@ from fastapi.testclient import TestClient
 from sqlalchemy import insert, update
 
 from backend.app.application.auto_refresh_service import AutoRefreshService
+from backend.app.application.quota_service import QuotaService
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.config import Settings
 from backend.app.domain.auto_refresh import AutoRefreshSettings, RefreshOutcomeStatus
 from backend.app.domain.models import ProviderFetchReport, Quote
+from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
 from backend.app.engines.normalization_engine import NormalizationEngine
+from backend.app.engines.quota_engine import QuotaEngine
 from backend.app.infrastructure.persistence.auto_refresh_uow import (
     PostgresAdvisoryCycleLock,
     SqlAlchemyAutoRefreshUnitOfWork,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
@@ -69,21 +73,51 @@ def test_each_sport_runs_on_its_own_cooldown() -> None:
 
 
 class CountingProvider(InMemoryQuoteProvider):
-    """Fixture provider that counts sport-wide pulls and can be made to fail."""
+    """Fixture provider that counts sport-wide pulls and can be made to fail.
+
+    With a quota recorder it reports a balance on every call, as the real provider
+    does; `credits` of 0 makes it answer OUT_OF_USAGE_CREDITS.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.sport_fetches: list[str] = []
         self.catalog_reads = 0
+        self.balance_checks = 0
         self.fail_with: Exception | None = None
+        self.quota_recorder: QuotaService | None = None
+        self.credits = 500
+        self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def list_quotes_for_sport(
         self, sport: str
     ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
         self.sport_fetches.append(sport)
+        self._report_quota(cost=3)
+        if self.credits == 0:
+            raise OutOfUsageCreditsError()
         if self.fail_with is not None:
             raise self.fail_with
         return super().list_quotes_for_sport(sport)
+
+    def check_quota(self) -> None:
+        self.balance_checks += 1
+        self._report_quota(cost=0)
+
+    def _report_quota(self, cost: int) -> None:
+        if self.quota_recorder is None:
+            return
+        out = self.credits == 0
+        self.credits = max(self.credits - cost, 0) if not out else 0
+        self.quota_recorder.record(
+            QuotaReading(
+                credits_remaining=None if out else self.credits,
+                credits_used=None if out else 500 - self.credits,
+                estimated_cost=cost,
+                out_of_credits=out,
+                observed_at=self.clock(),
+            )
+        )
 
     def list_supported_sports(self):  # type: ignore[no-untyped-def]
         self.catalog_reads += 1
@@ -110,8 +144,14 @@ class Harness:
             database_url, seed_demo=True, drop_existing=drop_existing
         )
         self.provider = CountingProvider()
+        self.quota = QuotaService(
+            unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(self.session_factory),
+            quota_engine=QuotaEngine(),
+        )
+        self.provider.quota_recorder = self.quota
         # Real now, not T0: the seeded event starts three days from the real clock.
         self.clock = Clock(datetime.now(UTC))
+        self.provider.clock = self.clock
         self.ingestion = QuoteIngestionService(
             unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(
                 self.session_factory
@@ -128,6 +168,7 @@ class Harness:
             cycle_lock=lock,  # type: ignore[arg-type]
             quote_ingestion_service=self.ingestion,
             cadence_engine=AutoRefreshCadenceEngine(),
+            quota_service=self.quota,
             clock=self.clock,
         )
 
@@ -283,6 +324,59 @@ def test_recording_an_outcome_never_flips_the_switch(harness: Harness) -> None:
     assert (settings.enabled, settings.interval_minutes) == (True, 7)
 
 
+def test_out_of_credits_pauses_auto_refresh_without_switching_it_off(
+    harness: Harness,
+) -> None:
+    harness.switch(True)
+    harness.add_watch()
+    harness.provider.credits = 0
+
+    exhausted = harness.service.run_cycle()
+    harness.clock.now += timedelta(minutes=6)
+    paused = harness.service.run_cycle()
+
+    assert exhausted.refreshed[0].status is RefreshOutcomeStatus.FAILED
+    assert paused.paused is True
+    assert paused.refreshed == []
+    # Only the first, refused pull reached a paid endpoint.
+    assert harness.provider.sport_fetches == [FIXTURE_SPORT_KEY]
+    status = harness.service.get_status()
+    assert status.settings.enabled is True
+    assert status.quota is not None and status.quota.paused is True
+
+
+def test_a_paused_cycle_checks_the_balance_for_free_at_most_once_per_interval(
+    harness: Harness,
+) -> None:
+    harness.switch(True, interval_minutes=5)
+    harness.add_watch()
+    harness.provider.credits = 0
+    harness.service.run_cycle()
+
+    harness.service.run_cycle()
+    harness.clock.now += timedelta(minutes=6)
+    harness.service.run_cycle()
+    harness.service.run_cycle()
+
+    assert harness.provider.balance_checks == 1
+
+
+def test_auto_refresh_resumes_by_itself_once_credits_return(harness: Harness) -> None:
+    harness.switch(True)
+    harness.add_watch()
+    harness.provider.credits = 0
+    harness.service.run_cycle()
+
+    harness.provider.credits = 500  # the monthly reset
+    harness.clock.now += timedelta(minutes=6)
+    resumed = harness.service.run_cycle()
+
+    assert resumed.paused is False
+    assert resumed.refreshed[0].status is RefreshOutcomeStatus.SUCCEEDED
+    status = harness.service.get_status()
+    assert status.quota is not None and status.quota.paused is False
+
+
 # --- API ---------------------------------------------------------------------
 
 
@@ -301,7 +395,51 @@ def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: st
         "interval_minutes": 5,
         "quota_floor": None,
         "last_outcome": None,
+        "paused": False,
+        "quota": None,
     }
+
+
+def test_status_shows_remaining_credits_the_floor_and_the_pause(
+    sqlite_database_url: str,
+) -> None:
+    session_factory = prepare_test_database(sqlite_database_url, seed_demo=False)
+    QuotaService(
+        unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(session_factory),
+        quota_engine=QuotaEngine(),
+    ).record(
+        QuotaReading(
+            credits_remaining=47, credits_used=453, estimated_cost=3, observed_at=T0
+        )
+    )
+
+    body = _client(sqlite_database_url).get("/auto-refresh").json()
+
+    assert body["paused"] is False
+    assert body["quota"] == {
+        "remaining": 47,
+        "used": 453,
+        "floor": 50,
+        "source": "headers",
+        "observed_at": "2026-10-27T12:00:00Z",
+    }
+
+
+def test_a_manual_refresh_out_of_credits_is_a_503_with_the_provider_code(
+    sqlite_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=True)
+
+    def refuse(self: object, sport: str) -> object:
+        raise OutOfUsageCreditsError()
+
+    monkeypatch.setattr(InMemoryQuoteProvider, "list_quotes_for_sport", refuse)
+    client = _client(sqlite_database_url)
+
+    response = client.post("/ingestion/quotes/refresh-sport", json={"sport": FIXTURE_SPORT_KEY})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "OUT_OF_USAGE_CREDITS"
 
 
 def test_settings_survive_a_restart(sqlite_database_url: str) -> None:

@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import httpx
 
+from backend.app.application.ports import QuotaRecorder
 from backend.app.application.provider_cache import ProviderPayload, ProviderResponseCache
 from backend.app.domain.models import (
     EventInfo,
@@ -15,6 +16,7 @@ from backend.app.domain.models import (
     SupportedSport,
     UpstreamQuota,
 )
+from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
 
 SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "icehockey_nhl": ("ice_hockey", "NHL"),
@@ -64,6 +66,23 @@ def _parse_quota(headers: Mapping[str, str]) -> UpstreamQuota:
     )
 
 
+def _is_out_of_credits(response: httpx.Response) -> bool:
+    """Matched on the body's `error_code`: the docs give no status code for it."""
+    if response.is_success:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("error_code") == "OUT_OF_USAGE_CREDITS"
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    if _is_out_of_credits(response):
+        raise OutOfUsageCreditsError()
+    response.raise_for_status()
+
+
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
     """Split Odds API sport key into (sport, league)."""
     if sport_key in SPORT_LEAGUE_MAP:
@@ -93,11 +112,15 @@ class TheOddsApiProvider:
         regions: list[str],
         markets: list[str],
         response_cache: ProviderResponseCache,
+        quota_recorder: QuotaRecorder | None = None,
     ) -> None:
         self._api_key = api_key
         self._regions = ",".join(regions)
         self._markets = ",".join(markets)
+        # The local fallback when headers are absent: a call bills markets x regions.
+        self._call_cost = len(markets) * len(regions)
         self._response_cache = response_cache
+        self._quota_recorder = quota_recorder
         self._client = httpx.Client(timeout=30.0)
         # Cache: event_id → EventInfo, populated on fetch
         self._event_cache: dict[str, EventInfo] = {}
@@ -201,7 +224,7 @@ class TheOddsApiProvider:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", sport)
         quota = self._read_quota(response, sport)
-        response.raise_for_status()
+        _raise_for_status(response)
         return cast(list[dict[str, Any]], response.json()), quota
 
     def _fetch_event_odds(
@@ -221,8 +244,17 @@ class TheOddsApiProvider:
                 extra={"sport": sport, "event_id": event_id},
             )
             return [], quota
-        response.raise_for_status()
+        _raise_for_status(response)
         return [cast(dict[str, Any], response.json())], quota
+
+    def check_quota(self) -> None:
+        """GET /v4/sports: free, and it still carries the quota headers.
+
+        How a paused Auto-Refresh learns that credits are back (ADR-016).
+        """
+        response = self._client.get(ODDS_API_BASE, params={"apiKey": self._api_key})
+        self._read_quota(response, sport=None, cost=0)
+        _raise_for_status(response)
 
     def _get(self, url: str, sport: str) -> httpx.Response:
         params = {
@@ -237,11 +269,22 @@ class TheOddsApiProvider:
         )
         return self._client.get(url, params=params)
 
-    def _read_quota(self, response: httpx.Response, sport: str) -> UpstreamQuota:
+    def _read_quota(
+        self, response: httpx.Response, sport: str | None, cost: int | None = None
+    ) -> UpstreamQuota:
         """Read the quota off a response. Callers do this before raising on it:
         a rejected call is still a call, and what it cost is exactly what an
         operator needs to know when upstream starts failing."""
         quota = _parse_quota(response.headers)
+        self._record_quota(
+            QuotaReading(
+                credits_remaining=quota.credits_remaining,
+                credits_used=_parse_credit_header(response.headers.get("x-requests-used")),
+                estimated_cost=self._call_cost if cost is None else cost,
+                out_of_credits=_is_out_of_credits(response),
+                observed_at=datetime.now(UTC),
+            )
+        )
         logger.info(
             "odds_api.quota",
             extra={
@@ -251,6 +294,15 @@ class TheOddsApiProvider:
             },
         )
         return quota
+
+    def _record_quota(self, reading: QuotaReading) -> None:
+        if self._quota_recorder is None:
+            return
+        try:
+            self._quota_recorder.record(reading)
+        except Exception:
+            # Bookkeeping must never fail the refresh that paid for it.
+            logger.exception("odds_api.quota_record_failed")
 
     def _cache_event(self, event: dict, sport_key: str) -> EventInfo:
         """Extract and cache event metadata."""

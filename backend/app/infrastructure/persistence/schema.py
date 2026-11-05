@@ -231,6 +231,20 @@ auto_refresh_settings_table = Table(
 
 # When each provider sport key was last pulled sport-wide, manual or automatic. The
 # Auto-Refresh cooldown is derived from it; a per-event refresh does not touch it.
+# One row per upstream call (ADR-016). Ordered by id: rows are written under a lock,
+# so insertion order is observation order.
+quota_observations_table = Table(
+    "quota_observations",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("remaining", Integer, nullable=True),
+    Column("used", Integer, nullable=True),
+    Column("source", String(length=16), nullable=False),
+    Column("out_of_credits", Boolean, nullable=False, server_default="false"),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("source IN ('headers', 'local')", name="ck_quota_observations_source"),
+)
+
 sport_refreshes_table = Table(
     "sport_refreshes",
     metadata,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getAutoRefresh, putAutoRefresh, type AutoRefresh } from "../lib/api";
+import { getAutoRefresh, putAutoRefresh, type AutoRefresh, type Quota } from "../lib/api";
 import { ageLabel } from "../lib/format";
 import { Button } from "./primitives";
 
@@ -75,7 +75,10 @@ export function AutoRefreshControl() {
   }
 
   const enabled = status?.enabled ?? false;
+  const paused = status?.paused ?? false;
   const outcome = status?.last_outcome ?? null;
+  const quota = status?.quota ?? null;
+  const pill = creditPill(quota, paused);
 
   return (
     <div className="auto-refresh" ref={rootRef}>
@@ -87,8 +90,13 @@ export function AutoRefreshControl() {
         onClick={() => void toggleOpen()}
       >
         <span className="dot" />
-        Auto-Refresh {status ? (enabled ? "on" : "off") : "…"}
+        Auto-Refresh {status ? (enabled ? (paused ? "paused" : "on") : "off") : "…"}
       </button>
+      {pill && (
+        <span className="credit-pill" role="status">
+          {pill}
+        </span>
+      )}
 
       {open && (
         <div className="auto-refresh-popover" role="dialog" aria-label="Auto-Refresh">
@@ -126,12 +134,67 @@ export function AutoRefreshControl() {
             ~3 credits per refresh per watched sport.
           </p>
 
+          <CreditMeter quota={quota} />
+          {enabled && paused && (
+            <p className="auto-refresh-warn">
+              Paused: out of credits. Stays on and resumes by itself once credits return.
+            </p>
+          )}
+
           <p className={outcome?.status === "failed" ? "auto-refresh-warn" : "auto-refresh-muted"}>
             {outcomeLabel(outcome)}
           </p>
           {error && <p className="auto-refresh-warn">{error}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Low credits or exhausted: shown in the top bar next to the switch. */
+function creditPill(quota: Quota | null, paused: boolean) {
+  if (paused) return "Out of credits";
+  if (quota?.remaining == null || quota.floor == null) return null;
+  return quota.remaining < quota.floor ? `Low credits · ${quota.remaining}` : null;
+}
+
+/** Remaining credits against the plan (used + remaining), with the floor marked. */
+function CreditMeter({ quota }: { quota: Quota | null }) {
+  if (quota?.remaining == null) {
+    return <p className="auto-refresh-muted">Credits: not reported yet</p>;
+  }
+  const plan = quota.used == null ? null : quota.used + quota.remaining;
+  const share = (value: number) => (plan ? `${Math.min((value / plan) * 100, 100)}%` : "0%");
+  const low = quota.floor != null && quota.remaining < quota.floor;
+  const when = ageLabel(quota.observed_at) ?? "at an unknown time";
+  return (
+    <div className="credit-meter">
+      <div className="auto-refresh-row">
+        <span>Credits</span>
+        <span className={low ? "auto-refresh-warn" : undefined}>
+          {quota.remaining}
+          {plan != null && ` / ${plan}`}
+        </span>
+      </div>
+      {plan != null && (
+        <div
+          className="credit-meter-track"
+          role="meter"
+          aria-valuemin={0}
+          aria-valuemax={plan}
+          aria-valuenow={quota.remaining}
+          aria-label="Credits remaining"
+        >
+          <div className={low ? "credit-meter-fill low" : "credit-meter-fill"} style={{ width: share(quota.remaining) }} />
+          {quota.floor != null && (
+            <div className="credit-meter-floor" style={{ left: share(quota.floor) }} title={`Floor ${quota.floor}`} />
+          )}
+        </div>
+      )}
+      <p className="auto-refresh-muted">
+        {quota.floor != null ? `Warns below ${quota.floor} · ` : ""}
+        {quota.source === "local" ? "estimated locally" : "reported by provider"} · {when}
+      </p>
     </div>
   );
 }

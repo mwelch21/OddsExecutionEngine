@@ -1,12 +1,13 @@
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
 from backend.app.application.ports import (
     AutoRefreshCycleLock,
     AutoRefreshUnitOfWorkFactory,
 )
+from backend.app.application.quota_service import QuotaService
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.domain.auto_refresh import (
     AutoRefreshCycleReport,
@@ -16,6 +17,7 @@ from backend.app.domain.auto_refresh import (
     RefreshOutcomeStatus,
 )
 from backend.app.domain.models import EventSport
+from backend.app.domain.quota import OutOfUsageCreditsError
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
 
 
@@ -35,20 +37,25 @@ class AutoRefreshService:
         cycle_lock: AutoRefreshCycleLock,
         quote_ingestion_service: QuoteIngestionService,
         cadence_engine: AutoRefreshCadenceEngine,
+        quota_service: QuotaService,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._cycle_lock = cycle_lock
         self._quote_ingestion_service = quote_ingestion_service
         self._cadence_engine = cadence_engine
+        self._quota_service = quota_service
         self._clock = clock
 
     def get_status(self) -> AutoRefreshStatus:
         with self._unit_of_work_factory() as uow:
-            return AutoRefreshStatus(
-                settings=uow.get_settings(),
-                last_outcome=uow.get_last_outcome(),
-            )
+            settings = uow.get_settings()
+            last_outcome = uow.get_last_outcome()
+        return AutoRefreshStatus(
+            settings=settings,
+            last_outcome=last_outcome,
+            quota=self._quota_service.status(),
+        )
 
     def update_settings(self, settings: AutoRefreshSettings) -> AutoRefreshStatus:
         with self._unit_of_work_factory() as uow:
@@ -58,7 +65,9 @@ class AutoRefreshService:
             "auto_refresh.settings_updated",
             extra={"enabled": saved.enabled, "interval_minutes": saved.interval_minutes},
         )
-        return AutoRefreshStatus(settings=saved, last_outcome=last_outcome)
+        return AutoRefreshStatus(
+            settings=saved, last_outcome=last_outcome, quota=self._quota_service.status()
+        )
 
     def run_cycle(self) -> AutoRefreshCycleReport:
         """One poll: refresh every watched sport whose cooldown has elapsed."""
@@ -81,10 +90,40 @@ class AutoRefreshService:
         due = self._cadence_engine.due_sports(
             candidates, refresh_times, settings.interval_minutes, now
         )
-        outcomes = [self._refresh(sport) for sport in due]
-        return AutoRefreshCycleReport(
-            ran=True, enabled=True, candidate_sports=sorted(candidates), refreshed=outcomes
+        report = AutoRefreshCycleReport(
+            ran=True, enabled=True, candidate_sports=sorted(candidates)
         )
+        if due and self._paused(settings.interval_minutes, now):
+            return report.model_copy(update={"paused": True})
+
+        outcomes: list[AutoRefreshOutcome] = []
+        for sport in due:
+            outcome, out_of_credits = self._refresh(sport)
+            outcomes.append(outcome)
+            if out_of_credits:
+                # The rest would be refused too; the next poll is paused.
+                break
+        return report.model_copy(update={"refreshed": outcomes})
+
+    def _paused(self, interval_minutes: int, now: datetime) -> bool:
+        """Out of credits: stay on, spend nothing, and check the balance for free
+        at most once per interval until credits are back (ADR-016)."""
+        quota = self._quota_service.status()
+        if not quota.paused or quota.latest is None:
+            return False
+        last_seen = quota.latest.observed_at
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=UTC)
+        if last_seen + timedelta(minutes=interval_minutes) > now:
+            return True
+        try:
+            self._quote_ingestion_service.check_quota()
+        except Exception:
+            self._logger.exception("auto_refresh.balance_check_failed")
+            return True
+        still_paused = self._quota_service.status().paused
+        self._logger.info("auto_refresh.balance_checked", extra={"paused": still_paused})
+        return still_paused
 
     def _sport_keys_for(self, watched: list[EventSport]) -> set[str]:
         """Provider keys for stored (sport, league) pairs; never a guessed key."""
@@ -98,8 +137,9 @@ class AutoRefreshService:
             if (entry.sport, entry.league) in wanted
         }
 
-    def _refresh(self, sport: str) -> AutoRefreshOutcome:
+    def _refresh(self, sport: str) -> tuple[AutoRefreshOutcome, bool]:
         started_at = perf_counter()
+        out_of_credits = False
         try:
             result = self._quote_ingestion_service.refresh_sport(sport)
             outcome = AutoRefreshOutcome(
@@ -107,6 +147,15 @@ class AutoRefreshService:
                 status=RefreshOutcomeStatus.SUCCEEDED,
                 at=self._clock(),
                 events_refreshed=len(result.summaries),
+            )
+        except OutOfUsageCreditsError as error:
+            self._logger.warning("auto_refresh.out_of_credits", extra={"sport": sport})
+            out_of_credits = True
+            outcome = AutoRefreshOutcome(
+                sport=sport,
+                status=RefreshOutcomeStatus.FAILED,
+                at=self._clock(),
+                error=str(error),
             )
         except Exception as error:
             # Logged and reported; the next poll carries on regardless.
@@ -129,4 +178,4 @@ class AutoRefreshService:
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
-        return outcome
+        return outcome, out_of_credits

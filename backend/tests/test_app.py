@@ -442,6 +442,7 @@ def test_explicit_migration_path_creates_expected_tables(sqlite_database_url: st
         "opportunities",
         "order_intents",
         "public_events",
+        "quota_observations",
         "sport_refreshes",
         "watch_intents",
         "workflow_events",

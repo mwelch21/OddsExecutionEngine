@@ -24,6 +24,7 @@ from backend.app.domain.models import (
     WatchStatus,
 )
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
+from backend.app.domain.quota import QuotaObservation, QuotaReading
 
 
 class RecommendationUnitOfWork(Protocol):
@@ -70,6 +71,43 @@ class QuoteIngestionProvider(Protocol):
     def get_event_info(self, event_id: str) -> EventInfo | None: ...
 
     def list_supported_sports(self) -> list[SupportedSport]: ...
+
+    def check_quota(self) -> None:
+        """A free upstream balance check; its reading goes to the quota recorder."""
+        ...
+
+
+class QuotaRecorder(Protocol):
+    """Receives the quota of every upstream call, served or refused (ADR-016)."""
+
+    def record(self, reading: QuotaReading) -> None: ...
+
+
+class QuotaUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def lock(self) -> None:
+        """Held until commit: one recorder at a time sees the previous observation."""
+        ...
+
+    def latest_observation(self) -> QuotaObservation | None: ...
+
+    def add_observation(self, observation: QuotaObservation) -> None: ...
+
+    def configured_floor(self) -> int | None: ...
+
+    def stage_public_event(self, event: PublicEvent[DomainModel]) -> None: ...
+
+
+class QuotaUnitOfWorkFactory(Protocol):
+    def __call__(self) -> QuotaUnitOfWork: ...
 
 
 class QuoteIngestionUnitOfWork(Protocol):
