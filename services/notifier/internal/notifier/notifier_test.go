@@ -812,3 +812,62 @@ func TestTwoNotifiersNeverSendTheSameDelivery(t *testing.T) {
 		}
 	}
 }
+
+// Keys that are not a P-256 point and a 16-byte secret can never encrypt:
+// failed at once, not retried for the event's whole max age.
+func TestSubscriptionWithBrokenKeysFailsWithoutRetrying(t *testing.T) {
+	h := newHarness(t)
+	target := h.addDestination("iPhone")
+	if _, err := h.pool.Exec(h.ctx,
+		`UPDATE destinations SET config = '{"p256dh": "bm90LWEta2V5", "auth": "c2hvcnQ"}'::json WHERE id = $1`,
+		target); err != nil {
+		t.Fatal(err)
+	}
+	eventID := h.addTestEvent(target, time.Now())
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.deliveries(eventID)
+	if len(got) != 1 || got[0].status != store.StatusFailed || got[0].lastError == nil ||
+		!strings.Contains(*got[0].lastError, "p256dh") {
+		t.Fatalf("deliveries = %+v, want failed naming the bad key", got)
+	}
+	if n := len(h.push.requests()); n != 0 {
+		t.Fatalf("broken subscription was sent %d times", n)
+	}
+}
+
+// A batch shares one lease. Sends the lease cuts off (the slow one, and the
+// one queued behind it) are left for lease recovery: no error recorded and no
+// backoff, so they go out as soon as the lease is over.
+func TestSendsCutOffByTheLeaseAreLeftForLeaseRecovery(t *testing.T) {
+	h := newHarness(t)
+	h.push.delay = time.Hour
+	target := h.addDestination("iPhone")
+	first := h.addTestEvent(target, time.Now())
+	second := h.addTestEvent(target, time.Now())
+	h.notifier.Lease = time.Second
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, eventID := range []string{first, second} {
+		if got := h.retryState(eventID); got.status != store.StatusPending || got.lastError != nil ||
+			got.dueIn > 0 {
+			t.Fatalf("after the lease ran out: %+v, want pending, nothing recorded, no backoff", got)
+		}
+	}
+
+	h.push.delay = 0
+	time.Sleep(100 * time.Millisecond) // the lease is already over
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, eventID := range []string{first, second} {
+		if got := h.deliveries(eventID); got[0].status != store.StatusDelivered || got[0].attempts != 2 {
+			t.Fatalf("delivery of %s = %+v, want delivered on attempt 2", eventID, got[0])
+		}
+	}
+}

@@ -130,7 +130,7 @@ flowchart LR
 | Display | Opportunity: title `Away @ Home`, body `Selection price @ book · target price · fillable`, tap opens `/?event=<id>&opportunity=<id>`. The app does not read those params yet (#71). |
 | Worker | 30-second sweep, 60-second lease, fresh claim token; stale results cannot overwrite a newer claim. `dispatched_at` means fan-out completed. |
 | Runtime | Mac must remain awake and online, with app and notifier running. After a branch switch, rebuild the notifier image (`just refresh` once #84 lands). |
-| Outcomes | 2xx `delivered`. 429/5xx/network: retried, backoff step 10s doubling to a 15 min cap, equal jitter; a retry past max age is `expired`. 404/410 `gone`: destination soft-disabled, its pending deliveries `gone`. Other 4xx or an oversize payload: `failed`. |
+| Outcomes | 2xx `delivered`. 429/5xx/network: retried, backoff step 10s doubling to a 15 min cap, equal jitter; a retry past max age is `expired`. 404/410 `gone`: destination soft-disabled, its pending deliveries `gone`. Other 4xx, oversize payload or broken subscription keys: `failed`. Lease ran out mid-send: nothing recorded, lease recovery resends. |
 | Manual validation | 2026-10-26: opportunity notification delivered to Mac and iPhone; iPhone cold-launch tap opened the Home Screen app (#72). |
 | Operator commands | See [Web Push runbook](../../runbooks/web-push.md). Run repo commands from repository root. |
 <!-- /ff -->

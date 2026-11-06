@@ -32,10 +32,12 @@ a phone). Apple endpoints get Declarative Web Push (`"web_push": 8030`), so iOS
 | 2xx | `delivered` |
 | 429, 5xx, network error | retried: backoff step 10s doubling to a 15 min cap, equal jitter (5–10s first); `expired` once the next try would pass max age |
 | 404, 410 | `gone`; the destination is soft-disabled and its other pending deliveries are `gone` |
-| other 4xx, or a payload that can never fit | `failed`, permanent, `last_error` kept |
+| other 4xx, a payload that can never fit, or broken subscription keys | `failed`, permanent, `last_error` kept |
+| no answer before the lease ends, or shutdown mid-send | nothing recorded; lease recovery sends it again, no backoff |
 
 A claim whose lease (60s) ran out is taken over by any notifier; the claim
-token fences the old worker's late result.
+token fences the old worker's late result. A batch shares one lease, so a slow
+push service can cut off sends queued late in it; those go out on recovery.
 
 ## Run
 

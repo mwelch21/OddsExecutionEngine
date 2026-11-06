@@ -114,7 +114,12 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 		// Shutting down mid-send: record nothing, exactly as if the process had
 		// died. Another worker retries once the lease runs out.
 		log.Info("delivery.abandoned_on_shutdown")
-	case errors.Is(err, push.ErrInvalidPayload):
+	case err != nil && errors.Is(sendCtx.Err(), context.DeadlineExceeded):
+		// The lease ran out before an answer came. Record nothing, as on
+		// shutdown: the claim may already be another worker's, and lease
+		// recovery sends it again without a backoff.
+		log.Warn("delivery.lease_ran_out", "attempts", claim.Attempts)
+	case errors.Is(err, push.ErrUnsendable):
 		n.record(ctx, log, claim, store.StatusFailed, err.Error())
 	case err != nil:
 		n.retry(ctx, log, claim, err.Error())
