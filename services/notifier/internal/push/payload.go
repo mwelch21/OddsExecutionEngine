@@ -2,6 +2,7 @@ package push
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -12,6 +13,10 @@ import (
 // MaxPayloadBytes keeps the plaintext inside one 4096-byte Web Push record
 // once aes128gcm adds its header, padding delimiter and tag (RFC 8291).
 const MaxPayloadBytes = 3993
+
+// ErrUnsendable means the notification or subscription can never be sent as
+// it stands, so a retry cannot help.
+var ErrUnsendable = errors.New("unsendable push")
 
 // declarativeMagic marks a Declarative Web Push message (WebKit, iOS 18.4+).
 const declarativeMagic = 8030
@@ -46,10 +51,11 @@ func Payload(endpoint string, n events.Notification) ([]byte, error) {
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encoding notification: %w", err)
+		return nil, fmt.Errorf("%w: encoding notification: %w", ErrUnsendable, err)
 	}
 	if len(raw) > MaxPayloadBytes {
-		return nil, fmt.Errorf("notification is %d bytes, over the %d-byte Web Push limit", len(raw), MaxPayloadBytes)
+		return nil, fmt.Errorf("%w: notification is %d bytes, over the %d-byte Web Push limit",
+			ErrUnsendable, len(raw), MaxPayloadBytes)
 	}
 	return raw, nil
 }

@@ -23,6 +23,7 @@ const (
 	StatusDelivered = "delivered"
 	StatusFailed    = "failed"
 	StatusExpired   = "expired"
+	StatusGone      = "gone"
 )
 
 // ErrStaleClaim means the claim token no longer matches: the lease ran out and
@@ -182,7 +183,8 @@ func (s *Store) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([
 }
 
 // Record stores a final outcome, but only while the claim token still
-// matches. A worker whose lease expired gets ErrStaleClaim and must drop its
+// matches. StatusGone also soft-disables the destination and marks its other
+// pending deliveries gone; StatusDelivered stamps the destination. A worker whose lease expired gets ErrStaleClaim and must drop its
 // result, so it can never overwrite a newer worker's outcome.
 func (s *Store) Record(ctx context.Context, claim Claim, status, lastError string) error {
 	tx, err := s.pool.Begin(ctx)
@@ -209,6 +211,23 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 	if tag.RowsAffected() == 0 {
 		return ErrStaleClaim
 	}
+	if status == StatusGone {
+		// The subscription no longer exists: soft-disable the destination (a
+		// fresh subscribe from the browser reactivates it) and give up on
+		// everything else queued for it. A worker mid-send on one of those finds
+		// it no longer pending, so its result is dropped as stale.
+		if _, err := tx.Exec(ctx, `
+			UPDATE destinations SET disabled_at = now(), disabled_reason = 'gone'
+			WHERE id = $1 AND disabled_at IS NULL`, claim.DestinationID); err != nil {
+			return fmt.Errorf("disabling destination %s: %w", claim.DestinationID, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE deliveries SET status = 'gone', last_error = $2, locked_until = NULL
+			WHERE destination_id = $1 AND status = 'pending'`,
+			claim.DestinationID, "destination is gone"); err != nil {
+			return fmt.Errorf("giving up deliveries to %s: %w", claim.DestinationID, err)
+		}
+	}
 	if status == StatusDelivered {
 		// Convenience only: deliveries stay the source of truth.
 		if _, err := tx.Exec(ctx,
@@ -218,6 +237,26 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// Retry hands a delivery back for another attempt after delay, keeping the
+// error that caused it. Fenced like Record: a stale claim gets ErrStaleClaim.
+// next_attempt_at is computed on the database clock, the one ClaimDue reads.
+func (s *Store) Retry(ctx context.Context, claim Claim, delay time.Duration, lastError string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE deliveries
+		SET next_attempt_at = now() + make_interval(secs => $3),
+		    last_error = $4,
+		    locked_until = NULL
+		WHERE id = $1 AND claim_token = $2 AND status = 'pending'`,
+		claim.DeliveryID, claim.Token, delay.Seconds(), lastError)
+	if err != nil {
+		return fmt.Errorf("scheduling retry of delivery %s: %w", claim.DeliveryID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStaleClaim
+	}
+	return nil
 }
 
 // Listen opens a dedicated connection subscribed to the outbox channel.

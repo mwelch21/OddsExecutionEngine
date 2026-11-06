@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,25 @@ type Notifier struct {
 	Now       func() time.Time
 	// AppOrigin is the PWA's origin; notification links are absolute under it.
 	AppOrigin string
+	// Jitter returns a value in [0, 1) that spreads retries out (rand.Float64).
+	Jitter func() float64
+}
+
+// Retry delays grow from retryBase, doubling per attempt, up to retryCap.
+const (
+	retryBase = 10 * time.Second
+	retryCap  = 15 * time.Minute
+)
+
+// backoff is the delay before the attempt after `attempts` failed ones:
+// exponential, capped, with "equal jitter" so it is never shorter than half
+// the step. jitter is in [0, 1).
+func backoff(attempts int, jitter float64) time.Duration {
+	step := retryCap
+	if shift := attempts - 1; shift < 32 && retryBase<<shift < retryCap {
+		step = retryBase << shift
+	}
+	return step/2 + time.Duration(jitter*float64(step/2))
 }
 
 // RunOnce fans out every pending event, then works every due delivery. It is
@@ -53,6 +73,10 @@ func (n *Notifier) RunOnce(ctx context.Context) error {
 			return err
 		}
 		for _, claim := range claims {
+			if ctx.Err() != nil {
+				// Shutting down: unsent claims come back when their lease runs out.
+				return ctx.Err()
+			}
 			n.deliver(ctx, claim)
 		}
 		if len(claims) < n.BatchSize {
@@ -85,15 +109,51 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 		Endpoint: claim.Endpoint, P256dh: claim.P256dh, Auth: claim.Auth,
 	}, notification, remaining)
 
-	switch {
-	case err != nil:
-		// Retries with backoff arrive with "Delivery resilience" (#73).
+	switch code := result.StatusCode; {
+	case ctx.Err() != nil:
+		// Shutting down mid-send: record nothing, exactly as if the process had
+		// died. Another worker retries once the lease runs out.
+		log.Info("delivery.abandoned_on_shutdown")
+	case err != nil && errors.Is(sendCtx.Err(), context.DeadlineExceeded):
+		// The lease ran out before an answer came. Record nothing, as on
+		// shutdown: the claim may already be another worker's, and lease
+		// recovery sends it again without a backoff.
+		log.Warn("delivery.lease_ran_out", "attempts", claim.Attempts)
+	case errors.Is(err, push.ErrUnsendable):
 		n.record(ctx, log, claim, store.StatusFailed, err.Error())
-	case result.StatusCode >= 200 && result.StatusCode < 300:
+	case err != nil:
+		n.retry(ctx, log, claim, err.Error())
+	case code >= 200 && code < 300:
 		n.record(ctx, log, claim, store.StatusDelivered, "")
+	case code == http.StatusNotFound || code == http.StatusGone:
+		n.record(ctx, log, claim, store.StatusGone, pushAnswer(result))
+	case code == http.StatusTooManyRequests || code >= 500:
+		n.retry(ctx, log, claim, pushAnswer(result))
 	default:
-		n.record(ctx, log, claim, store.StatusFailed,
-			fmt.Sprintf("push service answered %d: %s", result.StatusCode, result.Body))
+		n.record(ctx, log, claim, store.StatusFailed, pushAnswer(result))
+	}
+}
+
+func pushAnswer(result push.Result) string {
+	return fmt.Sprintf("push service answered %d: %s", result.StatusCode, result.Body)
+}
+
+// retry schedules another attempt with backoff, or gives up as expired when
+// that attempt would land past the event's max age (ADR-015).
+func (n *Notifier) retry(ctx context.Context, log *slog.Logger, claim store.Claim, reason string) {
+	delay := backoff(claim.Attempts, n.Jitter())
+	if !n.Now().Add(delay).Before(events.ExpiresAt(claim.Event)) {
+		n.record(ctx, log, claim, store.StatusExpired, "gave up: "+reason)
+		return
+	}
+	err := n.Store.Retry(ctx, claim, delay, reason)
+	switch {
+	case errors.Is(err, store.ErrStaleClaim):
+		log.Warn("delivery.stale_claim_dropped", "status", store.StatusPending)
+	case err != nil:
+		log.Error("delivery.retry_failed", "error", err)
+	default:
+		log.Warn("delivery.retrying", "attempts", claim.Attempts, "in", delay.String(), "reason", reason)
 	}
 }
 
