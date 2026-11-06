@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"syscall"
@@ -48,6 +49,7 @@ func run(log *slog.Logger) error {
 		Lease:     cfg.ClaimLease,
 		Now:       time.Now,
 		AppOrigin: cfg.AppOrigin,
+		Jitter:    rand.Float64,
 	}
 
 	// Reconnect the listener with backoff: Postgres restarts and a stack that

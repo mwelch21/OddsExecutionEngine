@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,7 +35,14 @@ type fakePushService struct {
 	mu     sync.Mutex
 	hits   []*http.Request
 	status int
+	// script answers the next requests in order, before falling back to status.
+	// fakeDrop closes the connection without answering: a network error.
+	script []int
+	// delay holds every answer back, widening any window for a double send.
+	delay time.Duration
 }
+
+const fakeDrop = -1
 
 func newFakePushService(t *testing.T) *fakePushService {
 	f := &fakePushService{status: http.StatusCreated}
@@ -43,7 +51,21 @@ func newFakePushService(t *testing.T) *fakePushService {
 		f.mu.Lock()
 		f.hits = append(f.hits, r)
 		status := f.status
+		if len(f.script) > 0 {
+			status, f.script = f.script[0], f.script[1:]
+		}
+		delay := f.delay
 		f.mu.Unlock()
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+		if status == fakeDrop {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
 		w.WriteHeader(status)
 	}))
 	t.Cleanup(f.server.Close)
@@ -97,6 +119,7 @@ func newHarness(t *testing.T) *harness {
 			Lease:     time.Minute,
 			Now:       time.Now,
 			AppOrigin: "https://phone.tailnet.ts.net",
+			Jitter:    mathrand.Float64,
 		},
 	}
 }
@@ -149,6 +172,12 @@ func (h *harness) addTestEvent(destinationID string, at time.Time) string {
 // API does, from the contract example, with three matching books.
 func (h *harness) addOpportunityEvent(at, expiresAt time.Time) string {
 	h.t.Helper()
+	return h.addOpportunityEventWith(at, expiresAt, func(map[string]any) {})
+}
+
+// addOpportunityEventWith lets a test change the event's data before it is written.
+func (h *harness) addOpportunityEventWith(at, expiresAt time.Time, edit func(data map[string]any)) string {
+	h.t.Helper()
 	raw, err := os.ReadFile("../../../../contracts/events/examples/" + events.TypeOpportunityIdentifiedV1 + ".json")
 	if err != nil {
 		h.t.Fatal(err)
@@ -160,6 +189,7 @@ func (h *harness) addOpportunityEvent(at, expiresAt time.Time) string {
 	id := uuid.NewString()
 	payload["id"], payload["time"] = id, at.Format(time.RFC3339Nano)
 	payload["data"].(map[string]any)["expires_at"] = expiresAt.Format(time.RFC3339Nano)
+	edit(payload["data"].(map[string]any))
 	body, _ := json.Marshal(payload)
 	if _, err := h.pool.Exec(h.ctx,
 		`INSERT INTO public_events (id, type, payload) VALUES ($1, $2, $3::json)`,
@@ -523,4 +553,262 @@ func TestSweepDeliversAnEventWhoseNotifyWasMissed(t *testing.T) {
 	eventID := h.addTestEvent(target, time.Now())
 
 	h.waitForStatus(eventID, store.StatusDelivered, 3*time.Second)
+}
+
+type retryRow struct {
+	status         string
+	attempts       int
+	lastError      *string
+	dueIn          time.Duration
+	lockedUntilSet bool
+}
+
+func (h *harness) retryState(eventID string) retryRow {
+	h.t.Helper()
+	var r retryRow
+	var dueInSeconds float64
+	if err := h.pool.QueryRow(h.ctx, `
+		SELECT status, attempts, last_error,
+		       extract(epoch FROM next_attempt_at - now())::float8,
+		       locked_until IS NOT NULL
+		FROM deliveries WHERE event_id = $1`, eventID).Scan(
+		&r.status, &r.attempts, &r.lastError, &dueInSeconds, &r.lockedUntilSet); err != nil {
+		h.t.Fatal(err)
+	}
+	r.dueIn = time.Duration(dueInSeconds * float64(time.Second))
+	return r
+}
+
+// makeDue fast-forwards every pending delivery's retry to now.
+func (h *harness) makeDue() {
+	h.t.Helper()
+	if _, err := h.pool.Exec(h.ctx,
+		`UPDATE deliveries SET next_attempt_at = now() WHERE status = 'pending'`); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestTransientAnswersAreRetriedWithBackoffUntilDelivered(t *testing.T) {
+	for name, answer := range map[string]int{
+		"429": http.StatusTooManyRequests, "503": http.StatusServiceUnavailable,
+		"network error": fakeDrop,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.push.script = []int{answer}
+			target := h.addDestination("iPhone")
+			eventID := h.addTestEvent(target, time.Now())
+
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+			got := h.retryState(eventID)
+			if got.status != store.StatusPending || got.attempts != 1 || got.lastError == nil ||
+				got.lockedUntilSet || got.dueIn <= 0 {
+				t.Fatalf("after a transient answer: %+v, want pending, unlocked, due later, error kept", got)
+			}
+
+			// Not due yet: a second cycle must not send again.
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if n := len(h.push.requests()); n != 1 {
+				t.Fatalf("push service saw %d requests before the retry was due, want 1", n)
+			}
+
+			h.makeDue()
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.deliveries(eventID); got[0].status != store.StatusDelivered || got[0].attempts != 2 {
+				t.Fatalf("after the retry: %+v, want delivered on attempt 2", got[0])
+			}
+		})
+	}
+}
+
+func TestGoneSubscriptionDisablesTheDestinationAndItsPendingDeliveries(t *testing.T) {
+	for name, answer := range map[string]int{"404": http.StatusNotFound, "410": http.StatusGone} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.push.status = answer
+			phone := h.addDestination("iPhone")
+			mac := h.addDestination("Mac")
+			// BatchSize 1 keeps the phone's second delivery queued behind the first
+			// answer, so it is pending when the phone turns out to be gone.
+			h.notifier.BatchSize = 1
+			first := h.addTestEvent(phone, time.Now())
+			second := h.addTestEvent(phone, time.Now())
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, eventID := range []string{first, second} {
+				if got := h.deliveries(eventID); got[0].status != store.StatusGone {
+					t.Fatalf("delivery of %s = %+v, want gone", eventID, got[0])
+				}
+			}
+			if n := len(h.push.requests()); n != 1 {
+				t.Fatalf("push service saw %d requests, want 1: the rest were never sent", n)
+			}
+			var reason *string
+			h.pool.QueryRow(h.ctx, `SELECT disabled_reason FROM destinations WHERE id = $1 AND disabled_at IS NOT NULL`,
+				phone).Scan(&reason) //nolint:errcheck // asserted below
+			if reason == nil || *reason != "gone" {
+				t.Fatalf("phone disabled_reason = %v, want gone", reason)
+			}
+
+			// A later event skips the gone phone and still reaches the Mac.
+			h.push.status = http.StatusCreated
+			later := h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour))
+			h.notifier.BatchSize = 20
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.deliveries(later); len(got) != 1 || got[0].destinationID != mac {
+				t.Fatalf("later deliveries = %+v, want only the Mac", got)
+			}
+		})
+	}
+}
+
+// A notification too big for Web Push will never fit: failed, not retried.
+func TestOversizedNotificationFailsWithoutRetrying(t *testing.T) {
+	h := newHarness(t)
+	h.addDestination("iPhone")
+	eventID := h.addOpportunityEventWith(time.Now(), time.Now().Add(time.Hour), func(data map[string]any) {
+		data["selection"] = strings.Repeat("new york knicks ", 300)
+	})
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.deliveries(eventID)
+	if len(got) != 1 || got[0].status != store.StatusFailed || got[0].lastError == nil ||
+		!strings.Contains(*got[0].lastError, "limit") {
+		t.Fatalf("deliveries = %+v, want failed over the size limit", got)
+	}
+	if n := len(h.push.requests()); n != 0 {
+		t.Fatalf("oversized notification was sent %d times", n)
+	}
+}
+
+// The shortest retry (5s) lands past this test event's 10-minute max age, so
+// the notifier gives up now instead of scheduling a send nobody wants.
+func TestRetryThatWouldLandPastMaxAgeExpires(t *testing.T) {
+	h := newHarness(t)
+	h.push.status = http.StatusServiceUnavailable
+	target := h.addDestination("iPhone")
+	eventID := h.addTestEvent(target, time.Now().Add(-10*time.Minute+2*time.Second))
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.deliveries(eventID)
+	if len(got) != 1 || got[0].status != store.StatusExpired || got[0].lastError == nil ||
+		!strings.Contains(*got[0].lastError, "503") {
+		t.Fatalf("deliveries = %+v, want expired with the 503 kept", got)
+	}
+}
+
+// A notifier killed mid-send records nothing and leaves only its lease
+// behind. Once the lease runs out, a restarted notifier sends it.
+func TestDeliveryInFlightWhenTheNotifierIsKilledIsRetriedAfterItsLease(t *testing.T) {
+	h := newHarness(t)
+	h.push.delay = time.Hour // the first send never answers
+	target := h.addDestination("iPhone")
+	eventID := h.addTestEvent(target, time.Now())
+
+	doomed := *h.notifier
+	doomed.Lease = time.Second
+	ctx, kill := context.WithCancel(h.ctx)
+	done := make(chan error)
+	go func() { done <- doomed.RunOnce(ctx) }()
+	for len(h.push.requests()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	kill()
+	<-done
+	if got := h.retryState(eventID); got.status != store.StatusPending || got.lastError != nil {
+		t.Fatalf("after the kill: %+v, want pending with nothing recorded", got)
+	}
+
+	h.push.delay = 0
+	// Restarted inside the lease: the claim still belongs to the dead worker.
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.push.requests()); n != 1 {
+		t.Fatalf("delivery under a live lease was sent again (%d requests)", n)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); got[0].status != store.StatusDelivered || got[0].attempts != 2 {
+		t.Fatalf("delivery = %+v, want delivered on attempt 2", got[0])
+	}
+}
+
+// A retry scheduled before the notifier stopped, still pending when it comes
+// back past the event's max age, expires instead of sending stale news.
+func TestRetryThatAgedOutWhileTheNotifierWasStoppedExpiresOnRestart(t *testing.T) {
+	h := newHarness(t)
+	h.push.script = []int{http.StatusServiceUnavailable}
+	target := h.addDestination("iPhone")
+	eventID := h.addTestEvent(target, time.Now())
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedAt := time.Now().Add(11 * time.Minute)
+	h.notifier.Now = func() time.Time { return restartedAt }
+	h.makeDue()
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := h.deliveries(eventID); got[0].status != store.StatusExpired {
+		t.Fatalf("delivery = %+v, want expired", got[0])
+	}
+	if n := len(h.push.requests()); n != 1 {
+		t.Fatalf("push service saw %d requests, want only the first attempt", n)
+	}
+}
+
+func TestTwoNotifiersNeverSendTheSameDelivery(t *testing.T) {
+	h := newHarness(t)
+	h.push.delay = 20 * time.Millisecond
+	destinations := []string{h.addDestination("iPhone"), h.addDestination("Mac")}
+	var eventIDs []string
+	for range 15 {
+		eventIDs = append(eventIDs, h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour)))
+	}
+
+	other := *h.notifier
+	h.notifier.BatchSize, other.BatchSize = 3, 3
+	var wg sync.WaitGroup
+	for _, n := range []*Notifier{h.notifier, &other} {
+		wg.Go(func() {
+			if err := n.RunOnce(h.ctx); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+
+	want := len(destinations) * len(eventIDs)
+	if n := len(h.push.requests()); n != want {
+		t.Fatalf("push service saw %d requests, want exactly %d", n, want)
+	}
+	for _, eventID := range eventIDs {
+		for _, d := range h.deliveries(eventID) {
+			if d.status != store.StatusDelivered || d.attempts != 1 {
+				t.Fatalf("delivery = %+v, want delivered on the one attempt", d)
+			}
+		}
+	}
 }

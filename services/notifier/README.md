@@ -27,7 +27,15 @@ Links are absolute under `APP_ORIGIN`, the PWA's origin (your `*.ts.net` URL on
 a phone). Apple endpoints get Declarative Web Push (`"web_push": 8030`), so iOS
 18.4+ opens the link itself without the service worker.
 
-Retries, `gone` and lease recovery tests arrive with "Delivery resilience" (#73).
+| Push service answers | Delivery becomes |
+|---|---|
+| 2xx | `delivered` |
+| 429, 5xx, network error | retried: backoff step 10s doubling to a 15 min cap, equal jitter (5–10s first); `expired` once the next try would pass max age |
+| 404, 410 | `gone`; the destination is soft-disabled and its other pending deliveries are `gone` |
+| other 4xx, or a payload that can never fit | `failed`, permanent, `last_error` kept |
+
+A claim whose lease (60s) ran out is taken over by any notifier; the claim
+token fences the old worker's late result.
 
 ## Run
 

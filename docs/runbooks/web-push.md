@@ -132,5 +132,9 @@ notifications per opportunity on that Mac.
 ## Limits in v1
 
 - Notifications arrive only while the Mac is awake, online, and running the stack.
-- No retries yet, and dead subscriptions stay active: both come with
-  "Delivery resilience" (#73).
+- 429, 5xx and network errors are retried with exponential backoff (a 10s
+  step doubling to a 15 min cap, equal jitter: the first retry is 5–10s) until the event's max age, then `expired`.
+- A subscription the push service answers 404/410 for is `gone`: the
+  destination is soft-disabled (`disabled_reason = gone`) and its queued
+  deliveries are dropped. Tapping **Enable notifications** on that device again
+  reactivates it. Any other 4xx is `failed` for good, with `last_error` kept.
