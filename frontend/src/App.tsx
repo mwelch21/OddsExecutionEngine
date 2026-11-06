@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, CheckCircle2, RadioTower, TrendingUp } from "lucide-react";
 import {
   cancelWatch,
@@ -40,7 +40,7 @@ type LoadState = "idle" | "loading" | "ready" | "error";
  */
 const REFRESH_COOLDOWN_SECONDS = 15;
 
-export function App() {
+export function App({ topbar }: { topbar?: ReactNode } = {}) {
   const [sports, setSports] = useState<SupportedSport[]>([]);
   const [refreshSportKey, setRefreshSportKey] = useState("");
   const [league, setLeague] = useState<string | null>(null);
@@ -286,6 +286,7 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {topbar ?? (
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark">
@@ -309,6 +310,7 @@ export function App() {
           <PushToggle />
         </div>
       </header>
+      )}
 
       <main className="workspace">
         <section className="hero-strip">
