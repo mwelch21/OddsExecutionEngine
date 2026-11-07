@@ -19,4 +19,4 @@ ADRs live one per file in [`docs/adr/`](../adr/), numbered `NNNN-slug.md`. Add a
 - [ADR-015: Public events fan out into independently retryable deliveries](../adr/0015-public-events-fan-out-into-independently-retryable-deliveries.md)
 - [ADR-016: Auto-Refresh is the only automatic refresh path](../adr/0016-auto-refresh-is-the-only-automatic-refresh-path.md)
 - [ADR-017: A watch has an explicit window across the event lifecycle](../adr/0017-a-watch-has-an-explicit-window-across-the-event-lifecycle.md)
-- [ADR-018: The frontend uses path routes and reaches the API under `/api`](../adr/0018-frontend-uses-path-routes-and-reaches-the-api-under-api.md)
+- [ADR-018: The frontend uses path routes and reaches the API under `/api/v1`](../adr/0018-frontend-uses-path-routes-and-reaches-the-api-under-api.md)
