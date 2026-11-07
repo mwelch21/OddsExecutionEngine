@@ -1,4 +1,4 @@
-# ADR-018: The frontend uses path routes and reaches the API under `/api`
+# ADR-018: The frontend uses path routes and reaches the API under `/api/v1`
 
 - Status: accepted
 - Date: 2026-11-06
@@ -11,7 +11,9 @@ The Admin view (#90) adds a whole page with three tabs. Squeezing it into query 
 
 ## Decision
 
-- **One API namespace on the shared origin.** The frontend calls the API under `/api/*`. The proxy (Vite in development, whatever fronts the app when hosted) forwards `/api/*` to FastAPI **and strips the prefix**. Backend routes are unchanged: the public API contract keeps its paths, and a consumer on its own hostname never sees `/api`.
+- **One versioned API path, the same everywhere** (amended 2026-11-07, #93). FastAPI mounts every router under `/api/v1`. The proxy (Vite in development, whatever fronts the app when hosted) forwards `/api/*` unchanged, with no prefix strip. The UI, the proxy and any future consumer use the same path. `/health` moves to `/api/health` and stays unversioned, because it is an ops probe, not contract.
+- **Version policy.** `v1` is the only version. An additive change keeps `v1`. A breaking change adds a `/api/v2` router beside `v1`, and `v1` stays until no consumer uses it. This is the same rule as the public event contract (ADR-014). A deprecation process waits until a second consumer exists.
+- **Operator routes under one prefix.** Auto-Refresh and the Admin view reads live under `/api/v1/admin`, so one hook can gate them when auth arrives (#14). Destinations stay outside it, because each device owner registers their own.
 - **Path routes in the frontend.** Every non-`/api` path is served the app shell (SPA fallback), and the app reads `location.pathname`:
   - `/`: Home
   - `/events/<id>` (with optional `?opportunity=<id>`): the line board, with that opportunity pinned
@@ -22,11 +24,11 @@ The Admin view (#90) adds a whole page with three tabs. Squeezing it into query 
 ## Rejected alternatives
 
 - **Keep everything at `/` with query params:** works, but it makes the proxy's prefix list decide what the UI may call its pages.
-- **Move the backend routes themselves under `/api`:** breaks every existing public path for a concern that belongs to the shared-origin proxy.
+- **Keep backend paths and strip `/api` in the proxy** (the first version of this ADR): avoids a one-time path break, but needs a rewrite rule in every proxy and leaves no place for a version. The operator is the only consumer today, so the break is cheapest now.
 - **Separate hostnames for UI and API:** removes the clash, but adds CORS and a second Tailscale Serve name for no gain while the stack runs on one machine.
 
 ## Consequences
 
 - Supersedes the root-plus-query-params part of #66. `deepLink.ts`, the frontend API client, the dev proxy and the notifier's link builder all change.
-- Whatever serves the built frontend later (hosting is a separate effort) must provide the `/api` strip-proxy and the SPA fallback.
+- Whatever serves the built frontend later (hosting is a separate effort) must forward `/api/*` unchanged and provide the SPA fallback.
 - Links in notifications sent before the change point at `/?event=…`. The app keeps reading that form as a redirect until it no longer matters.
