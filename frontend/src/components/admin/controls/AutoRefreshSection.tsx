@@ -38,13 +38,16 @@ export function AutoRefreshSection() {
     };
   }, []);
 
-  /** `change` may read the settings as they stand once earlier saves land. */
+  /**
+   * `change` may read the settings as they stand once earlier saves land.
+   * Resolves `true` once the server accepts it, `false` if it fails.
+   */
   function save(
     change: Partial<AutoRefreshSettings> | ((current: AutoRefresh) => Partial<AutoRefreshSettings>)
-  ) {
-    queue.current = queue.current.then(async () => {
+  ): Promise<boolean> {
+    const step = queue.current.then(async () => {
       const current = latest.current;
-      if (!current) return;
+      if (!current) return false;
       setSaving(true);
       try {
         const next = await putAutoRefresh({
@@ -56,12 +59,16 @@ export function AutoRefreshSection() {
         latest.current = next;
         setStatus(next);
         setError(null);
+        return true;
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "Save failed");
+        return false;
       } finally {
         setSaving(false);
       }
     });
+    queue.current = step.then(() => undefined);
+    return step;
   }
 
   const enabled = status?.enabled ?? false;
@@ -84,7 +91,7 @@ export function AutoRefreshSection() {
           className={enabled ? "admin-switch on" : "admin-switch"}
           aria-busy={saving}
           disabled={!loaded}
-          onClick={() => save((current) => ({ enabled: !current.enabled }))}
+          onClick={() => void save((current) => ({ enabled: !current.enabled }))}
         >
           <span className="admin-switch-thumb" />
           {stateLabel}
@@ -164,14 +171,17 @@ function NumberField({
   max?: number;
   required?: boolean;
   disabled: boolean;
-  onCommit: (value: number | null) => void;
+  /** Resolves `true` once the server accepts the value. */
+  onCommit: (value: number | null) => Promise<boolean>;
   onInvalid: () => void;
 }) {
   const [draft, setDraft] = useState(toText(value));
   // Typed but not yet committed: the draft is the user's, not the server's.
   const dirty = useRef(false);
-  // The value this field last showed clean or sent, which a commit compares to.
+  // The server's acknowledged value, and the one in flight. A failed save
+  // clears `pending`, so the same draft can be sent again.
   const held = useRef(value);
+  const pending = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     if (dirty.current) return;
     held.current = value;
@@ -186,13 +196,19 @@ function NumberField({
       parsed !== null &&
       (text === "" || !Number.isInteger(parsed) || parsed < min || (max != null && parsed > max))
     ) {
-      setDraft(toText(held.current));
+      setDraft(toText(pending.current !== undefined ? pending.current : held.current));
       onInvalid();
       return;
     }
-    if (parsed === held.current) return;
-    held.current = parsed;
-    onCommit(parsed);
+    if (pending.current !== undefined ? parsed === pending.current : parsed === held.current) {
+      return;
+    }
+    pending.current = parsed;
+    void onCommit(parsed).then((accepted) => {
+      if (pending.current !== parsed) return; // a later commit owns the field now
+      pending.current = undefined;
+      if (accepted) held.current = parsed;
+    });
   }
 
   return (
