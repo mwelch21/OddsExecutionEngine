@@ -1,3 +1,9 @@
+/**
+ * Every API route lives under one versioned prefix (ADR-018). The proxy forwards
+ * `/api/*` unchanged, so the UI and any other consumer use the same path.
+ */
+export const API_BASE = "/api/v1";
+
 export type MarketType = "moneyline" | "spread" | "total";
 
 export type LineIntent = {
@@ -252,15 +258,9 @@ export async function cancelWatch(id: string) {
     method: "DELETE"
   });
   if (!response.ok) {
-    throw new Error(`DELETE /watch-intents/${id} failed: ${response.status}`);
+    throw new Error(`DELETE ${API_BASE}/watch-intents/${id} failed: ${response.status}`);
   }
 }
-
-/**
- * Every API route lives under one versioned prefix (ADR-018). The proxy forwards
- * `/api/*` unchanged, so the UI and any other consumer use the same path.
- */
-export const API_BASE = "/api/v1";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {

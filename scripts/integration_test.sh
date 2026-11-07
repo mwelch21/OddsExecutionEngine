@@ -172,9 +172,9 @@ test_health_request_id_propagated() {
   assert_equals "$header" "integration-trace-001"
 }
 
-run_test "GET /health returns ok" test_health_ok
-run_test "GET /health generates X-Request-ID" test_health_request_id_generated
-run_test "GET /health propagates X-Request-ID" test_health_request_id_propagated
+run_test "GET /api/health returns ok" test_health_ok
+run_test "GET /api/health generates X-Request-ID" test_health_request_id_generated
+run_test "GET /api/health propagates X-Request-ID" test_health_request_id_propagated
 
 # ---------------------------------------------------------------------------
 # Test group 2: Quote ingestion
@@ -208,9 +208,9 @@ test_ingestion_empty_event_id_rejected() {
   assert_equals "$status" "422"
 }
 
-run_test "POST /ingestion/quotes/refresh returns counts" test_ingestion_refresh
-run_test "POST /ingestion/quotes/refresh emits expected event types" test_ingestion_emits_expected_event_types
-run_test "POST /ingestion/quotes/refresh rejects empty event_id" test_ingestion_empty_event_id_rejected
+run_test "POST /api/v1/ingestion/quotes/refresh returns counts" test_ingestion_refresh
+run_test "POST /api/v1/ingestion/quotes/refresh emits expected event types" test_ingestion_emits_expected_event_types
+run_test "POST /api/v1/ingestion/quotes/refresh rejects empty event_id" test_ingestion_empty_event_id_rejected
 
 # ---------------------------------------------------------------------------
 # Test group 3: Recommendation scenarios

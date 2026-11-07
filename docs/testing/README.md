@@ -49,25 +49,25 @@ STAGE2_TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:$(docker compos
 
 ### Testing UI
 
-Start the stack, then visit `http://localhost:8000/test-ui` in a browser.
+Start the stack, then visit `http://localhost:8000/api/v1/test-ui` in a browser.
 
 ```bash
 docker compose up --build -d
 docker compose exec -T api uv run alembic -c backend/db/alembic.ini upgrade head
 docker compose exec -T api uv run odds-db-seed-demo
-# open http://localhost:8000/test-ui
+# open http://localhost:8000/api/v1/test-ui
 ```
 
 The UI is only available when `APP_ENV=development` (the default). It returns 404 in production.
 
-Use `/test-ui` as the manual validation driver when checking endpoint behavior by hand. It should
+Use `/api/v1/test-ui` as the manual validation driver when checking endpoint behavior by hand. It should
 stay endpoint-focused: quote refresh, recommendation fillability, nearest miss behavior, watch
 creation/cancel, opportunities, and raw request/response inspection. Use scripts and curl for
-repeatable checks; use `/test-ui` for exploratory workflow validation and demos.
+repeatable checks; use `/api/v1/test-ui` for exploratory workflow validation and demos.
 
 ### Frontend App
 
-The React app is separate from `/test-ui`. It is the product-style operator surface for lines,
+The React app is separate from `/api/v1/test-ui`. It is the product-style operator surface for lines,
 book filtering, best-line mode, fillability checks, and watch creation.
 
 ```bash

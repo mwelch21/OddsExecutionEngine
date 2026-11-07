@@ -81,7 +81,7 @@ export async function enablePush(): Promise<Destination> {
 
 export async function listDestinations(): Promise<Destination[]> {
   const response = await fetch(`${API_BASE}/destinations`);
-  if (!response.ok) throw new Error(`/destinations failed: ${response.status}`);
+  if (!response.ok) throw new Error(`${API_BASE}/destinations failed: ${response.status}`);
   return ((await response.json()) as { destinations: Destination[] }).destinations;
 }
 
