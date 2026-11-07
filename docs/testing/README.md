@@ -8,7 +8,7 @@
 | SQLite smoke | `uv run pytest` | API endpoints, persistence adapters (lightweight) | Every change |
 | Postgres truth | `uv run pytest` (with `STAGE2_TEST_DATABASE_URL`) | Full persistence correctness against real Postgres | CI + before merge |
 | Integration script | `scripts/integration_test.sh` | End-to-end against Docker stack: all endpoints, DB state, tracing | Before merge, manual |
-| Testing UI | `GET /test-ui` (dev only) | Manual exploration of all endpoints with pre-built scenarios | During development |
+| Testing UI | `GET /api/v1/test-ui` (dev only) | Manual exploration of all endpoints with pre-built scenarios | During development |
 | Frontend app | `http://localhost:5173` | Product-style lines board, sportsbook filter, best-line view, watch creation | During development |
 
 ## Running Tests

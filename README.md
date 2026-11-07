@@ -115,10 +115,10 @@ uv run uvicorn backend.app.main:create_app --factory --host 0.0.0.0 --port 8000
 
 ```bash
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 
 # Open the testing dashboard (development mode only)
-open http://localhost:8000/test-ui
+open http://localhost:8000/api/v1/test-ui
 
 # Open the frontend application
 open http://localhost:5173
@@ -206,26 +206,28 @@ docker compose logs -f api
 
 ## API Endpoints
 
+Every route is served under `/api/v1`; only the health probe sits outside the version, at `/api/health` (ADR-018). An additive change keeps `v1`; a breaking change adds `/api/v2` beside it.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/execution/recommendation` | Evaluate fillability for an order intent |
-| `POST` | `/ingestion/quotes/refresh` | Refresh quotes for a single event |
-| `POST` | `/ingestion/quotes/refresh-sport` | Refresh all events for a sport (live data) |
-| `GET` | `/events?league=&sport=&page=&page_size=` | Browse upcoming events with quote freshness |
-| `GET` | `/events/{id}/quotes` | One event's line board: markets, books ranked best-first |
-| `POST` | `/watch-intents` | Create a watch intent (monitors for target price) |
-| `GET` | `/watch-intents?event_id=` | List active watch intents |
-| `DELETE` | `/watch-intents/{id}` | Cancel a watch intent |
-| `GET` | `/opportunities?event_id=` | List opportunities with computed validity |
-| `GET` | `/auto-refresh` | Auto-Refresh switch, interval and last refresh outcome |
-| `PUT` | `/auto-refresh` | Turn Auto-Refresh on or off, set the interval (1-60 min) |
-| `GET` | `/test-ui` | Interactive testing dashboard (dev only) |
+| `GET` | `/api/health` | Health check (unversioned ops probe) |
+| `POST` | `/api/v1/execution/recommendation` | Evaluate fillability for an order intent |
+| `POST` | `/api/v1/ingestion/quotes/refresh` | Refresh quotes for a single event |
+| `POST` | `/api/v1/ingestion/quotes/refresh-sport` | Refresh all events for a sport (live data) |
+| `GET` | `/api/v1/events?league=&sport=&page=&page_size=` | Browse upcoming events with quote freshness |
+| `GET` | `/api/v1/events/{id}/quotes` | One event's line board: markets, books ranked best-first |
+| `POST` | `/api/v1/watch-intents` | Create a watch intent (monitors for target price) |
+| `GET` | `/api/v1/watch-intents?event_id=` | List active watch intents |
+| `DELETE` | `/api/v1/watch-intents/{id}` | Cancel a watch intent |
+| `GET` | `/api/v1/opportunities?event_id=` | List opportunities with computed validity |
+| `GET` | `/api/v1/auto-refresh` | Auto-Refresh switch, interval and last refresh outcome |
+| `PUT` | `/api/v1/auto-refresh` | Turn Auto-Refresh on or off, set the interval (1-60 min) |
+| `GET` | `/api/v1/test-ui` | Interactive testing dashboard (dev only) |
 
 ### Example: Get a recommendation
 
 ```bash
-curl -X POST http://localhost:8000/execution/recommendation \
+curl -X POST http://localhost:8000/api/v1/execution/recommendation \
   -H 'Content-Type: application/json' \
   -d '{
     "event_id": "nba-knicks-celtics-2026-04-11",
@@ -238,7 +240,7 @@ curl -X POST http://localhost:8000/execution/recommendation \
 ### Example: Refresh live NHL odds
 
 ```bash
-curl -X POST http://localhost:8000/ingestion/quotes/refresh-sport \
+curl -X POST http://localhost:8000/api/v1/ingestion/quotes/refresh-sport \
   -H 'Content-Type: application/json' \
   -d '{"sport": "icehockey_nhl"}'
 ```
@@ -246,7 +248,7 @@ curl -X POST http://localhost:8000/ingestion/quotes/refresh-sport \
 ### Example: Create a watch intent
 
 ```bash
-curl -X POST http://localhost:8000/watch-intents \
+curl -X POST http://localhost:8000/api/v1/watch-intents \
   -H 'Content-Type: application/json' \
   -d '{
     "event_id": "EVENT_ID_FROM_REFRESH",

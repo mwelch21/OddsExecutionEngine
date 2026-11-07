@@ -43,23 +43,24 @@ psql_q() {
   dc exec -T postgres psql -U app -d odds_execution "$@"
 }
 
+# Paths are relative to the versioned API root, /api/v1 (ADR-018).
 api() {
   local method="$1" path="$2" body="${3:-}"
   if [[ -n "$body" ]]; then
-    curl -sS -X "$method" "${BASE_URL}${path}" \
+    curl -sS -X "$method" "${BASE_URL}/api/v1${path}" \
       -H 'content-type: application/json' -d "$body"
   else
-    curl -sS -X "$method" "${BASE_URL}${path}"
+    curl -sS -X "$method" "${BASE_URL}/api/v1${path}"
   fi
 }
 
 api_status() {
   local method="$1" path="$2" body="${3:-}"
   if [[ -n "$body" ]]; then
-    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${BASE_URL}${path}" \
+    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${BASE_URL}/api/v1${path}" \
       -H 'content-type: application/json' -d "$body"
   else
-    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${BASE_URL}${path}"
+    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${BASE_URL}/api/v1${path}"
   fi
 }
 
@@ -87,7 +88,7 @@ expect_eq() {
 
 wait_for_api() {
   local attempts=0
-  until curl -sS -o /dev/null "${BASE_URL}/health" 2>/dev/null; do
+  until curl -sS -o /dev/null "${BASE_URL}/api/health" 2>/dev/null; do
     attempts=$((attempts + 1))
     if [[ $attempts -ge 40 ]]; then
       echo "API did not come up at ${BASE_URL}" >&2

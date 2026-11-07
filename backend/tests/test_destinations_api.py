@@ -59,7 +59,7 @@ def _stored_rows(session_factory: DatabaseSessionFactory) -> list[dict[str, obje
 def test_vapid_public_key_is_served_when_configured(sqlite_database_url: str) -> None:
     app, _ = _build(sqlite_database_url)
 
-    response = TestClient(app).get("/push/vapid-public-key")
+    response = TestClient(app).get("/api/v1/push/vapid-public-key")
 
     assert response.status_code == 200
     assert response.json() == {"public_key": PUBLIC_KEY}
@@ -72,7 +72,7 @@ def test_vapid_public_key_is_unavailable_until_configured(sqlite_database_url: s
         Settings(database_url_override=sqlite_database_url, vapid_public_key="")
     )
 
-    response = TestClient(app).get("/push/vapid-public-key")
+    response = TestClient(app).get("/api/v1/push/vapid-public-key")
 
     assert response.status_code == 503
 
@@ -83,8 +83,8 @@ def test_subscribing_creates_one_active_destination_without_exposing_secrets(
     app, session_factory = _build(sqlite_database_url)
     client = TestClient(app)
 
-    created = client.post("/destinations/web-push", json=_subscription())
-    listed = client.get("/destinations")
+    created = client.post("/api/v1/destinations/web-push", json=_subscription())
+    listed = client.get("/api/v1/destinations")
 
     assert created.status_code == 201
     body = created.json()
@@ -114,7 +114,7 @@ def test_subscribing_works_with_info_logging_enabled(
     monkeypatch.setattr(DestinationService._logger, "disabled", False)
     monkeypatch.setattr(DestinationService._logger, "level", logging.INFO)
 
-    response = TestClient(app).post("/destinations/web-push", json=_subscription())
+    response = TestClient(app).post("/api/v1/destinations/web-push", json=_subscription())
 
     assert response.status_code == 201
 
@@ -123,9 +123,9 @@ def test_subscribing_again_updates_the_same_destination(sqlite_database_url: str
     app, session_factory = _build(sqlite_database_url)
     client = TestClient(app)
 
-    first = client.post("/destinations/web-push", json=_subscription())
+    first = client.post("/api/v1/destinations/web-push", json=_subscription())
     second = client.post(
-        "/destinations/web-push",
+        "/api/v1/destinations/web-push",
         json=_subscription(keys={"p256dh": "p256dh-2", "auth": "auth-secret-2"}),
     )
 
@@ -141,7 +141,7 @@ def test_resubscribing_revives_a_gone_destination_but_not_a_removed_one(
 ) -> None:
     app, session_factory = _build(sqlite_database_url)
     client = TestClient(app)
-    destination_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    destination_id = client.post("/api/v1/destinations/web-push", json=_subscription()).json()["id"]
 
     def disable(reason: str) -> None:
         with session_factory.create_session() as session:
@@ -153,12 +153,12 @@ def test_resubscribing_revives_a_gone_destination_but_not_a_removed_one(
             session.commit()
 
     disable("gone")
-    revived = client.post("/destinations/web-push", json=_subscription()).json()
+    revived = client.post("/api/v1/destinations/web-push", json=_subscription()).json()
     assert revived["active"] is True
     assert revived["disabled_reason"] is None
 
     disable("user_removed")
-    kept = client.post("/destinations/web-push", json=_subscription()).json()
+    kept = client.post("/api/v1/destinations/web-push", json=_subscription()).json()
     assert kept["active"] is False
     assert kept["disabled_reason"] == "user_removed"
 
@@ -176,7 +176,9 @@ def test_malformed_subscriptions_are_rejected(
 ) -> None:
     app, session_factory = _build(sqlite_database_url)
 
-    response = TestClient(app).post("/destinations/web-push", json=_subscription(**overrides))
+    response = TestClient(app).post(
+        "/api/v1/destinations/web-push", json=_subscription(**overrides)
+    )
 
     assert response.status_code == 422
     assert _stored_rows(session_factory) == []
@@ -190,8 +192,8 @@ def test_postgres_subscription_is_idempotent_on_its_endpoint() -> None:
     app, session_factory = _build(database_url, drop_existing=True)
     try:
         client = TestClient(app)
-        first = client.post("/destinations/web-push", json=_subscription())
-        second = client.post("/destinations/web-push", json=_subscription(label="Renamed"))
+        first = client.post("/api/v1/destinations/web-push", json=_subscription())
+        second = client.post("/api/v1/destinations/web-push", json=_subscription(label="Renamed"))
 
         assert (first.status_code, second.status_code) == (201, 200)
         assert second.json()["id"] == first.json()["id"]
@@ -205,9 +207,9 @@ def test_postgres_subscription_is_idempotent_on_its_endpoint() -> None:
 def test_send_test_queues_one_targeted_public_event(sqlite_database_url: str) -> None:
     app, session_factory = _build(sqlite_database_url)
     client = TestClient(app)
-    destination_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    destination_id = client.post("/api/v1/destinations/web-push", json=_subscription()).json()["id"]
 
-    response = client.post(f"/destinations/{destination_id}/test")
+    response = client.post(f"/api/v1/destinations/{destination_id}/test")
 
     assert response.status_code == 202
     with session_factory.create_session() as session:
@@ -226,15 +228,15 @@ def test_send_test_queues_one_targeted_public_event(sqlite_database_url: str) ->
 def test_send_test_is_rate_limited_per_destination(sqlite_database_url: str) -> None:
     app, _ = _build(sqlite_database_url)
     client = TestClient(app)
-    first_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    first_id = client.post("/api/v1/destinations/web-push", json=_subscription()).json()["id"]
     second_id = client.post(
-        "/destinations/web-push",
+        "/api/v1/destinations/web-push",
         json=_subscription(endpoint="https://fcm.googleapis.com/other-device"),
     ).json()["id"]
 
-    assert client.post(f"/destinations/{first_id}/test").status_code == 202
-    limited = client.post(f"/destinations/{first_id}/test")
-    other_device = client.post(f"/destinations/{second_id}/test")
+    assert client.post(f"/api/v1/destinations/{first_id}/test").status_code == 202
+    limited = client.post(f"/api/v1/destinations/{first_id}/test")
+    other_device = client.post(f"/api/v1/destinations/{second_id}/test")
 
     assert limited.status_code == 429
     assert int(limited.headers["Retry-After"]) >= 1
@@ -246,7 +248,7 @@ def test_send_test_rejects_unknown_and_disabled_destinations(
 ) -> None:
     app, session_factory = _build(sqlite_database_url)
     client = TestClient(app)
-    destination_id = client.post("/destinations/web-push", json=_subscription()).json()["id"]
+    destination_id = client.post("/api/v1/destinations/web-push", json=_subscription()).json()["id"]
     with session_factory.create_session() as session:
         session.execute(
             update(destinations_table)
@@ -255,5 +257,5 @@ def test_send_test_rejects_unknown_and_disabled_destinations(
         )
         session.commit()
 
-    assert client.post("/destinations/missing/test").status_code == 404
-    assert client.post(f"/destinations/{destination_id}/test").status_code == 409
+    assert client.post("/api/v1/destinations/missing/test").status_code == 404
+    assert client.post(f"/api/v1/destinations/{destination_id}/test").status_code == 409

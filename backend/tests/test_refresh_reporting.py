@@ -196,7 +196,7 @@ class TestRefreshEndpointReporting:
     ) -> None:
         with TestClient(_build_app(sqlite_database_url)) as client:
             response = client.post(
-                "/ingestion/quotes/refresh-sport",
+                "/api/v1/ingestion/quotes/refresh-sport",
                 json={"sport": "basketball"},
             )
 

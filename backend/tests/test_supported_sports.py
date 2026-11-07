@@ -146,7 +146,7 @@ def test_supported_sport_outside_the_configured_list_still_refreshes() -> None:
 
 def test_sports_endpoint_lists_the_catalog(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        response = client.get("/sports")
+        response = client.get("/api/v1/sports")
 
     assert response.status_code == 200
     sports = response.json()["sports"]
@@ -156,9 +156,9 @@ def test_sports_endpoint_lists_the_catalog(sqlite_database_url: str) -> None:
 
 def test_refresh_sport_rejects_an_unknown_key_with_422(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        supported = [entry["key"] for entry in client.get("/sports").json()["sports"]]
+        supported = [entry["key"] for entry in client.get("/api/v1/sports").json()["sports"]]
         response = client.post(
-            "/ingestion/quotes/refresh-sport",
+            "/api/v1/ingestion/quotes/refresh-sport",
             json={"sport": "not_a_real_sport"},
         )
 

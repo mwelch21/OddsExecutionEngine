@@ -248,7 +248,7 @@ export async function getOpportunity(id: string) {
 }
 
 export async function cancelWatch(id: string) {
-  const response = await fetch(`/watch-intents/${encodeURIComponent(id)}`, {
+  const response = await fetch(`${API_BASE}/watch-intents/${encodeURIComponent(id)}`, {
     method: "DELETE"
   });
   if (!response.ok) {
@@ -256,8 +256,14 @@ export async function cancelWatch(id: string) {
   }
 }
 
+/**
+ * Every API route lives under one versioned prefix (ADR-018). The proxy forwards
+ * `/api/*` unchanged, so the UI and any other consumer use the same path.
+ */
+export const API_BASE = "/api/v1";
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
     ...init
   });
