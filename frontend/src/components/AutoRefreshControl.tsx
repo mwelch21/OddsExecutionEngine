@@ -8,7 +8,7 @@ const INTERVAL_CHOICES = [1, 2, 5, 10, 15, 30, 60];
 /**
  * The Admin view's Auto-Refresh switch (ADR-016, #60 Variant A).
  *
- * It drives `GET/PUT /auto-refresh` only. Nothing here refreshes or polls: the
+ * It drives `GET/PUT /api/v1/auto-refresh` only. Nothing here refreshes or polls: the
  * worker does, and only while the switch is on and a watch needs fresh lines.
  * The status is read when the control mounts and each time the popover opens.
  */

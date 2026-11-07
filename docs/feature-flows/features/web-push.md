@@ -122,7 +122,7 @@ flowchart LR
 | Desktop access | Open `http://localhost:5173` or the `ts.net` URL; enable notifications in that browser. Each origin is its own subscription, so using both means two notifications per opportunity. |
 | iPhone access | Same tailnet as Mac; MagicDNS and HTTPS certificates enabled; `tailscale serve --bg 5173`. Open printed HTTPS URL in Safari, Share → Add to Home Screen, launch OddsCafe, enable notifications. |
 | `APP_ORIGIN` | Notifier only, required. Absolute origin that notification links open, e.g. `https://<mac>.<tailnet>.ts.net`. Compose defaults to `http://localhost:$FRONTEND_PORT`. |
-| Browser permission | User tap grants permission; service worker registers and subscription is stored through `POST /destinations/web-push`. |
+| Browser permission | User tap grants permission; service worker registers and subscription is stored through `POST /api/v1/destinations/web-push`. |
 | VAPID | Existing keys stay stable. API gets public key; only notifier gets private key. Sender strips configured `mailto:` prefix before webpush-go adds it. |
 | Persistence | `destinations` stores endpoint and encryption keys; public responses omit keys. `public_events` stores CloudEvents. Unique event/destination pair prevents duplicate delivery rows. |
 | Expiry | Test: 10 minutes. Opportunity: `data.expires_at` = created_at + opportunity TTL (720 min default). Events without `expires_at` expire unsent. |

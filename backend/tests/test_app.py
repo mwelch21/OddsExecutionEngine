@@ -30,7 +30,7 @@ from backend.tests.db_helpers import prepare_test_database
 
 def test_healthcheck_returns_ok(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        response = client.get("/health")
+        response = client.get("/api/health")
 
     assert response.status_code == 200
     assert response.headers["X-Request-ID"]
@@ -42,10 +42,52 @@ def test_healthcheck_returns_ok(sqlite_database_url: str) -> None:
 
 def test_request_id_header_is_propagated(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        response = client.get("/health", headers={"X-Request-ID": "req-123"})
+        response = client.get("/api/health", headers={"X-Request-ID": "req-123"})
 
     assert response.status_code == 200
     assert response.headers["X-Request-ID"] == "req-123"
+
+
+def test_every_route_is_served_under_api_v1_except_health(sqlite_database_url: str) -> None:
+    app = _build_test_app(sqlite_database_url)
+
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
+
+    assert "/api/health" in paths
+    assert {"/api/v1/docs", "/api/v1/redoc", "/api/v1/openapi.json"} <= paths
+    assert all(path.startswith("/api/v1/") for path in paths - {"/api/health"})
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/health"),
+        ("GET", "/events"),
+        ("GET", "/sports"),
+        ("GET", "/auto-refresh"),
+        ("GET", "/watch-intents"),
+        ("GET", "/test-ui"),
+        ("POST", "/execution/recommendation"),
+        ("POST", "/ingestion/quotes/refresh"),
+        ("GET", "/api/v1/health"),
+        ("GET", "/docs"),
+        ("GET", "/redoc"),
+        ("GET", "/openapi.json"),
+    ],
+)
+def test_unprefixed_paths_are_gone(sqlite_database_url: str, method: str, path: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.request(method, path, json={})
+
+    assert response.status_code == 404
+
+
+def test_dev_test_ui_is_served_under_api_v1(sqlite_database_url: str) -> None:
+    with TestClient(_build_test_app(sqlite_database_url)) as client:
+        response = client.get("/api/v1/test-ui")
+
+    assert response.status_code == 200
+    assert "/api/v1/execution/recommendation" in response.text
 
 
 def test_quote_refresh_endpoint_ingests_quotes_and_persists_workflow(
@@ -55,7 +97,7 @@ def test_quote_refresh_endpoint_ingests_quotes_and_persists_workflow(
 
     with TestClient(app) as client:
         response = client.post(
-            "/ingestion/quotes/refresh",
+            "/api/v1/ingestion/quotes/refresh",
             json={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
 
@@ -91,11 +133,11 @@ def test_quote_refresh_endpoint_is_repeatable_without_duplicate_markets(
 
     with TestClient(app) as client:
         first_response = client.post(
-            "/ingestion/quotes/refresh",
+            "/api/v1/ingestion/quotes/refresh",
             json={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
         second_response = client.post(
-            "/ingestion/quotes/refresh",
+            "/api/v1/ingestion/quotes/refresh",
             json={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
 
@@ -118,7 +160,7 @@ def test_quote_refresh_endpoint_is_repeatable_without_duplicate_markets(
 
 def test_quote_refresh_endpoint_validates_request(sqlite_database_url: str) -> None:
     with TestClient(_build_empty_test_app(sqlite_database_url)) as client:
-        response = client.post("/ingestion/quotes/refresh", json={"event_id": ""})
+        response = client.post("/api/v1/ingestion/quotes/refresh", json={"event_id": ""})
 
     assert response.status_code == 422
 
@@ -127,7 +169,9 @@ def test_quote_refresh_endpoint_rejects_an_event_it_has_never_seen(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_empty_test_app(sqlite_database_url)) as client:
-        response = client.post("/ingestion/quotes/refresh", json={"event_id": "no-such-event"})
+        response = client.post(
+            "/api/v1/ingestion/quotes/refresh", json={"event_id": "no-such-event"}
+        )
 
     assert response.status_code == 404
     assert "no-such-event" in response.json()["detail"]
@@ -151,7 +195,9 @@ def test_quote_refresh_endpoint_rejects_an_event_whose_sport_cannot_be_resolved(
         session.commit()
 
     with TestClient(app) as client:
-        response = client.post("/ingestion/quotes/refresh", json={"event_id": "curling-event"})
+        response = client.post(
+            "/api/v1/ingestion/quotes/refresh", json={"event_id": "curling-event"}
+        )
 
     assert response.status_code == 422
     assert "curling" in response.json()["detail"]
@@ -164,11 +210,11 @@ def test_recommendation_endpoint_reads_quotes_ingested_by_stage4_flow(
 
     with TestClient(app) as client:
         refresh_response = client.post(
-            "/ingestion/quotes/refresh",
+            "/api/v1/ingestion/quotes/refresh",
             json={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
         recommendation_response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -188,7 +234,7 @@ def test_recommendation_endpoint_returns_fillable_moneyline_result(
 ) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -243,7 +289,7 @@ def test_recommendation_endpoint_returns_nearest_miss_when_unfillable(
 ) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "total",
@@ -298,7 +344,7 @@ def test_recommendation_endpoint_returns_empty_result_for_unmatched_line(
 ) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "spread",
@@ -319,7 +365,7 @@ def test_recommendation_endpoint_returns_empty_result_for_unmatched_line(
 def test_recommendation_endpoint_validates_total_selection(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "total",
@@ -337,7 +383,7 @@ def test_recommendation_endpoint_validates_moneyline_line_omission(
 ) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -357,7 +403,7 @@ def test_recommendation_endpoint_persists_order_intent_and_recommendation(
 
     with TestClient(app) as client:
         response = client.post(
-            "/execution/recommendation",
+            "/api/v1/execution/recommendation",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -415,7 +461,7 @@ def test_app_startup_does_not_create_schema(sqlite_database_url: str) -> None:
     app = create_app(Settings(database_url_override=sqlite_database_url))
 
     with TestClient(app) as client:
-        response = client.get("/health")
+        response = client.get("/api/health")
 
     assert response.status_code == 200
 
@@ -482,7 +528,7 @@ def test_postgres_is_required_truth_path_for_persistence_correctness() -> None:
     try:
         with TestClient(app) as client:
             response = client.post(
-                "/execution/recommendation",
+                "/api/v1/execution/recommendation",
                 json={
                     "event_id": "nba-knicks-celtics-2026-04-11",
                     "market_type": "moneyline",
@@ -531,7 +577,7 @@ def test_create_watch_intent_returns_201_and_persists(sqlite_database_url: str) 
         # +400 is out of reach of the fixture, so the watch stays active and this
         # test stays about creation rather than about filling.
         response = client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -563,7 +609,7 @@ def test_create_watch_intent_returns_201_and_persists(sqlite_database_url: str) 
 def test_create_watch_intent_validates_market_shape(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
         response = client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -581,7 +627,7 @@ def test_list_watch_intents_filters_by_event_id(sqlite_database_url: str) -> Non
 
     with TestClient(app) as client:
         client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -590,7 +636,7 @@ def test_list_watch_intents_filters_by_event_id(sqlite_database_url: str) -> Non
             },
         )
         response = client.get(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             params={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
 
@@ -603,7 +649,7 @@ def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
 
     with TestClient(app) as client:
         create_response = client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -612,7 +658,7 @@ def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
             },
         )
         watch_id = create_response.json()["id"]
-        cancel_response = client.delete(f"/watch-intents/{watch_id}")
+        cancel_response = client.delete(f"/api/v1/watch-intents/{watch_id}")
 
     assert cancel_response.status_code == 200
     assert cancel_response.json()["status"] == "cancelled"
@@ -634,7 +680,7 @@ def test_cancel_watch_intent_updates_status(sqlite_database_url: str) -> None:
 
 def test_cancel_nonexistent_watch_intent_returns_404(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        response = client.delete("/watch-intents/nonexistent-id")
+        response = client.delete("/api/v1/watch-intents/nonexistent-id")
 
     assert response.status_code == 404
 
@@ -646,7 +692,7 @@ def test_create_watch_intent_triggers_immediate_evaluation(
 
     with TestClient(app) as client:
         response = client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -690,7 +736,7 @@ def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) 
 
     with TestClient(app) as client:
         client.post(
-            "/watch-intents",
+            "/api/v1/watch-intents",
             json={
                 "event_id": "nba-knicks-celtics-2026-04-11",
                 "market_type": "moneyline",
@@ -699,7 +745,7 @@ def test_list_opportunities_returns_computed_validity(sqlite_database_url: str) 
             },
         )
         response = client.get(
-            "/opportunities",
+            "/api/v1/opportunities",
             params={"event_id": "nba-knicks-celtics-2026-04-11"},
         )
 

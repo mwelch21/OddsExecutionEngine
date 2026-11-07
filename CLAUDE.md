@@ -196,51 +196,53 @@ docker compose exec postgres psql -U app -d odds_execution
 
 Verified against `backend/app/main.py` route registration on `main`.
 
+Every route below is served under `/api/v1`; `GET /api/health` is the only unversioned route (ADR-018). Additive change keeps `v1`; breaking change adds `/api/v2` beside it. The dev proxy forwards `/api/*` unchanged.
+
 Core:
 
-- `POST /execution/recommendation`
+- `POST /api/v1/execution/recommendation`
 
 Ingestion:
 
-- `POST /ingestion/quotes/refresh`
-- `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
+- `POST /api/v1/ingestion/quotes/refresh`
+- `POST /api/v1/ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
 - Both refresh routes return 503 `{code: OUT_OF_USAGE_CREDITS}` when the month's credits are spent
-- `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
+- `GET /api/v1/sports` (catalog of sport keys a refresh may name, each with its sport and league)
 
 Browse:
 
-- `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
-- `GET /events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
+- `GET /api/v1/events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
+- `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
 
 Monitoring:
 
-- `POST /watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
-- `GET /watch-intents` (optional `event_id` and `status` filters)
-- `GET /watch-intents/{id}`
-- `DELETE /watch-intents/{id}` (409 if the watch already `triggered`)
-- `GET /opportunities` (optional `event_id` filter)
-- `GET /opportunities/{id}`
+- `POST /api/v1/watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
+- `GET /api/v1/watch-intents` (optional `event_id` and `status` filters)
+- `GET /api/v1/watch-intents/{id}`
+- `DELETE /api/v1/watch-intents/{id}` (409 if the watch already `triggered`)
+- `GET /api/v1/opportunities` (optional `event_id` filter)
+- `GET /api/v1/opportunities/{id}`
 
 Notifications:
 
-- `GET /push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
-- `POST /destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
-- `GET /destinations` (safe fields and status; channel secrets are never returned)
-- `POST /destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
+- `GET /api/v1/push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
+- `POST /api/v1/destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
+- `GET /api/v1/destinations` (safe fields and status; channel secrets are never returned)
+- `POST /api/v1/destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
 
 Auto-Refresh:
 
-- `GET /auto-refresh` (switch, interval, quota floor, last refresh outcome, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
-- `PUT /auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
+- `GET /api/v1/auto-refresh` (switch, interval, quota floor, last refresh outcome, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
+- `PUT /api/v1/auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
 
 Dev only:
 
-- `GET /test-ui`
+- `GET /api/v1/test-ui`
 
 Planned, not yet implemented:
 
-- `GET /events/{event_id}/markets`
-- `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
+- `GET /api/v1/events/{event_id}/markets`
+- `POST /api/v1/ai/parse-intent`, `POST /api/v1/ai/explain`, `POST /api/v1/ai/suggest-actions` (AI layer)
 
 ## Upstream Quota Discipline
 
@@ -257,11 +259,11 @@ Non-negotiable. Read before touching ingestion, the provider, or anything that r
   refreshes into one call and reuses responses for incidental repeats, but never answers
   a refresh with data that predates it. See ADR-011.
 - **No sport list is configured.** Sport-wide refresh takes its sport from the request
-  body, validated against `GET /sports`. Per-event refresh is **one** call to the
+  body, validated against `GET /api/v1/sports`. Per-event refresh is **one** call to the
   single-event endpoint, its sport resolved from the stored event; it never scans sport
   feeds (404 unknown event, 422 unresolvable sport). See ADR-012.
-- Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
-  Only `POST /ingestion/quotes/refresh*` spends.
+- Reads (`GET /api/v1/events`, `GET /api/v1/events/{id}/quotes`) are DB-backed and cost nothing.
+  Only `POST /api/v1/ingestion/quotes/refresh*` spends.
 - **Every upstream call records a quota observation** (`quota_observations`), served or
   refused, from headers or the local `markets x regions` count. Crossing below the floor
   writes one `oddsengine.quota.warning.v1`. Out of credits pauses Auto-Refresh (still on);

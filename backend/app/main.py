@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.auto_refresh_router import create_auto_refresh_router
 from backend.app.api.destination_router import create_destination_router
@@ -49,7 +49,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings)
     session_factory = DatabaseSessionFactory(app_settings.database_url)
-    app = FastAPI(title=app_settings.app_name)
+    # ADR-018: the docs and schema live under the versioned path too, so the
+    # /api proxy reaches them.
+    app = FastAPI(
+        title=app_settings.app_name,
+        docs_url="/api/v1/docs",
+        redoc_url="/api/v1/redoc",
+        openapi_url="/api/v1/openapi.json",
+        swagger_ui_oauth2_redirect_url="/api/v1/docs/oauth2-redirect",
+    )
     app.state.session_factory = session_factory
     app_logger = logging.getLogger(__name__)
     workflow_event_publisher = LoggingWorkflowEventPublisher()
@@ -129,27 +137,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reset_request_id(context_token)
         return response
 
-    @app.get("/health", tags=["system"])
+    # ADR-018: one versioned path for the whole contract. Health is an ops probe,
+    # not contract, so it sits under /api but outside the version.
+    @app.get("/api/health", tags=["system"])
     def healthcheck() -> dict[str, str]:
         return {
             "status": "ok",
             "environment": app_settings.app_env,
         }
 
-    app.include_router(create_recommendation_router(recommendation_service))
-    app.include_router(create_quote_ingestion_router(quote_ingestion_service))
-    app.include_router(create_watch_intent_router(watch_intent_service))
-    app.include_router(create_opportunity_router(watch_intent_service))
-    app.include_router(create_event_router(event_query_service))
-    app.include_router(create_auto_refresh_router(auto_refresh_service))
-    app.include_router(
+    api_v1 = APIRouter(prefix="/api/v1")
+    api_v1.include_router(create_recommendation_router(recommendation_service))
+    api_v1.include_router(create_quote_ingestion_router(quote_ingestion_service))
+    api_v1.include_router(create_watch_intent_router(watch_intent_service))
+    api_v1.include_router(create_opportunity_router(watch_intent_service))
+    api_v1.include_router(create_event_router(event_query_service))
+    api_v1.include_router(create_auto_refresh_router(auto_refresh_service))
+    api_v1.include_router(
         create_destination_router(destination_service, app_settings.vapid_public_key)
     )
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router
 
-        app.include_router(create_test_ui_router())
+        api_v1.include_router(create_test_ui_router())
+
+    app.include_router(api_v1)
 
     return app
 

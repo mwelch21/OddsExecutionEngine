@@ -21,17 +21,11 @@ export default defineConfig({
     // the iPhone gets the HTTPS that Web Push requires. Vite rejects unknown Host
     // headers by default, so tailnet names are allowed explicitly.
     allowedHosts: [".ts.net"],
+    // ADR-018: the whole API lives under /api, forwarded as-is (no prefix strip).
+    // Every other path belongs to the app, so new backend routes never need a
+    // proxy entry and never clash with a frontend path.
     proxy: {
-      "/health": apiTarget,
-      "/execution": apiTarget,
-      "/ingestion": apiTarget,
-      "/events": apiTarget,
-      "/sports": apiTarget,
-      "/watch-intents": apiTarget,
-      "/opportunities": apiTarget,
-      "/push": apiTarget,
-      "/destinations": apiTarget,
-      "/auto-refresh": apiTarget
+      "/api/": apiTarget
     }
   }
 });

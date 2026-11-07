@@ -231,20 +231,24 @@ def _build_html() -> str:
     <div class="custom-section">
       <label>Method + Endpoint</label>
       <select id="custom-method-endpoint">
-        <option value="POST /execution/recommendation">POST /execution/recommendation</option>
-        <option value="POST /ingestion/quotes/refresh">POST /ingestion/quotes/refresh</option>
-        <option value="POST /ingestion/quotes/refresh-sport">
-          POST /ingestion/quotes/refresh-sport
+        <option value="POST /api/v1/execution/recommendation">
+          POST /api/v1/execution/recommendation
         </option>
-        <option value="POST /watch-intents">POST /watch-intents</option>
-        <option value="GET /watch-intents">GET /watch-intents</option>
-        <option value="DELETE /watch-intents/{id}">DELETE /watch-intents/{id}</option>
-        <option value="GET /opportunities">GET /opportunities</option>
-        <option value="GET /events">GET /events</option>
-        <option value="GET /events/nba-knicks-celtics-2026-04-11/quotes">
-          GET /events/{id}/quotes
+        <option value="POST /api/v1/ingestion/quotes/refresh">
+          POST /api/v1/ingestion/quotes/refresh
         </option>
-        <option value="GET /health">GET /health</option>
+        <option value="POST /api/v1/ingestion/quotes/refresh-sport">
+          POST /api/v1/ingestion/quotes/refresh-sport
+        </option>
+        <option value="POST /api/v1/watch-intents">POST /api/v1/watch-intents</option>
+        <option value="GET /api/v1/watch-intents">GET /api/v1/watch-intents</option>
+        <option value="DELETE /api/v1/watch-intents/{id}">DELETE /api/v1/watch-intents/{id}</option>
+        <option value="GET /api/v1/opportunities">GET /api/v1/opportunities</option>
+        <option value="GET /api/v1/events">GET /api/v1/events</option>
+        <option value="GET /api/v1/events/nba-knicks-celtics-2026-04-11/quotes">
+          GET /api/v1/events/{id}/quotes
+        </option>
+        <option value="GET /api/health">GET /api/health</option>
       </select>
       <label>Request Body (JSON)</label>
       <textarea id="custom-body">{
@@ -272,7 +276,7 @@ const SCENARIOS = [
     label: "Fillable Moneyline",
     desc: "Knicks +121 target (DraftKings has +125)",
     method: "POST",
-    endpoint: "/execution/recommendation",
+    endpoint: "/api/v1/execution/recommendation",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "moneyline",
@@ -285,7 +289,7 @@ const SCENARIOS = [
     label: "Unfillable Total",
     desc: "Over 221.5 at -105 (best is -108)",
     method: "POST",
-    endpoint: "/execution/recommendation",
+    endpoint: "/api/v1/execution/recommendation",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "total",
@@ -299,7 +303,7 @@ const SCENARIOS = [
     label: "Unmatched Spread",
     desc: "Knicks 6.5 at -110 (no quotes at this line)",
     method: "POST",
-    endpoint: "/execution/recommendation",
+    endpoint: "/api/v1/execution/recommendation",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "spread",
@@ -313,15 +317,15 @@ const SCENARIOS = [
     label: "Quote Refresh",
     desc: "Refresh quotes for Knicks vs Celtics fixture",
     method: "POST",
-    endpoint: "/ingestion/quotes/refresh",
+    endpoint: "/api/v1/ingestion/quotes/refresh",
     body: { event_id: "nba-knicks-celtics-2026-04-11" }
   },
   {
     key: "health",
     label: "Health Check",
-    desc: "GET /health",
+    desc: "GET /api/health",
     method: "GET",
-    endpoint: "/health",
+    endpoint: "/api/health",
     body: null
   },
   {
@@ -329,7 +333,7 @@ const SCENARIOS = [
     label: "Invalid Total Selection",
     desc: "Expects 422 - selection must be over/under",
     method: "POST",
-    endpoint: "/execution/recommendation",
+    endpoint: "/api/v1/execution/recommendation",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "total",
@@ -343,7 +347,7 @@ const SCENARIOS = [
     label: "Moneyline with Line",
     desc: "Expects 422 - moneyline must omit line",
     method: "POST",
-    endpoint: "/execution/recommendation",
+    endpoint: "/api/v1/execution/recommendation",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "moneyline",
@@ -357,7 +361,7 @@ const SCENARIOS = [
     label: "Create Watch Intent",
     desc: "Watch Knicks ML at -150 (should find opportunities)",
     method: "POST",
-    endpoint: "/watch-intents",
+    endpoint: "/api/v1/watch-intents",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "moneyline",
@@ -370,7 +374,7 @@ const SCENARIOS = [
     label: "Create Watch (Spread)",
     desc: "Watch Knicks spread +5.5 at -110",
     method: "POST",
-    endpoint: "/watch-intents",
+    endpoint: "/api/v1/watch-intents",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "spread",
@@ -384,7 +388,7 @@ const SCENARIOS = [
     label: "List Watch Intents",
     desc: "GET all active watch intents",
     method: "GET",
-    endpoint: "/watch-intents",
+    endpoint: "/api/v1/watch-intents",
     body: null
   },
   {
@@ -392,7 +396,7 @@ const SCENARIOS = [
     label: "List Watch Intents (by event)",
     desc: "Filter watch intents by event_id",
     method: "GET",
-    endpoint: "/watch-intents?event_id=nba-knicks-celtics-2026-04-11",
+    endpoint: "/api/v1/watch-intents?event_id=nba-knicks-celtics-2026-04-11",
     body: null
   },
   {
@@ -400,7 +404,7 @@ const SCENARIOS = [
     label: "Browse Events",
     desc: "Upcoming events with quote freshness",
     method: "GET",
-    endpoint: "/events",
+    endpoint: "/api/v1/events",
     body: null
   },
   {
@@ -408,7 +412,7 @@ const SCENARIOS = [
     label: "Line Board",
     desc: "Knicks/Celtics markets, books ranked best-first",
     method: "GET",
-    endpoint: "/events/nba-knicks-celtics-2026-04-11/quotes",
+    endpoint: "/api/v1/events/nba-knicks-celtics-2026-04-11/quotes",
     body: null
   },
   {
@@ -416,7 +420,7 @@ const SCENARIOS = [
     label: "List Opportunities",
     desc: "GET all opportunities with computed validity",
     method: "GET",
-    endpoint: "/opportunities",
+    endpoint: "/api/v1/opportunities",
     body: null
   },
   {
@@ -424,7 +428,7 @@ const SCENARIOS = [
     label: "List Opportunities (by event)",
     desc: "Filter opportunities by event_id",
     method: "GET",
-    endpoint: "/opportunities?event_id=nba-knicks-celtics-2026-04-11",
+    endpoint: "/api/v1/opportunities?event_id=nba-knicks-celtics-2026-04-11",
     body: null
   },
   {
@@ -432,7 +436,7 @@ const SCENARIOS = [
     label: "Watch Intent: ML with Line",
     desc: "Expects 422 - moneyline must omit line",
     method: "POST",
-    endpoint: "/watch-intents",
+    endpoint: "/api/v1/watch-intents",
     body: {
       event_id: "nba-knicks-celtics-2026-04-11",
       market_type: "moneyline",
@@ -446,7 +450,7 @@ const SCENARIOS = [
     label: "Refresh NHL (Live)",
     desc: "Fetch all NHL odds from The Odds API",
     method: "POST",
-    endpoint: "/ingestion/quotes/refresh-sport",
+    endpoint: "/api/v1/ingestion/quotes/refresh-sport",
     body: { sport: "icehockey_nhl" }
   },
   {
@@ -454,7 +458,7 @@ const SCENARIOS = [
     label: "Refresh MLB (Live)",
     desc: "Fetch all MLB odds from The Odds API",
     method: "POST",
-    endpoint: "/ingestion/quotes/refresh-sport",
+    endpoint: "/api/v1/ingestion/quotes/refresh-sport",
     body: { sport: "baseball_mlb" }
   }
 ];

@@ -108,7 +108,7 @@ wait_for_api() {
   local attempts=0
   local max_attempts=30
   while [[ $attempts -lt $max_attempts ]]; do
-    if curl -sS -o /dev/null -w '' "${BASE_URL}/health" 2>/dev/null; then
+    if curl -sS -o /dev/null -w '' "${BASE_URL}/api/health" 2>/dev/null; then
       log "API ready"
       return 0
     fi
@@ -155,26 +155,26 @@ log "health check tests"
 
 test_health_ok() {
   local response
-  response="$(curl -sS "${BASE_URL}/health")"
+  response="$(curl -sS "${BASE_URL}/api/health")"
   assert_json "$response" "assert data['status'] == 'ok'; assert data['environment'] == 'development'"
 }
 
 test_health_request_id_generated() {
   local header
-  header="$(get_header "/health" "X-Request-ID")"
+  header="$(get_header "/api/health" "X-Request-ID")"
   [[ -n "$header" ]]
 }
 
 test_health_request_id_propagated() {
   local header
-  header="$(curl -sS -D - -o /dev/null "${BASE_URL}/health" \
+  header="$(curl -sS -D - -o /dev/null "${BASE_URL}/api/health" \
     -H "X-Request-ID: integration-trace-001" | grep -i "^X-Request-ID:" | awk '{print $2}' | tr -d '\r\n')"
   assert_equals "$header" "integration-trace-001"
 }
 
-run_test "GET /health returns ok" test_health_ok
-run_test "GET /health generates X-Request-ID" test_health_request_id_generated
-run_test "GET /health propagates X-Request-ID" test_health_request_id_propagated
+run_test "GET /api/health returns ok" test_health_ok
+run_test "GET /api/health generates X-Request-ID" test_health_request_id_generated
+run_test "GET /api/health propagates X-Request-ID" test_health_request_id_propagated
 
 # ---------------------------------------------------------------------------
 # Test group 2: Quote ingestion
@@ -184,7 +184,7 @@ log "quote ingestion tests"
 
 test_ingestion_refresh() {
   local response
-  response="$(post_json "/ingestion/quotes/refresh" '{"event_id":"nba-knicks-celtics-2026-04-11"}')"
+  response="$(post_json "/api/v1/ingestion/quotes/refresh" '{"event_id":"nba-knicks-celtics-2026-04-11"}')"
   assert_json "$response" "\
 assert data['event_id'] == 'nba-knicks-celtics-2026-04-11'; \
 assert data['ingested_quote_count'] == 10; \
@@ -195,7 +195,7 @@ assert len(data['emitted_event_types']) > 0"
 
 test_ingestion_emits_expected_event_types() {
   local response
-  response="$(post_json "/ingestion/quotes/refresh" '{"event_id":"nba-knicks-celtics-2026-04-11"}')"
+  response="$(post_json "/api/v1/ingestion/quotes/refresh" '{"event_id":"nba-knicks-celtics-2026-04-11"}')"
   assert_json "$response" "\
 types = data['emitted_event_types']; \
 assert 'QuotesRefreshed' in types; \
@@ -204,13 +204,13 @@ assert 'QuoteUpdated' in types"
 
 test_ingestion_empty_event_id_rejected() {
   local status
-  status="$(get_status POST "/ingestion/quotes/refresh" '{"event_id":""}')"
+  status="$(get_status POST "/api/v1/ingestion/quotes/refresh" '{"event_id":""}')"
   assert_equals "$status" "422"
 }
 
-run_test "POST /ingestion/quotes/refresh returns counts" test_ingestion_refresh
-run_test "POST /ingestion/quotes/refresh emits expected event types" test_ingestion_emits_expected_event_types
-run_test "POST /ingestion/quotes/refresh rejects empty event_id" test_ingestion_empty_event_id_rejected
+run_test "POST /api/v1/ingestion/quotes/refresh returns counts" test_ingestion_refresh
+run_test "POST /api/v1/ingestion/quotes/refresh emits expected event types" test_ingestion_emits_expected_event_types
+run_test "POST /api/v1/ingestion/quotes/refresh rejects empty event_id" test_ingestion_empty_event_id_rejected
 
 # ---------------------------------------------------------------------------
 # Test group 3: Recommendation scenarios
@@ -220,7 +220,7 @@ log "recommendation tests"
 
 test_fillable_moneyline() {
   local response
-  response="$(post_json "/execution/recommendation" \
+  response="$(post_json "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"moneyline","selection":"knicks","target_price":121}')"
   assert_json "$response" "\
 assert data['fillable'] is True; \
@@ -232,7 +232,7 @@ assert data['nearest_miss'] is None"
 
 test_unfillable_total() {
   local response
-  response="$(post_json "/execution/recommendation" \
+  response="$(post_json "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"total","selection":"over","line":221.5,"target_price":-105}')"
   assert_json "$response" "\
 assert data['fillable'] is False; \
@@ -243,7 +243,7 @@ assert data['matched_quote_count'] == 2"
 
 test_unmatched_spread() {
   local response
-  response="$(post_json "/execution/recommendation" \
+  response="$(post_json "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"spread","selection":"knicks","line":6.5,"target_price":-110}')"
   assert_json "$response" "\
 assert data['fillable'] is False; \
@@ -255,7 +255,7 @@ assert data['matched_quote_count'] == 0"
 
 test_unknown_event() {
   local response
-  response="$(post_json "/execution/recommendation" \
+  response="$(post_json "/api/v1/execution/recommendation" \
     '{"event_id":"nonexistent-event","market_type":"moneyline","selection":"knicks","target_price":100}')"
   assert_json "$response" "\
 assert data['fillable'] is False; \
@@ -276,27 +276,27 @@ log "validation tests"
 
 test_invalid_total_selection() {
   local status
-  status="$(get_status POST "/execution/recommendation" \
+  status="$(get_status POST "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"total","selection":"knicks","line":221.5,"target_price":-110}')"
   assert_equals "$status" "422"
 }
 
 test_moneyline_with_line() {
   local status
-  status="$(get_status POST "/execution/recommendation" \
+  status="$(get_status POST "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"moneyline","selection":"knicks","line":1.5,"target_price":120}')"
   assert_equals "$status" "422"
 }
 
 test_missing_required_fields() {
   local status
-  status="$(get_status POST "/execution/recommendation" '{}')"
+  status="$(get_status POST "/api/v1/execution/recommendation" '{}')"
   assert_equals "$status" "422"
 }
 
 test_spread_missing_line() {
   local status
-  status="$(get_status POST "/execution/recommendation" \
+  status="$(get_status POST "/api/v1/execution/recommendation" \
     '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"spread","selection":"knicks","target_price":-110}')"
   assert_equals "$status" "422"
 }
@@ -314,7 +314,7 @@ log "tracing tests"
 
 test_recommendation_request_id() {
   local header
-  header="$(curl -sS -D - -o /dev/null -X POST "${BASE_URL}/execution/recommendation" \
+  header="$(curl -sS -D - -o /dev/null -X POST "${BASE_URL}/api/v1/execution/recommendation" \
     -H "content-type: application/json" \
     -H "X-Request-ID: rec-trace-001" \
     -d '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"moneyline","selection":"knicks","target_price":121}' \

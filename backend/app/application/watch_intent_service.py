@@ -67,7 +67,7 @@ class WatchIntentService:
         self._logger.info(
             "watch_intent.create.started",
             extra={
-                "path": "/watch-intents",
+                "path": "/api/v1/watch-intents",
                 "event_id": event_id,
                 "market_type": market_type.value,
                 "selection": selection,

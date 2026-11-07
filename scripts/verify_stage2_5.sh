@@ -30,7 +30,7 @@ assert_equals() {
 
 post_json() {
   local payload="$1"
-  curl -sS -X POST "${BASE_URL}/execution/recommendation" \
+  curl -sS -X POST "${BASE_URL}/api/v1/execution/recommendation" \
     -H "content-type: application/json" \
     -d "$payload"
 }
@@ -51,7 +51,7 @@ log "seeding demo quotes"
 docker compose exec -T api uv run odds-db-seed-demo
 
 log "checking health endpoint"
-health_response="$(curl -sS "${BASE_URL}/health")"
+health_response="$(curl -sS "${BASE_URL}/api/health")"
 assert_json "$health_response" "assert data['status'] == 'ok'; assert data['environment'] == 'development'"
 
 log "checking fillable moneyline recommendation"
@@ -67,13 +67,13 @@ empty_response="$(post_json '{"event_id":"nba-knicks-celtics-2026-04-11","market
 assert_json "$empty_response" "assert data['fillable'] is False; assert data['best_quote'] is None; assert data['nearest_miss'] is None; assert data['ranked_quotes'] == []; assert data['matched_quote_count'] == 0"
 
 log "checking invalid total selection validation"
-invalid_total_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/execution/recommendation" \
+invalid_total_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/api/v1/execution/recommendation" \
   -H 'content-type: application/json' \
   -d '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"total","selection":"knicks","line":221.5,"target_price":-110}')"
 assert_equals "$invalid_total_status" "422" "invalid total selection status"
 
 log "checking invalid moneyline line validation"
-invalid_moneyline_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/execution/recommendation" \
+invalid_moneyline_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/api/v1/execution/recommendation" \
   -H 'content-type: application/json' \
   -d '{"event_id":"nba-knicks-celtics-2026-04-11","market_type":"moneyline","selection":"knicks","line":1.5,"target_price":120}')"
 assert_equals "$invalid_moneyline_status" "422" "invalid moneyline line status"

@@ -93,7 +93,7 @@ class QuoteIngestionService:
         self._logger.info(
             "quote_ingestion.started",
             extra={
-                "path": "/ingestion/quotes/refresh",
+                "path": "/api/v1/ingestion/quotes/refresh",
                 "workflow_id": refresh_id,
                 "event_id": event_id,
             },

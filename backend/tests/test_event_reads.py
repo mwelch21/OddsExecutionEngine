@@ -202,7 +202,7 @@ def test_lists_upcoming_events_with_participants_and_start_time(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        response = client.get("/events")
+        response = client.get("/api/v1/events")
 
     assert response.status_code == 200
     payload = response.json()
@@ -225,8 +225,8 @@ def test_events_that_have_started_are_excluded_by_default(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        default = client.get("/events").json()
-        included = client.get("/events", params={"include_started": True}).json()
+        default = client.get("/api/v1/events").json()
+        included = client.get("/api/v1/events", params={"include_started": True}).json()
 
     assert "nfl-already-kicked-off" not in _ids(default)
     assert default["total_events"] == 3
@@ -238,10 +238,10 @@ def test_filters_by_league_and_by_sport_independently(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        by_league = client.get("/events", params={"league": "NFL"}).json()
-        by_sport = client.get("/events", params={"sport": "baseball"}).json()
+        by_league = client.get("/api/v1/events", params={"league": "NFL"}).json()
+        by_sport = client.get("/api/v1/events", params={"sport": "baseball"}).json()
         both = client.get(
-            "/events", params={"league": "MLB", "sport": "americanfootball"}
+            "/api/v1/events", params={"league": "MLB", "sport": "americanfootball"}
         ).json()
 
     assert _ids(by_league) == ["nfl-jets-dolphins", "nfl-chiefs-bills"]
@@ -257,9 +257,9 @@ def test_pagination_reports_enough_to_render_a_page_count(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        first = client.get("/events", params={"page": 1, "page_size": 2}).json()
-        second = client.get("/events", params={"page": 2, "page_size": 2}).json()
-        past_end = client.get("/events", params={"page": 9, "page_size": 2}).json()
+        first = client.get("/api/v1/events", params={"page": 1, "page_size": 2}).json()
+        second = client.get("/api/v1/events", params={"page": 2, "page_size": 2}).json()
+        past_end = client.get("/api/v1/events", params={"page": 9, "page_size": 2}).json()
 
     assert _ids(first) == ["nfl-jets-dolphins", "nfl-chiefs-bills"]
     assert first["page"] == 1
@@ -277,16 +277,16 @@ def test_pagination_reports_enough_to_render_a_page_count(
 
 def test_pagination_rejects_nonsense_pages(sqlite_database_url: str) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        assert client.get("/events", params={"page": 0}).status_code == 422
-        assert client.get("/events", params={"page_size": 0}).status_code == 422
-        assert client.get("/events", params={"page_size": 5000}).status_code == 422
+        assert client.get("/api/v1/events", params={"page": 0}).status_code == 422
+        assert client.get("/api/v1/events", params={"page_size": 0}).status_code == 422
+        assert client.get("/api/v1/events", params={"page_size": 5000}).status_code == 422
 
 
 def test_event_reports_when_we_pulled_and_the_oldest_line_among_its_books(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        payload = client.get("/events").json()
+        payload = client.get("/api/v1/events").json()
 
     quotes = _by_id(payload, "nfl-chiefs-bills")["quotes"]
     assert quotes["quote_count"] == 6
@@ -300,7 +300,7 @@ def test_books_with_no_line_movement_time_are_counted_not_folded_into_the_age(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        payload = client.get("/events").json()
+        payload = client.get("/api/v1/events").json()
 
     # Caesars quotes both sides, so it is two rows but one book. Counting rows
     # here would report two unknown books out of a book count of three.
@@ -318,7 +318,7 @@ def test_event_with_no_quotes_reports_no_age_rather_than_zero_age(
     sqlite_database_url: str,
 ) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        payload = client.get("/events").json()
+        payload = client.get("/api/v1/events").json()
 
     quotes = _by_id(payload, "nfl-jets-dolphins")["quotes"]
     assert quotes["quote_count"] == 0
@@ -335,9 +335,9 @@ def test_postgres_events_page_carries_filters_and_both_freshness_stamps() -> Non
 
     with TestClient(_build_app(database_url, drop_existing=True)) as client:
         page = client.get(
-            "/events", params={"league": "NFL", "page": 1, "page_size": 1}
+            "/api/v1/events", params={"league": "NFL", "page": 1, "page_size": 1}
         ).json()
-        full = client.get("/events").json()
+        full = client.get("/api/v1/events").json()
 
     assert _ids(page) == ["nfl-jets-dolphins"]
     assert page["total_events"] == 2
