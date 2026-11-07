@@ -45,6 +45,14 @@ _Avoid_: Alert, ping, message
 **Opportunity notification**:
 The notification for one `OpportunityIdentified`: selection, best price and book, target line, fillable. One opportunity yields exactly one, however many books match.
 
+**Refresh**:
+One deliberate request to pull fresh quotes, for one sport or one event, made by the operator (manual) or by Auto-Refresh. Every refresh is recorded with its outcome, whether it succeeded, failed or was refused.
+_Avoid_: Sync, poll, fetch
+
+**Upstream call**:
+One billed request to the odds provider. A refresh uses at most one; refreshes made at the same moment can share one, and a credit-balance check is an upstream call with no refresh behind it. Credits are spent per upstream call, not per refresh.
+_Avoid_: Request (when you mean the billed provider call)
+
 **Quota warning**:
 The notification sent when remaining provider credits fall below a floor. Informs only; it does not switch Auto-Refresh off.
 
