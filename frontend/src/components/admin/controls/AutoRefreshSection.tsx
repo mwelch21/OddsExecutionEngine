@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getAutoRefresh, putAutoRefresh, type AutoRefresh } from "../../../lib/adminApi";
+import { useEffect, useRef, useState } from "react";
+import { getAutoRefresh, putAutoRefresh, type AutoRefresh, type AutoRefreshSettings } from "../../../lib/adminApi";
 import { ageLabel } from "../../../lib/format";
 import { AdminPanel } from "../AdminPanel";
 
@@ -17,12 +17,18 @@ export function AutoRefreshSection() {
   const [status, setStatus] = useState<AutoRefresh | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Saves run one at a time, each on the settings the last one returned, so an
+  // edit made while another is in flight is sent after it, not dropped.
+  const latest = useRef<AutoRefresh | null>(null);
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
     getAutoRefresh()
       .then((response) => {
-        if (!cancelled) setStatus(response);
+        if (cancelled) return;
+        latest.current = response;
+        setStatus(response);
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "Unavailable");
@@ -32,29 +38,33 @@ export function AutoRefreshSection() {
     };
   }, []);
 
-  async function save(change: Partial<Pick<AutoRefresh, "enabled" | "interval_minutes" | "quota_floor">>) {
-    if (!status || saving) return;
-    setSaving(true);
-    try {
-      setStatus(
-        await putAutoRefresh({
-          enabled: status.enabled,
-          interval_minutes: status.interval_minutes,
-          quota_floor: status.quota_floor,
+  function save(change: Partial<AutoRefreshSettings>) {
+    queue.current = queue.current.then(async () => {
+      const current = latest.current;
+      if (!current) return;
+      setSaving(true);
+      try {
+        const next = await putAutoRefresh({
+          enabled: current.enabled,
+          interval_minutes: current.interval_minutes,
+          quota_floor: current.quota_floor,
           ...change
-        })
-      );
-      setError(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
+        });
+        latest.current = next;
+        setStatus(next);
+        setError(null);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Save failed");
+      } finally {
+        setSaving(false);
+      }
+    });
   }
 
   const enabled = status?.enabled ?? false;
   const paused = status?.paused ?? false;
-  const disabled = !status || saving;
+  // Fields stay enabled while saving: disabling a focused field blurs it.
+  const loaded = status !== null;
   const stateLabel = !status ? "…" : !enabled ? "Off" : paused ? "On · paused, out of credits" : "On";
 
   return (
@@ -67,8 +77,8 @@ export function AutoRefreshSection() {
           aria-checked={enabled}
           aria-label="Auto-Refresh"
           className={enabled ? "admin-switch on" : "admin-switch"}
-          disabled={disabled}
-          onClick={() => void save({ enabled: !enabled })}
+          disabled={!loaded || saving}
+          onClick={() => save({ enabled: !enabled })}
         >
           <span className="admin-switch-thumb" />
           {stateLabel}
@@ -94,8 +104,8 @@ export function AutoRefreshSection() {
           min={MIN_INTERVAL}
           max={MAX_INTERVAL}
           required
-          disabled={disabled}
-          onCommit={(value) => void save({ interval_minutes: value ?? MIN_INTERVAL })}
+          disabled={!loaded}
+          onCommit={(value) => save({ interval_minutes: value ?? MIN_INTERVAL })}
           onInvalid={() => setError(`Interval must be ${MIN_INTERVAL}-${MAX_INTERVAL} minutes`)}
         />
         <NumberField
@@ -105,8 +115,8 @@ export function AutoRefreshSection() {
           // Empty means "derive it": show the floor the server derived.
           placeholder={status?.quota?.floor != null ? `auto · ${status.quota.floor}` : "auto"}
           min={0}
-          disabled={disabled}
-          onCommit={(value) => void save({ quota_floor: value })}
+          disabled={!loaded}
+          onCommit={(value) => save({ quota_floor: value })}
           onInvalid={() => setError("Warn-below floor must be 0 or more credits")}
         />
       </div>
@@ -150,8 +160,8 @@ function NumberField({
   onCommit: (value: number | null) => void;
   onInvalid: () => void;
 }) {
-  const [draft, setDraft] = useState(value == null ? "" : String(value));
-  useEffect(() => setDraft(value == null ? "" : String(value)), [value]);
+  const [draft, setDraft] = useState(toText(value));
+  useEffect(() => setDraft(toText(value)), [value]);
 
   function commit() {
     const text = draft.trim();
@@ -161,7 +171,7 @@ function NumberField({
     }
     const parsed = Number(text);
     if (text === "" || !Number.isInteger(parsed) || parsed < min || (max != null && parsed > max)) {
-      setDraft(value == null ? "" : String(value));
+      setDraft(toText(value));
       onInvalid();
       return;
     }
@@ -190,6 +200,10 @@ function NumberField({
       {unit}
     </label>
   );
+}
+
+function toText(value: number | null) {
+  return value == null ? "" : String(value);
 }
 
 function outcomeLabel(outcome: AutoRefresh["last_outcome"]) {

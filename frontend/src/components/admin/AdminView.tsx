@@ -1,14 +1,14 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { ComponentType, MouseEvent, ReactNode } from "react";
 import { Gauge, Settings2, ShieldCheck } from "lucide-react";
 import { routeUrl, type AdminTab } from "../../lib/deepLink";
 import { ControlsTab } from "./ControlsTab";
 import { CreditsTab } from "./CreditsTab";
 import { SystemsTab } from "./SystemsTab";
 
-const TABS: { key: AdminTab; label: string; icon: ReactNode }[] = [
-  { key: "systems", label: "Systems", icon: <ShieldCheck size={16} /> },
-  { key: "credits", label: "Credits", icon: <Gauge size={16} /> },
-  { key: "controls", label: "Controls", icon: <Settings2 size={16} /> }
+const TABS: { key: AdminTab; label: string; icon: ReactNode; Tab: ComponentType }[] = [
+  { key: "systems", label: "Systems", icon: <ShieldCheck size={16} />, Tab: SystemsTab },
+  { key: "credits", label: "Credits", icon: <Gauge size={16} />, Tab: CreditsTab },
+  { key: "controls", label: "Controls", icon: <Settings2 size={16} />, Tab: ControlsTab }
 ];
 
 /**
@@ -45,9 +45,9 @@ export function AdminView({
           </a>
         ))}
       </nav>
-      {tab === "systems" && <SystemsTab />}
-      {tab === "credits" && <CreditsTab />}
-      {tab === "controls" && <ControlsTab />}
+      {TABS.filter(({ key }) => key === tab).map(({ key, Tab }) => (
+        <Tab key={key} />
+      ))}
     </main>
   );
 }
