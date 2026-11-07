@@ -16,6 +16,14 @@ _Avoid_: User, account, customer, admin (for the person; the operator's controls
 The operator-only page for running and monitoring the system: whether it is working, what it costs, and the controls (Auto-Refresh, devices). Desktop-first. Stays with the operator when other people arrive.
 _Avoid_: Settings, dashboard, console
 
+**Component status**:
+Whether one part of the system is reachable right now, read straight from a signal the system already has, never scored or combined. Each component uses words that say only what its signal can prove: available ones are Healthy or Unhealthy, the notifier is Connected or Disconnected. Unknown when the signal can't be read; Disabled when the operator turned the feature off.
+_Avoid_: Health score, system health (as one combined verdict), status (alone: watch and delivery status mean other things)
+
+**Operational metrics**:
+Facts read from stored records and shown as they are: last successful refresh, credits left, recent delivery outcomes, pending deliveries. Never judged against a threshold.
+_Avoid_: Health checks, KPIs
+
 **Home**:
 The lines page inside the User view: events and their line boards, where watches are placed. The page the app opens to.
 _Avoid_: Lines view, dashboard
