@@ -118,11 +118,22 @@ func TestRenderOpportunity(t *testing.T) {
 	want := Notification{
 		Title: "Knicks @ Celtics",
 		Body:  "Knicks +125 @ DraftKings · target +100 · fillable",
-		URL:   testOrigin + "/?event=nba-knicks-celtics-2026-04-11&opportunity=opp-1",
+		URL:   testOrigin + "/events/nba-knicks-celtics-2026-04-11?opportunity=opp-1",
 		Tag:   "opportunity-opp-1",
 	}
 	if n != want {
 		t.Fatalf("got  %+v\nwant %+v", n, want)
+	}
+}
+
+func TestRenderOpportunityEscapesTheEventIDInThePath(t *testing.T) {
+	var data OpportunityIdentifiedData
+	data.OpportunityID = "opp 1"
+	data.Event.ID = "event/with space"
+	n := renderOpportunity(data, testOrigin)
+	want := testOrigin + "/events/event%2Fwith%20space?opportunity=opp+1"
+	if n.URL != want {
+		t.Fatalf("got  %s\nwant %s", n.URL, want)
 	}
 }
 
@@ -219,7 +230,7 @@ func TestRenderQuotaWarning(t *testing.T) {
 	want := Notification{
 		Title: "Credits running low",
 		Body:  "47 credits left · floor 50 · Auto-Refresh stays on",
-		URL:   testOrigin + "/",
+		URL:   testOrigin + "/admin/credits",
 		// One warning per crossing; a later one replaces it rather than stacking.
 		Tag: "quota-warning",
 	}

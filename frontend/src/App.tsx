@@ -19,7 +19,7 @@ import {
   type SupportedSport,
   type WatchIntent
 } from "./lib/api";
-import { type DeepLink, pushDeepLink, readDeepLink, replaceDeepLink } from "./lib/deepLink";
+import { type AdminTab, canonicalizeLocation, HOME, pushRoute, replaceRoute, type Route } from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { AutoRefreshControl } from "./components/AutoRefreshControl";
 import { EventList } from "./components/EventList";
@@ -41,6 +41,8 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 const REFRESH_COOLDOWN_SECONDS = 15;
 
 export function App() {
+  // Read once, after rewriting an old query link or bare `/admin` to its route.
+  const [initialRoute] = useState(canonicalizeLocation);
   const [sports, setSports] = useState<SupportedSport[]>([]);
   const [refreshSportKey, setRefreshSportKey] = useState("");
   const [league, setLeague] = useState<string | null>(null);
@@ -50,13 +52,17 @@ export function App() {
 
   // Seeded from the URL so a notification link or a reload lands on its screen.
   const [selectedEventId, setSelectedEventId] = useState<string | null>(
-    () => readDeepLink().eventId
+    initialRoute.view === "event" ? initialRoute.eventId : null
   );
   const [board, setBoard] = useState<LineBoardData | null>(null);
   const [boardLoading, setBoardLoading] = useState(false);
 
   const [pinnedOpportunityId, setPinnedOpportunityId] = useState<string | null>(
-    () => readDeepLink().opportunityId
+    initialRoute.view === "event" ? initialRoute.opportunityId : null
+  );
+  // The Admin view shell lands in #102; until then its routes show a placeholder.
+  const [adminTab, setAdminTab] = useState<AdminTab | null>(
+    initialRoute.view === "admin" ? initialRoute.tab : null
   );
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [opportunityNote, setOpportunityNote] = useState<string | null>(null);
@@ -173,39 +179,37 @@ export function App() {
     };
   }, [selectedEventId, pinnedOpportunityId]);
 
-  const applyLink = useCallback(
-    (link: DeepLink) => {
-      setSelectedEventId(link.eventId);
-      setPinnedOpportunityId(link.opportunityId);
-      if (!link.eventId) {
-        setWatches([]);
-        void loadEvents();
-      }
+  const applyRoute = useCallback(
+    (route: Route) => {
+      setSelectedEventId(route.view === "event" ? route.eventId : null);
+      setPinnedOpportunityId(route.view === "event" ? route.opportunityId : null);
+      setAdminTab(route.view === "admin" ? route.tab : null);
+      if (route.view !== "event") setWatches([]);
+      if (route.view === "home") void loadEvents();
     },
     [loadEvents]
   );
 
   // Back and Forward retrace the entries pushed below.
   useEffect(() => {
-    const onPopState = () => applyLink(readDeepLink());
+    const onPopState = () => applyRoute(canonicalizeLocation());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [applyLink]);
+  }, [applyRoute]);
 
   function handleSelectEvent(eventId: string) {
-    const link = { eventId, opportunityId: null };
-    pushDeepLink(link);
-    applyLink(link);
+    const route: Route = { view: "event", eventId, opportunityId: null };
+    pushRoute(route);
+    applyRoute(route);
   }
 
   function handleBack() {
-    const link = { eventId: null, opportunityId: null };
-    pushDeepLink(link);
-    applyLink(link);
+    pushRoute(HOME);
+    applyRoute(HOME);
   }
 
   function handleDismissOpportunity() {
-    replaceDeepLink({ eventId: selectedEventId, opportunityId: null });
+    if (selectedEventId) replaceRoute({ view: "event", eventId: selectedEventId, opportunityId: null });
     setPinnedOpportunityId(null);
   }
 
@@ -313,8 +317,10 @@ export function App() {
       <main className="workspace">
         <section className="hero-strip">
           <div>
-            <Pill tone="accent">{selectedEventId ? "Line board" : "Event browser"}</Pill>
-            <h2>{board ? matchupLabel(board.event) : "Stored events"}</h2>
+            <Pill tone="accent">
+              {adminTab ? "Admin" : selectedEventId ? "Line board" : "Event browser"}
+            </Pill>
+            <h2>{adminTab ? "Admin" : board ? matchupLabel(board.event) : "Stored events"}</h2>
             <p>{message}</p>
           </div>
         </section>
@@ -336,7 +342,11 @@ export function App() {
         )}
 
         <div className="content-grid">
-          {selectedEventId ? (
+          {adminTab ? (
+            <Panel>
+              <p>The Admin view is on its way. This page will hold its {adminTab} tab.</p>
+            </Panel>
+          ) : selectedEventId ? (
             <LineBoard
               board={board}
               loading={boardLoading}

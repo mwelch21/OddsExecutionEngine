@@ -21,7 +21,8 @@ Delivered today:
 | Type | Goes to | Expires | Tap opens |
 |---|---|---|---|
 | `destination.test.v1` | the one destination in `subject` | 10 min after the request | `/` |
-| `opportunity.identified.v1` | every active destination | `data.expires_at` (the opportunity TTL) | `/?event=<id>&opportunity=<id>` |
+| `opportunity.identified.v1` | every active destination | `data.expires_at` (the opportunity TTL) | `/events/<id>?opportunity=<id>` |
+| `quota.warning.v1` | operator destinations | 24 h after the warning | `/admin/credits` |
 
 Links are absolute under `APP_ORIGIN`, the PWA's origin (your `*.ts.net` URL on
 a phone). Apple endpoints get Declarative Web Push (`"web_push": 8030`), so iOS

@@ -127,7 +127,7 @@ flowchart LR
 | Persistence | `destinations` stores endpoint and encryption keys; public responses omit keys. `public_events` stores CloudEvents. Unique event/destination pair prevents duplicate delivery rows. |
 | Expiry | Test: 10 minutes. Opportunity: `data.expires_at` = created_at + opportunity TTL (720 min default). Events without `expires_at` expire unsent. |
 | Payload | Apple endpoints: Declarative Web Push (`web_push: 8030`, `navigate`), opened by iOS 18.4+ without the service worker. Others: `{title, body, url, tag}`, shown by `sw.js`. Max 3993 bytes. |
-| Display | Opportunity: title `Away @ Home`, body `Selection price @ book · target price · fillable`, tap opens `/?event=<id>&opportunity=<id>`. The app does not read those params yet (#71). |
+| Display | Opportunity: title `Away @ Home`, body `Selection price @ book · target price · fillable`, tap opens `/events/<id>?opportunity=<id>` (line board, opportunity pinned). Quota warning: tap opens `/admin/credits` (ADR-018). |
 | Worker | 30-second sweep, 60-second lease, fresh claim token; stale results cannot overwrite a newer claim. `dispatched_at` means fan-out completed. |
 | Runtime | Mac must remain awake and online, with app and notifier running. After a branch switch, rebuild the notifier image (`just refresh` once #84 lands). |
 | Outcomes | 2xx `delivered`. 429/5xx/network: retried, backoff step 10s doubling to a 15 min cap, equal jitter; a retry past max age is `expired`. 404/410 `gone`: destination soft-disabled, its pending deliveries `gone`. Other 4xx, oversize payload or broken subscription keys: `failed`. Lease ran out mid-send: nothing recorded, lease recovery resends. |

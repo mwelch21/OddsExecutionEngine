@@ -111,10 +111,10 @@ Knicks @ Celtics
 Knicks +125 @ DraftKings · target +100 · fillable
 ```
 
-Tapping it opens `APP_ORIGIN/?event=<id>&opportunity=<id>`. On iOS 18.4+ the
-notification is a Declarative Web Push, so the tap opens the Home Screen app
-even from a cold launch. The app does not act on those parameters yet
-("Desktop tap landing", #71).
+Tapping it opens `APP_ORIGIN/events/<id>?opportunity=<id>`: the line board with
+that opportunity pinned (ADR-018). On iOS 18.4+ the notification is a
+Declarative Web Push, so the tap opens the Home Screen app even from a cold
+launch. A quota warning opens `APP_ORIGIN/admin/credits`.
 
 An opportunity expires with its validity TTL (`OPPORTUNITY_TTL_MINUTES`); a
 delivery the notifier reaches later is `expired`, not sent.

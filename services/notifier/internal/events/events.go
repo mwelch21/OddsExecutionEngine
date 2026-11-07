@@ -160,7 +160,7 @@ func Render(event CloudEvent, destinationLabel, appOrigin string) (Notification,
 			Title: "Credits running low",
 			Body: fmt.Sprintf("%d credits left · floor %d · Auto-Refresh stays on",
 				data.Remaining, data.Floor),
-			URL: appOrigin + "/",
+			URL: appOrigin + "/admin/credits",
 			Tag: "quota-warning",
 		}, nil
 	default:
@@ -170,8 +170,7 @@ func Render(event CloudEvent, destinationLabel, appOrigin string) (Notification,
 
 // renderOpportunity: title is the matchup; body is
 // "<selection> <best price> @ <book> · target <target price> · fillable".
-// The link is the root with query parameters, never /events/{id}, which is an
-// API path (#66).
+// The link is the app's line board route with the opportunity pinned (ADR-018).
 func renderOpportunity(data OpportunityIdentifiedData, appOrigin string) Notification {
 	title := "Opportunity"
 	if data.Event.Away != nil && data.Event.Home != nil {
@@ -188,7 +187,6 @@ func renderOpportunity(data OpportunityIdentifiedData, appOrigin string) Notific
 	}
 
 	query := url.Values{}
-	query.Set("event", data.Event.ID)
 	query.Set("opportunity", data.OpportunityID)
 
 	return Notification{
@@ -196,7 +194,7 @@ func renderOpportunity(data OpportunityIdentifiedData, appOrigin string) Notific
 		Body: fmt.Sprintf("%s %s @ %s · target %s · fillable",
 			selection, americanOdds(data.Best.Price), data.Best.Sportsbook,
 			americanOdds(data.TargetPrice)),
-		URL: appOrigin + "/?" + query.Encode(),
+		URL: appOrigin + "/events/" + url.PathEscape(data.Event.ID) + "?" + query.Encode(),
 		// One opportunity is one notification: a repeat replaces, never stacks.
 		Tag: "opportunity-" + data.OpportunityID,
 	}
