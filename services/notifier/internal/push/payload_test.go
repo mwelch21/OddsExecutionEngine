@@ -11,7 +11,7 @@ import (
 var opportunity = events.Notification{
 	Title: "Knicks @ Celtics",
 	Body:  "Knicks +125 @ DraftKings · target +100 · fillable",
-	URL:   "https://phone.tailnet.ts.net/?event=e-1&opportunity=opp-1",
+	URL:   "https://phone.tailnet.ts.net/events/e-1?opportunity=opp-1",
 	Tag:   "opportunity-opp-1",
 }
 
