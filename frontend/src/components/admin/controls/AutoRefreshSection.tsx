@@ -38,7 +38,10 @@ export function AutoRefreshSection() {
     };
   }, []);
 
-  function save(change: Partial<AutoRefreshSettings>) {
+  /** `change` may read the settings as they stand once earlier saves land. */
+  function save(
+    change: Partial<AutoRefreshSettings> | ((current: AutoRefresh) => Partial<AutoRefreshSettings>)
+  ) {
     queue.current = queue.current.then(async () => {
       const current = latest.current;
       if (!current) return;
@@ -48,7 +51,7 @@ export function AutoRefreshSection() {
           enabled: current.enabled,
           interval_minutes: current.interval_minutes,
           quota_floor: current.quota_floor,
-          ...change
+          ...(typeof change === "function" ? change(current) : change)
         });
         latest.current = next;
         setStatus(next);
@@ -63,7 +66,9 @@ export function AutoRefreshSection() {
 
   const enabled = status?.enabled ?? false;
   const paused = status?.paused ?? false;
-  // Fields stay enabled while saving: disabling a focused field blurs it.
+  // Nothing is disabled while saving. Disabling a focused field blurs it, and a
+  // blur's save would disable the switch before a click on it lands; the queue
+  // orders them instead.
   const loaded = status !== null;
   const stateLabel = !status ? "…" : !enabled ? "Off" : paused ? "On · paused, out of credits" : "On";
 
@@ -77,8 +82,9 @@ export function AutoRefreshSection() {
           aria-checked={enabled}
           aria-label="Auto-Refresh"
           className={enabled ? "admin-switch on" : "admin-switch"}
-          disabled={!loaded || saving}
-          onClick={() => save({ enabled: !enabled })}
+          aria-busy={saving}
+          disabled={!loaded}
+          onClick={() => save((current) => ({ enabled: !current.enabled }))}
         >
           <span className="admin-switch-thumb" />
           {stateLabel}
@@ -136,6 +142,7 @@ export function AutoRefreshSection() {
 /**
  * A whole-number input that saves on blur or Enter, not on every keystroke.
  * An empty optional field commits `null`; a bad value reverts and reports.
+ * While the user is editing, a server value arriving never replaces the draft.
  */
 function NumberField({
   label,
@@ -161,21 +168,31 @@ function NumberField({
   onInvalid: () => void;
 }) {
   const [draft, setDraft] = useState(toText(value));
-  useEffect(() => setDraft(toText(value)), [value]);
+  // Typed but not yet committed: the draft is the user's, not the server's.
+  const dirty = useRef(false);
+  // The value this field last showed clean or sent, which a commit compares to.
+  const held = useRef(value);
+  useEffect(() => {
+    if (dirty.current) return;
+    held.current = value;
+    setDraft(toText(value));
+  }, [value]);
 
   function commit() {
+    dirty.current = false;
     const text = draft.trim();
-    if (text === "" && !required) {
-      if (value !== null) onCommit(null);
-      return;
-    }
-    const parsed = Number(text);
-    if (text === "" || !Number.isInteger(parsed) || parsed < min || (max != null && parsed > max)) {
-      setDraft(toText(value));
+    const parsed = text === "" && !required ? null : Number(text);
+    if (
+      parsed !== null &&
+      (text === "" || !Number.isInteger(parsed) || parsed < min || (max != null && parsed > max))
+    ) {
+      setDraft(toText(held.current));
       onInvalid();
       return;
     }
-    if (parsed !== value) onCommit(parsed);
+    if (parsed === held.current) return;
+    held.current = parsed;
+    onCommit(parsed);
   }
 
   return (
@@ -190,7 +207,10 @@ function NumberField({
           value={draft}
           placeholder={placeholder}
           disabled={disabled}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            dirty.current = true;
+            setDraft(event.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();

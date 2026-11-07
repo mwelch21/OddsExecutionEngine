@@ -1183,7 +1183,7 @@ select {
 }
 
 .admin-switch.on .admin-switch-thumb {
-  background: rgba(52, 211, 153, 0.25);
+  background: color-mix(in srgb, var(--good) 25%, transparent);
 }
 
 .admin-switch.on .admin-switch-thumb::after {
