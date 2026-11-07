@@ -20,7 +20,7 @@ This writes `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` into `.e
 Restart the API afterwards (`just refresh`) and check:
 
 ```bash
-curl -s localhost:8000/push/vapid-public-key
+curl -s localhost:8000/api/v1/push/vapid-public-key
 ```
 
 ### Rotating keys
@@ -67,7 +67,7 @@ from a Safari tab.
 5. The pill changes to "Notifications on". Confirm the device is stored:
 
    ```bash
-   curl -s localhost:8000/destinations
+   curl -s localhost:8000/api/v1/destinations
    ```
 
 In a Safari tab the app shows "Add to Home Screen to get notifications" instead
@@ -87,7 +87,7 @@ Next to "Notifications on", tap **Send test**. Within a second the device shows
 from the API:
 
 ```bash
-curl -s -X POST localhost:8000/destinations/<id>/test   # 202, then 429 for 10s
+curl -s -X POST localhost:8000/api/v1/destinations/<id>/test   # 202, then 429 for 10s
 ```
 
 Check what happened:

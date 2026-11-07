@@ -49,7 +49,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings)
     session_factory = DatabaseSessionFactory(app_settings.database_url)
-    app = FastAPI(title=app_settings.app_name)
+    # ADR-018: the docs and schema live under the versioned path too, so the
+    # /api proxy reaches them.
+    app = FastAPI(
+        title=app_settings.app_name,
+        docs_url="/api/v1/docs",
+        redoc_url="/api/v1/redoc",
+        openapi_url="/api/v1/openapi.json",
+        swagger_ui_oauth2_redirect_url="/api/v1/docs/oauth2-redirect",
+    )
     app.state.session_factory = session_factory
     app_logger = logging.getLogger(__name__)
     workflow_event_publisher = LoggingWorkflowEventPublisher()

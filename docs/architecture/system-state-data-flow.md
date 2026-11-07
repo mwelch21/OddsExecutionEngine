@@ -58,7 +58,7 @@ That gives fast reads now and a clean outbox path later.
 
 ### 1. Recommendation Request
 
-`POST /execution/recommendation`
+`POST /api/v1/execution/recommendation`
 
 1. Router validates request and builds `OrderIntent`.
 2. `RecommendationService` opens `SqlAlchemyRecommendationUnitOfWork`.
@@ -74,7 +74,7 @@ Important property: recommendation reads only latest quote state; history is not
 
 ### 2. Single Event Quote Refresh
 
-`POST /ingestion/quotes/refresh`
+`POST /api/v1/ingestion/quotes/refresh`
 
 1. `QuoteIngestionService` resolves the event's provider sport key without a paid call: the stored `events.sport`/`league` (falling back to the provider's in-process event cache), matched against the provider catalog. Unknown event → 404, unresolvable sport → 422. It then fetches that one event's quotes in a single upstream call (`GET /v4/sports/{sport}/events/{eventId}/odds`).
 2. `NormalizationEngine` drops malformed or mismatched quotes and preserves only canonical `Quote` values.
@@ -93,7 +93,7 @@ Important property: opportunity creation is not part of the ingestion transactio
 
 ### 3. Sport-Level Refresh
 
-`POST /ingestion/quotes/refresh-sport`
+`POST /api/v1/ingestion/quotes/refresh-sport`
 
 1. Provider fetches all configured events for one sport.
 2. Service loops event-by-event.
@@ -108,7 +108,7 @@ This is operationally simple, but it means sport refresh cost scales roughly wit
 
 ### 4. Watch Intent Creation and Evaluation
 
-`POST /watch-intents`
+`POST /api/v1/watch-intents`
 
 1. Router validates market shape.
 2. `WatchIntentService` writes `watch_intents`.
@@ -123,7 +123,7 @@ Important property: watch creation does immediate evaluation against current sta
 
 ### 5. Opportunity Listing
 
-`GET /opportunities`
+`GET /api/v1/opportunities`
 
 1. Watch UoW reads persisted `opportunities` plus watch metadata.
 2. It then looks up latest quote timestamps for each opportunity.

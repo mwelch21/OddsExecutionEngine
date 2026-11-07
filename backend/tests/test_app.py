@@ -50,11 +50,11 @@ def test_request_id_header_is_propagated(sqlite_database_url: str) -> None:
 
 def test_every_route_is_served_under_api_v1_except_health(sqlite_database_url: str) -> None:
     app = _build_test_app(sqlite_database_url)
-    docs_paths = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
-    paths = {route.path for route in app.routes if hasattr(route, "path")} - docs_paths
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
 
     assert "/api/health" in paths
+    assert {"/api/v1/docs", "/api/v1/redoc", "/api/v1/openapi.json"} <= paths
     assert all(path.startswith("/api/v1/") for path in paths - {"/api/health"})
 
 
@@ -70,6 +70,9 @@ def test_every_route_is_served_under_api_v1_except_health(sqlite_database_url: s
         ("POST", "/execution/recommendation"),
         ("POST", "/ingestion/quotes/refresh"),
         ("GET", "/api/v1/health"),
+        ("GET", "/docs"),
+        ("GET", "/redoc"),
+        ("GET", "/openapi.json"),
     ],
 )
 def test_unprefixed_paths_are_gone(sqlite_database_url: str, method: str, path: str) -> None:

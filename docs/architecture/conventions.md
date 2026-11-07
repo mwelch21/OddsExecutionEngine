@@ -93,8 +93,8 @@
 - Best book is `(-price, sportsbook)`, reusing `RecommendationEngine.rank_quotes`. Determinism is the requirement, not the alphabet: without it the same market state yields different notifications on different runs.
 - Staleness is keyed to the **best book only**: `get_latest_quote_times` looks up `best_sportsbook`. A non-best book moving is irrelevant to the decision. Known gap, accepted: a best book moving down while a listed second book overtakes it reads as stale rather than silently re-ranking the snapshot.
 - Reads return the stored snapshot as-is plus `is_valid` / `invalid_reason`, preserving the distinction between "here is what we found" and "here is what is true now". Never re-check live quotes on read.
-- `POST /watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
-- `DELETE /watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
+- `POST /api/v1/watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
+- `DELETE /api/v1/watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
 - No application-level opportunity deduplication. Terminal watches make it unreachable, and the unique constraint is the real guard — it also covers concurrent double-evaluation, which key checking never did.
 
 ## Quote times: the book's clock and ours are different facts
@@ -106,7 +106,7 @@
 
 ## Event browse reads
 
-- `GET /events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
+- `GET /api/v1/events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
 - Filtering and paging happen in SQL, not after the fact in Python. Dropping rows post-query would report a total the returned page does not add up to, and the page count is the reason this endpoint is page-based rather than cursor-based.
 - Started events are excluded by default, matching the watch paths: a started event can no longer produce an opportunity. `include_started=true` opts back in. An event with no known start time counts as not started.
 - Ordering is `starts_at ASC NULLS LAST`, tie-broken on `external_id`, so paging cannot repeat or skip a row and the order is identical on Postgres and SQLite.
@@ -117,7 +117,7 @@
 
 ## The line board is ranked server-side
 
-- `GET /events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
+- `GET /api/v1/events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
 - Ranking calls `RecommendationEngine.rank_quotes` — the same `(-price, sportsbook)` rule, tie-break included, that the recommendation and watch paths apply. A second sort in the client can show a different winner than the book a watch on that market would fire on, and "best" must mean one thing system-wide.
 - Storage does not rank. The read unit of work returns `MarketQuotes` in query order and the application layer applies the engine, keeping the rule in one place instead of half in SQL.
 - A market no book is quoting is returned present and empty, with `best_sportsbook` / `best_price` null. "Nobody is offering this" is an answer the board has to show, and it is never a best book at price zero.

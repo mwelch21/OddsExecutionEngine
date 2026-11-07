@@ -18,7 +18,7 @@ All computation is performed by pure, deterministic engines (zero I/O). All pers
 ### Flow A — Sport-Level Quote Refresh (Stage 6 primary entry point)
 
 ```
-POST /ingestion/quotes/refresh-sport { sport: "icehockey_nhl" }
+POST /api/v1/ingestion/quotes/refresh-sport { sport: "icehockey_nhl" }
   |
   v
 TheOddsApiProvider._fetch_sport_odds(sport)
@@ -129,7 +129,7 @@ WatchIntentService.evaluate_for_event(event_id)    [POST-COMMIT HOOK]
 ### Flow B — Watch Intent Creation (Stage 5)
 
 ```
-POST /watch-intents
+POST /api/v1/watch-intents
   {
     "event_id": "c6747886204aa9fee72f8f417533d92d",
     "market_type": "moneyline",
@@ -176,7 +176,7 @@ Response 201:
 ### Flow C — Watch Intent Cancellation
 
 ```
-DELETE /watch-intents/{watch_intent_id}
+DELETE /api/v1/watch-intents/{watch_intent_id}
   |
   v
 WatchIntentService.cancel_watch_intent()
@@ -201,7 +201,7 @@ NOTE: Existing opportunities are NOT deleted.
 ### Flow D — Opportunity Listing with Computed Validity
 
 ```
-GET /opportunities?event_id=c6747886204aa9fee72f8f417533d92d
+GET /api/v1/opportunities?event_id=c6747886204aa9fee72f8f417533d92d
   |
   v
 WatchIntentService.list_opportunities()
@@ -341,8 +341,8 @@ workflow_events (append-only audit log for ALL domain events)
 
 | Event | Emitted When | Aggregate ID | Workflow ID |
 |-------|-------------|-------------|-------------|
-| **WatchIntentCreated** | POST /watch-intents | watch_intent_id | watch_intent_id |
-| **WatchIntentCancelled** | DELETE /watch-intents/{id} | watch_intent_id | watch_intent_id |
+| **WatchIntentCreated** | POST /api/v1/watch-intents | watch_intent_id | watch_intent_id |
+| **WatchIntentCancelled** | DELETE /api/v1/watch-intents/{id} | watch_intent_id | watch_intent_id |
 | **WatchIntentExpired** | TTL passed, retired before evaluation | watch_intent_id | watch_intent_id |
 | **WatchIntentTriggered** | Watch fired; terminal transition (audit only) | watch_intent_id | watch_intent_id |
 | **OpportunityIdentified** | Watch creation OR quote refresh evaluation; exactly one per opportunity, however many books matched | opportunity_id | watch_intent_id |
@@ -430,7 +430,7 @@ On UoW.__exit__ (exception):
 
 ### Watch Intent
 ```
-                          +--[DELETE /watch-intents/{id}]--> cancelled  (terminal)
+                          +--[DELETE /api/v1/watch-intents/{id}]--> cancelled  (terminal)
                           |
 (not exists) --[POST]--> active --[TTL passed at evaluation]--> expired  (terminal)
                           |
@@ -509,11 +509,11 @@ This means:
 
 | Method | Path | Purpose | Events Emitted |
 |--------|------|---------|---------------|
-| POST | `/watch-intents` | Create watch intent + immediate evaluation; may return `triggered` with the opportunity nested | WatchIntentCreated, OpportunityIdentified*, WatchIntentTriggered* |
-| GET | `/watch-intents?event_id=` | List active intents (filters by event start time) | (none) |
-| DELETE | `/watch-intents/{id}` | Cancel watch intent | WatchIntentCancelled |
-| GET | `/opportunities?event_id=` | List opportunities with computed validity | (none) |
-| POST | `/ingestion/quotes/refresh-sport` | Refresh all events for a sport from Odds API | MarketSnapshotCreated*, QuoteUpdated, QuotesRefreshed, OpportunityIdentified* |
+| POST | `/api/v1/watch-intents` | Create watch intent + immediate evaluation; may return `triggered` with the opportunity nested | WatchIntentCreated, OpportunityIdentified*, WatchIntentTriggered* |
+| GET | `/api/v1/watch-intents?event_id=` | List active intents (filters by event start time) | (none) |
+| DELETE | `/api/v1/watch-intents/{id}` | Cancel watch intent | WatchIntentCancelled |
+| GET | `/api/v1/opportunities?event_id=` | List opportunities with computed validity | (none) |
+| POST | `/api/v1/ingestion/quotes/refresh-sport` | Refresh all events for a sport from Odds API | MarketSnapshotCreated*, QuoteUpdated, QuotesRefreshed, OpportunityIdentified* |
 
 *\* = emitted conditionally (only when new markets/opportunities are found)*
 
