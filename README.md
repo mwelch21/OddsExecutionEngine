@@ -220,8 +220,8 @@ Every route is served under `/api/v1`; only the health probe sits outside the ve
 | `GET` | `/api/v1/watch-intents?event_id=` | List active watch intents |
 | `DELETE` | `/api/v1/watch-intents/{id}` | Cancel a watch intent |
 | `GET` | `/api/v1/opportunities?event_id=` | List opportunities with computed validity |
-| `GET` | `/api/v1/auto-refresh` | Auto-Refresh switch, interval and last refresh outcome |
-| `PUT` | `/api/v1/auto-refresh` | Turn Auto-Refresh on or off, set the interval (1-60 min) |
+| `GET` | `/api/v1/admin/auto-refresh` | Auto-Refresh switch, interval, warn-below floor and last refresh outcome (operator) |
+| `PUT` | `/api/v1/admin/auto-refresh` | Turn Auto-Refresh on or off, set the interval (1-60 min) and floor (operator) |
 | `GET` | `/api/v1/test-ui` | Interactive testing dashboard (dev only) |
 
 ### Example: Get a recommendation

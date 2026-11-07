@@ -387,7 +387,7 @@ def _client(database_url: str) -> TestClient:
 def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: str) -> None:
     prepare_test_database(sqlite_database_url, seed_demo=False)
 
-    response = _client(sqlite_database_url).get("/api/v1/auto-refresh")
+    response = _client(sqlite_database_url).get("/api/v1/admin/auto-refresh")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -413,7 +413,7 @@ def test_status_shows_remaining_credits_the_floor_and_the_pause(
         )
     )
 
-    body = _client(sqlite_database_url).get("/api/v1/auto-refresh").json()
+    body = _client(sqlite_database_url).get("/api/v1/admin/auto-refresh").json()
 
     assert body["paused"] is False
     assert body["quota"] == {
@@ -448,10 +448,10 @@ def test_settings_survive_a_restart(sqlite_database_url: str) -> None:
     prepare_test_database(sqlite_database_url, seed_demo=False)
 
     put = _client(sqlite_database_url).put(
-        "/api/v1/auto-refresh", json={"enabled": True, "interval_minutes": 15}
+        "/api/v1/admin/auto-refresh", json={"enabled": True, "interval_minutes": 15}
     )
     # A fresh app over the same database stands in for a restarted API.
-    reread = _client(sqlite_database_url).get("/api/v1/auto-refresh")
+    reread = _client(sqlite_database_url).get("/api/v1/admin/auto-refresh")
 
     assert put.status_code == 200
     assert reread.json()["enabled"] is True
@@ -466,20 +466,20 @@ def test_interval_outside_one_to_sixty_is_rejected(
     client = _client(sqlite_database_url)
 
     response = client.put(
-        "/api/v1/auto-refresh", json={"enabled": True, "interval_minutes": interval}
+        "/api/v1/admin/auto-refresh", json={"enabled": True, "interval_minutes": interval}
     )
 
     assert response.status_code == 422
-    assert client.get("/api/v1/auto-refresh").json()["enabled"] is False
+    assert client.get("/api/v1/admin/auto-refresh").json()["enabled"] is False
 
 
 def test_turning_the_switch_on_does_not_refresh_from_the_api(sqlite_database_url: str) -> None:
     prepare_test_database(sqlite_database_url, seed_demo=True)
     client = _client(sqlite_database_url)
 
-    client.put("/api/v1/auto-refresh", json={"enabled": True, "interval_minutes": 5})
+    client.put("/api/v1/admin/auto-refresh", json={"enabled": True, "interval_minutes": 5})
 
-    assert client.get("/api/v1/auto-refresh").json()["last_outcome"] is None
+    assert client.get("/api/v1/admin/auto-refresh").json()["last_outcome"] is None
 
 
 # --- Postgres ----------------------------------------------------------------
