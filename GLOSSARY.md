@@ -13,8 +13,12 @@ _Avoid_: User, account, customer, admin (for the person; the operator's controls
 ### Surfaces
 
 **Admin view**:
-The operator-only controls for running the system: Auto-Refresh, provider credits and quota warnings. Seen on desktop while using the app. Stays with the operator when other people arrive.
+The operator-only page for running and monitoring the system: whether it is working, what it costs, and the controls (Auto-Refresh, devices). Desktop-first. Stays with the operator when other people arrive.
 _Avoid_: Settings, dashboard, console
+
+**Home**:
+The lines page inside the User view: events and their line boards, where watches are placed. The page the app opens to.
+_Avoid_: Lines view, dashboard
 
 **User view**:
 What someone placing watches sees: events, line boards, watches, notifications, and the screen a tapped notification opens. Phone-first. Today the operator is also its only user.
