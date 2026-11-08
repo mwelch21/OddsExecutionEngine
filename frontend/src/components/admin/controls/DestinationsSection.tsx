@@ -24,8 +24,9 @@ const STATUS: Record<DestinationStatus, { label: string; tone: "good" | "neutral
  * The operator's devices (#70): label, channel, status and last delivery, with
  * Test, Rename, Remove and Re-enable. Remove is a soft-disable, so history stays.
  * A gone device cannot be re-enabled here; it needs a fresh subscription.
+ * The list reloads whenever `reloadKey` changes, e.g. after this browser subscribes.
  */
-export function DestinationsSection() {
+export function DestinationsSection({ reloadKey = 0 }: { reloadKey?: number }) {
   const [destinations, setDestinations] = useState<Destination[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +42,7 @@ export function DestinationsSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   function replace(next: Destination) {
     setDestinations((current) =>
@@ -80,26 +81,32 @@ function DestinationRow({
 }) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(destination.label);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(0);
   const [note, setNote] = useState<{ text: string; warn: boolean } | null>(null);
   // Escape unmounts the focused input, and a blur fired on the way out must not save.
   const cancelled = useRef(false);
+  // Actions run one at a time. Nothing is disabled while one runs: clicking a
+  // button mid-rename blurs the input first, and that save must not disable the
+  // button before its click lands. The queue orders them instead.
+  const queue = useRef<Promise<void>>(Promise.resolve());
   const status: DestinationStatus = destination.active
     ? "active"
     : (destination.disabled_reason ?? "user_removed");
 
-  async function run(action: () => Promise<Destination | void>, done?: string) {
-    setBusy(true);
-    setNote(null);
-    try {
-      const next = await action();
-      if (next) onChange(next);
-      if (done) setNote({ text: done, warn: false });
-    } catch (reason) {
-      setNote({ text: reason instanceof Error ? reason.message : "Failed", warn: true });
-    } finally {
-      setBusy(false);
-    }
+  function run(action: () => Promise<Destination | void>, done?: string) {
+    setBusy((count) => count + 1);
+    queue.current = queue.current.then(async () => {
+      setNote(null);
+      try {
+        const next = await action();
+        if (next) onChange(next);
+        if (done) setNote({ text: done, warn: false });
+      } catch (reason) {
+        setNote({ text: reason instanceof Error ? reason.message : "Failed", warn: true });
+      } finally {
+        setBusy((count) => count - 1);
+      }
+    });
   }
 
   function saveLabel() {
@@ -109,11 +116,11 @@ function DestinationRow({
       setDraft(destination.label);
       return;
     }
-    void run(() => updateDestination(destination.id, { label }));
+    run(() => updateDestination(destination.id, { label }));
   }
 
   return (
-    <li className="destination-row">
+    <li className="destination-row" aria-busy={busy > 0}>
       <div className="destination-heading">
         {renaming ? (
           <input
@@ -150,14 +157,13 @@ function DestinationRow({
       <div className="admin-row">
         {destination.active && (
           <Button
-            disabled={busy}
-            onClick={() => void run(() => sendTestNotification(destination.id), "Test sent")}
+            onClick={() => run(() => sendTestNotification(destination.id), "Test sent")}
           >
             Test
           </Button>
         )}
         <Button
-          disabled={busy || renaming}
+          disabled={renaming}
           onClick={() => {
             cancelled.current = false;
             setDraft(destination.label);
@@ -169,8 +175,7 @@ function DestinationRow({
         {destination.active && (
           <Button
             variant="danger"
-            disabled={busy}
-            onClick={() => void run(() => removeDestination(destination.id))}
+            onClick={() => run(() => removeDestination(destination.id))}
           >
             Remove
           </Button>
@@ -178,8 +183,7 @@ function DestinationRow({
         {status === "user_removed" && (
           <Button
             variant="primary"
-            disabled={busy}
-            onClick={() => void run(() => updateDestination(destination.id, { active: true }))}
+            onClick={() => run(() => updateDestination(destination.id, { active: true }))}
           >
             Re-enable
           </Button>

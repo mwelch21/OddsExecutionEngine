@@ -89,12 +89,13 @@ class DestinationService:
     ) -> Destination:
         """Rename a destination, re-enable one the operator removed, or both."""
         with self._unit_of_work_factory() as uow:
-            existing = uow.get_destination(destination_id)
-            if existing is None:
+            if uow.get_destination(destination_id) is None:
                 raise DestinationNotFoundError(destination_id)
-            if reactivate and not existing.can_reactivate:
-                raise DestinationGoneError(destination_id)
             destination = uow.update_destination(destination_id, label, reactivate)
+            # Checked on the row as written, not as first read: raising here
+            # also rolls back a rename sent alongside.
+            if reactivate and not destination.can_reactivate:
+                raise DestinationGoneError(destination_id)
 
         self._logger.info(
             "destination.updated",

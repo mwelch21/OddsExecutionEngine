@@ -108,16 +108,25 @@ class SqlAlchemyDestinationUnitOfWork:
     def update_destination(
         self, destination_id: str, label: str | None, reactivate: bool
     ) -> Destination:
-        values: dict[str, object] = {}
+        session = self._require_session()
         if label is not None:
-            values["label"] = label
-        if reactivate:
-            values |= {"disabled_at": None, "disabled_reason": None}
-        if values:
-            self._require_session().execute(
+            session.execute(
                 update(destinations_table)
                 .where(destinations_table.c.id == destination_id)
-                .values(**values)
+                .values(label=label)
+            )
+        if reactivate:
+            # The guard lives in the UPDATE itself, so a `gone` committed by the
+            # notifier after the caller last read the row is never overwritten.
+            session.execute(
+                update(destinations_table)
+                .where(
+                    destinations_table.c.id == destination_id,
+                    destinations_table.c.disabled_reason.is_distinct_from(
+                        DisabledReason.GONE.value
+                    ),
+                )
+                .values(disabled_at=None, disabled_reason=None)
             )
         return self._get(destination_id)
 

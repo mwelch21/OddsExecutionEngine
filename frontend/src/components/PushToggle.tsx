@@ -15,7 +15,7 @@ type PushState = "checking" | "off" | "enabling" | "on" | "disabled" | "error";
  * Plain "Enable notifications" control: subscribes this browser as a destination.
  * Phone onboarding polish is its own feature (#64); this only has to work.
  */
-export function PushToggle() {
+export function PushToggle({ onEnabled }: { onEnabled?: () => void } = {}) {
   const support = pushSupport();
   const [state, setState] = useState<PushState>("checking");
   const [detail, setDetail] = useState("");
@@ -114,6 +114,7 @@ export function PushToggle() {
       const destination = await enablePush();
       setDestinationId(destination.id);
       setState(destination.active ? "on" : "disabled");
+      onEnabled?.();
     } catch (error: unknown) {
       setState("error");
       setDetail(error instanceof Error ? error.message : "Could not enable notifications");

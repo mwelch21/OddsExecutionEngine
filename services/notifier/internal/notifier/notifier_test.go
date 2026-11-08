@@ -573,6 +573,36 @@ func TestPendingDeliveryThatAgedOutWhileRemovedExpiresOnReEnable(t *testing.T) {
 	}
 }
 
+func TestRejectionDuringASendMarksARemovedDestinationGone(t *testing.T) {
+	h := newHarness(t)
+	target := h.addDestination("iPhone")
+	h.addTestEvent(target, time.Now())
+	if _, err := h.notifier.Store.FanOut(h.ctx, events.Delivered, 10); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := h.notifier.Store.ClaimDue(h.ctx, 10, time.Minute)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims = %d, err = %v; want one", len(claims), err)
+	}
+
+	// The operator removes the device while its push is in flight, then the
+	// push service answers 410.
+	h.markRemoved(target)
+	if err := h.notifier.Store.Record(h.ctx, claims[0], store.StatusGone, "410"); err != nil {
+		t.Fatal(err)
+	}
+
+	var reason string
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT disabled_reason FROM destinations WHERE id = $1`, target).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	// `gone` is what makes the API refuse a re-enable (409).
+	if reason != "gone" {
+		t.Fatalf("disabled_reason = %q, want gone", reason)
+	}
+}
+
 // runInBackground starts Run with the given sweep and stops it at test end.
 func (h *harness) runInBackground(sweep time.Duration) {
 	h.t.Helper()

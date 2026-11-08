@@ -219,9 +219,11 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 		// fresh subscribe from the browser reactivates it) and give up on
 		// everything else queued for it. A worker mid-send on one of those finds
 		// it no longer pending, so its result is dropped as stale.
+		// A rejection outranks an operator removal: re-enabling would only revive
+		// a subscription the channel has already refused.
 		if _, err := tx.Exec(ctx, `
-			UPDATE destinations SET disabled_at = now(), disabled_reason = 'gone'
-			WHERE id = $1 AND disabled_at IS NULL`, claim.DestinationID); err != nil {
+			UPDATE destinations SET disabled_at = coalesce(disabled_at, now()), disabled_reason = 'gone'
+			WHERE id = $1 AND disabled_reason IS DISTINCT FROM 'gone'`, claim.DestinationID); err != nil {
 			return fmt.Errorf("disabling destination %s: %w", claim.DestinationID, err)
 		}
 		if _, err := tx.Exec(ctx, `

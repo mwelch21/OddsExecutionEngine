@@ -12,8 +12,12 @@ from sqlalchemy import insert, select, update
 
 from backend.app.application.destination_service import DestinationService
 from backend.app.config import Settings
+from backend.app.domain.destinations import Destination
 from backend.app.domain.public_events import DESTINATION_TEST_V1
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.destination_uow import (
+    SqlAlchemyDestinationUnitOfWork,
+)
 from backend.app.infrastructure.persistence.schema import (
     deliveries_table,
     destinations_table,
@@ -412,5 +416,57 @@ def test_postgres_remove_and_re_enable_keep_the_row_and_its_deliveries() -> None
         assert still_gone["disabled_reason"] == "gone"
         assert client.patch("/api/v1/destinations/missing", json={"label": "x"}).status_code == 404
         assert client.delete("/api/v1/destinations/missing").status_code == 404
+    finally:
+        session_factory.engine.dispose()
+
+
+def _assert_gone_between_read_and_write_is_kept(
+    app: FastAPI,
+    session_factory: DatabaseSessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = TestClient(app)
+    destination_id = _register(client)
+    client.delete(f"/api/v1/destinations/{destination_id}")
+    read = SqlAlchemyDestinationUnitOfWork.get_destination
+
+    def read_then_notifier_marks_gone(
+        uow: SqlAlchemyDestinationUnitOfWork, wanted_id: str
+    ) -> Destination | None:
+        destination = read(uow, wanted_id)
+        _mark_gone(session_factory, wanted_id)  # commits in its own session
+        return destination
+
+    monkeypatch.setattr(
+        SqlAlchemyDestinationUnitOfWork, "get_destination", read_then_notifier_marks_gone
+    )
+    response = client.patch(
+        f"/api/v1/destinations/{destination_id}", json={"active": True, "label": "New"}
+    )
+    monkeypatch.undo()
+
+    assert response.status_code == 409
+    row = _stored_rows(session_factory)[0]
+    assert row["disabled_reason"] == "gone"
+    assert row["label"] == "iPhone"
+
+
+def test_re_enable_keeps_a_gone_committed_after_the_read(
+    sqlite_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, session_factory = _build(sqlite_database_url)
+    _assert_gone_between_read_and_write_is_kept(app, session_factory, monkeypatch)
+
+
+def test_postgres_re_enable_keeps_a_gone_committed_after_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    app, session_factory = _build(database_url, drop_existing=True)
+    try:
+        _assert_gone_between_read_and_write_is_kept(app, session_factory, monkeypatch)
     finally:
         session_factory.engine.dispose()

@@ -310,7 +310,9 @@ class DestinationUnitOfWork(Protocol):
 
     def update_destination(
         self, destination_id: str, label: str | None, reactivate: bool
-    ) -> Destination: ...
+    ) -> Destination:
+        """Reactivation never applies to a `gone` row; the result shows whether it did."""
+        ...
 
     def disable_destination(
         self, destination_id: str, reason: DisabledReason
