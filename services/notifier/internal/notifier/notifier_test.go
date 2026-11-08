@@ -493,13 +493,20 @@ func TestDisabledDestinationGetsNoDelivery(t *testing.T) {
 	}
 }
 
-func (h *harness) setRemoved(destinationID string, removed bool) {
+func (h *harness) markRemoved(destinationID string) {
 	h.t.Helper()
-	query := `UPDATE destinations SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1`
-	if removed {
-		query = `UPDATE destinations SET disabled_at = now(), disabled_reason = 'user_removed' WHERE id = $1`
+	if _, err := h.pool.Exec(h.ctx, `
+		UPDATE destinations SET disabled_at = now(), disabled_reason = 'user_removed'
+		WHERE id = $1`, destinationID); err != nil {
+		h.t.Fatal(err)
 	}
-	if _, err := h.pool.Exec(h.ctx, query, destinationID); err != nil {
+}
+
+func (h *harness) reEnable(destinationID string) {
+	h.t.Helper()
+	if _, err := h.pool.Exec(h.ctx, `
+		UPDATE destinations SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1`,
+		destinationID); err != nil {
 		h.t.Fatal(err)
 	}
 }
@@ -513,7 +520,7 @@ func TestPendingDeliveryWaitsWhileItsDestinationIsRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h.setRemoved(target, true)
+	h.markRemoved(target)
 	h.makeDue()
 	if err := h.notifier.RunOnce(h.ctx); err != nil {
 		t.Fatal(err)
@@ -526,7 +533,7 @@ func TestPendingDeliveryWaitsWhileItsDestinationIsRemoved(t *testing.T) {
 		t.Fatalf("removed destination was sent to: %d requests, want 1", n)
 	}
 
-	h.setRemoved(target, false)
+	h.reEnable(target)
 	if err := h.notifier.RunOnce(h.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +545,7 @@ func TestPendingDeliveryWaitsWhileItsDestinationIsRemoved(t *testing.T) {
 func TestPendingDeliveryThatAgedOutWhileRemovedExpiresOnReEnable(t *testing.T) {
 	h := newHarness(t)
 	target := h.addDestination("iPhone")
-	h.setRemoved(target, true)
+	h.markRemoved(target)
 	eventID := h.addTestEvent(target, time.Now().Add(-11*time.Minute))
 	// Queued before the removal, so fan-out's active filter did not apply.
 	if _, err := h.pool.Exec(h.ctx, `
@@ -554,7 +561,7 @@ func TestPendingDeliveryThatAgedOutWhileRemovedExpiresOnReEnable(t *testing.T) {
 		t.Fatalf("deliveries = %+v, want one pending while removed", got)
 	}
 
-	h.setRemoved(target, false)
+	h.reEnable(target)
 	if err := h.notifier.RunOnce(h.ctx); err != nil {
 		t.Fatal(err)
 	}

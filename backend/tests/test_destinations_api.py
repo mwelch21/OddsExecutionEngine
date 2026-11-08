@@ -399,5 +399,18 @@ def test_postgres_remove_and_re_enable_keep_the_row_and_its_deliveries() -> None
             deliveries = session.execute(select(deliveries_table)).mappings().all()
         assert [d["destination_id"] for d in deliveries] == [destination_id]
         assert len(_stored_rows(session_factory)) == 1
+
+        first = client.delete(f"/api/v1/destinations/{destination_id}").json()
+        again = client.delete(f"/api/v1/destinations/{destination_id}").json()
+        assert again["disabled_at"] == first["disabled_at"]
+
+        _mark_gone(session_factory, destination_id)
+        assert client.patch(
+            f"/api/v1/destinations/{destination_id}", json={"active": True}
+        ).status_code == 409
+        still_gone = client.delete(f"/api/v1/destinations/{destination_id}").json()
+        assert still_gone["disabled_reason"] == "gone"
+        assert client.patch("/api/v1/destinations/missing", json={"label": "x"}).status_code == 404
+        assert client.delete("/api/v1/destinations/missing").status_code == 404
     finally:
         session_factory.engine.dispose()

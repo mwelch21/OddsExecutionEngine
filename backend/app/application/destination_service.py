@@ -87,16 +87,12 @@ class DestinationService:
     def update_destination(
         self, destination_id: str, label: str | None, reactivate: bool
     ) -> Destination:
-        """Rename a destination, re-enable one the operator removed, or both.
-
-        A `gone` destination was rejected by its channel, so re-enabling it would
-        only queue sends that fail again: it waits for a fresh subscription instead.
-        """
+        """Rename a destination, re-enable one the operator removed, or both."""
         with self._unit_of_work_factory() as uow:
             existing = uow.get_destination(destination_id)
             if existing is None:
                 raise DestinationNotFoundError(destination_id)
-            if reactivate and existing.disabled_reason is DisabledReason.GONE:
+            if reactivate and not existing.can_reactivate:
                 raise DestinationGoneError(destination_id)
             destination = uow.update_destination(destination_id, label, reactivate)
 

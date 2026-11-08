@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ageLabel } from "../../../lib/format";
 import {
   listDestinations,
@@ -11,6 +11,14 @@ import { Button, Pill } from "../../primitives";
 import { AdminPanel } from "../AdminPanel";
 
 const CHANNEL_LABELS: Record<Destination["channel"], string> = { web_push: "Web Push" };
+
+type DestinationStatus = "active" | "user_removed" | "gone";
+
+const STATUS: Record<DestinationStatus, { label: string; tone: "good" | "neutral" | "warn" }> = {
+  active: { label: "Active", tone: "good" },
+  user_removed: { label: "Removed", tone: "neutral" },
+  gone: { label: "Gone", tone: "warn" }
+};
 
 /**
  * The operator's devices (#70): label, channel, status and last delivery, with
@@ -74,7 +82,11 @@ function DestinationRow({
   const [draft, setDraft] = useState(destination.label);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; warn: boolean } | null>(null);
-  const gone = destination.disabled_reason === "gone";
+  // Escape unmounts the focused input, and a blur fired on the way out must not save.
+  const cancelled = useRef(false);
+  const status: DestinationStatus = destination.active
+    ? "active"
+    : (destination.disabled_reason ?? "user_removed");
 
   async function run(action: () => Promise<Destination | void>, done?: string) {
     setBusy(true);
@@ -93,7 +105,7 @@ function DestinationRow({
   function saveLabel() {
     const label = draft.trim();
     setRenaming(false);
-    if (!label || label === destination.label) {
+    if (cancelled.current || !label || label === destination.label) {
       setDraft(destination.label);
       return;
     }
@@ -115,6 +127,7 @@ function DestinationRow({
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
               if (event.key === "Escape") {
+                cancelled.current = true;
                 setDraft(destination.label);
                 setRenaming(false);
               }
@@ -123,15 +136,13 @@ function DestinationRow({
         ) : (
           <strong>{destination.label}</strong>
         )}
-        <Pill tone={destination.active ? "good" : gone ? "warn" : "neutral"}>
-          {destination.active ? "Active" : gone ? "Gone" : "Removed"}
-        </Pill>
+        <Pill tone={STATUS[status].tone}>{STATUS[status].label}</Pill>
       </div>
       <p className="admin-muted">
         {CHANNEL_LABELS[destination.channel]} · Last delivered{" "}
         {ageLabel(destination.last_delivered_at) ?? "never"}
       </p>
-      {gone && (
+      {status === "gone" && (
         <p className="admin-warn">
           The push service rejected this device. Enable notifications on it again to resubscribe.
         </p>
@@ -148,6 +159,7 @@ function DestinationRow({
         <Button
           disabled={busy || renaming}
           onClick={() => {
+            cancelled.current = false;
             setDraft(destination.label);
             setRenaming(true);
           }}
@@ -163,7 +175,7 @@ function DestinationRow({
             Remove
           </Button>
         )}
-        {destination.disabled_reason === "user_removed" && (
+        {status === "user_removed" && (
           <Button
             variant="primary"
             disabled={busy}
