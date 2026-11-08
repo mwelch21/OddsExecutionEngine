@@ -27,6 +27,7 @@ from backend.app.composition import (
     build_watch_intent_service,
 )
 from backend.app.config import Settings, get_settings
+from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
 from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     delivery_query_service = DeliveryQueryService(
         unit_of_work_factory=lambda: SqlAlchemyDeliveryReadUnitOfWork(session_factory),
         subject_engine=DeliverySubjectEngine(),
+        error_engine=DeliveryErrorEngine(),
     )
     quota_service = build_quota_service(session_factory)
     quote_ingestion_service = build_quote_ingestion_service(

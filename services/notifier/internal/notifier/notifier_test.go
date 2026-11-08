@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,8 @@ type fakePushService struct {
 	script []int
 	// delay holds every answer back, widening any window for a double send.
 	delay time.Duration
+	// body is written with every answer.
+	body string
 }
 
 const fakeDrop = -1
@@ -54,7 +57,7 @@ func newFakePushService(t *testing.T) *fakePushService {
 		if len(f.script) > 0 {
 			status, f.script = f.script[0], f.script[1:]
 		}
-		delay := f.delay
+		delay, body := f.delay, f.body
 		f.mu.Unlock()
 		select {
 		case <-time.After(delay):
@@ -67,6 +70,7 @@ func newFakePushService(t *testing.T) *fakePushService {
 			return
 		}
 		w.WriteHeader(status)
+		io.WriteString(w, body) //nolint:errcheck // test server
 	}))
 	t.Cleanup(f.server.Close)
 	return f
@@ -1059,5 +1063,41 @@ func TestDeliveryWaitingOnARetryHasNotEnded(t *testing.T) {
 	got := h.deliveries(eventID)
 	if len(got) != 1 || got[0].status != store.StatusPending || got[0].endedAt != nil {
 		t.Fatalf("deliveries = %+v, want pending with no ended_at", got)
+	}
+}
+
+// The delivery log shows last_error to the operator, so it must never carry
+// the push address (the endpoint URL) or whatever the push service answered.
+func TestRecordedErrorsNeverCarryThePushAddressOrAnswerBody(t *testing.T) {
+	const secret = "tok_SECRET_9f8e7d6c5b4a"
+	for name, answer := range map[string]int{
+		"failed": http.StatusBadRequest, "gone": http.StatusGone,
+		"retried": http.StatusServiceUnavailable, "network error": fakeDrop,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.push.script = []int{answer}
+			h.push.body = "rejected " + h.push.server.URL + " " + secret
+			eventID := h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour))
+			h.addDestination("iPhone")
+
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			got := h.deliveries(eventID)
+			if len(got) != 1 || got[0].lastError == nil {
+				t.Fatalf("deliveries = %+v, want one with an error recorded", got)
+			}
+			text := *got[0].lastError
+			for _, leak := range []string{h.push.server.URL, "127.0.0.1", "/push/", secret, "rejected"} {
+				if strings.Contains(text, leak) {
+					t.Fatalf("last_error %q carries %q", text, leak)
+				}
+			}
+			if answer != fakeDrop && !strings.Contains(text, strconv.Itoa(answer)) {
+				t.Fatalf("last_error %q, want the status code kept", text)
+			}
+		})
 	}
 }

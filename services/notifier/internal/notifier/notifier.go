@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -97,7 +99,8 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 
 	notification, err := events.Render(claim.Event, claim.Label, n.AppOrigin)
 	if err != nil {
-		n.record(ctx, log, claim, store.StatusFailed, err.Error())
+		log.Warn("delivery.render_failed", "error", err)
+		n.record(ctx, log, claim, store.StatusFailed, "event could not be rendered")
 		return
 	}
 
@@ -122,7 +125,8 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 	case errors.Is(err, push.ErrUnsendable):
 		n.record(ctx, log, claim, store.StatusFailed, err.Error())
 	case err != nil:
-		n.retry(ctx, log, claim, err.Error())
+		log.Warn("delivery.send_failed", "error", err)
+		n.retry(ctx, log, claim, sendFailure(err))
 	case code >= 200 && code < 300:
 		n.record(ctx, log, claim, store.StatusDelivered, "")
 	case code == http.StatusNotFound || code == http.StatusGone:
@@ -134,8 +138,27 @@ func (n *Notifier) deliver(ctx context.Context, claim store.Claim) {
 	}
 }
 
+// Errors are stored in last_error, which the delivery log shows the operator.
+// They never carry the push address (the endpoint URL) or the push service's
+// answer body: a status code and a short reason only.
+
 func pushAnswer(result push.Result) string {
-	return fmt.Sprintf("push service answered %d: %s", result.StatusCode, result.Body)
+	return fmt.Sprintf("push service answered %d %s",
+		result.StatusCode, http.StatusText(result.StatusCode))
+}
+
+// sendFailure names a failed send by kind. The error itself quotes the
+// endpoint URL ("Post \"https://...\": ..."), so it only goes to the log.
+func sendFailure(err error) string {
+	var opErr *net.OpError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err):
+		return "network error: timed out"
+	case errors.As(err, &opErr):
+		return "network error: " + opErr.Op + " failed"
+	default:
+		return "network error"
+	}
 }
 
 // retry schedules another attempt with backoff, or gives up as expired when

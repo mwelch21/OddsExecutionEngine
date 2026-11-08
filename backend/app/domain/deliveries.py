@@ -52,6 +52,9 @@ class StoredDelivery(DomainModel):
 
 
 class DeliveryLogEntry(DomainModel):
+    """A delivery as the log shows it. `last_error` is an allowlisted summary,
+    never the stored text."""
+
     id: str
     event_id: str
     event_type: str

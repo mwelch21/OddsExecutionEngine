@@ -9,7 +9,8 @@ from backend.app.domain.destinations import Channel
 class DeliveryResponse(BaseModel):
     """One delivery in the log. The destination shows as its label and channel
     only, and the event as a short subject: never the push address, its keys or
-    the raw event payload. `ended_at` is null while the delivery is pending."""
+    the raw event payload. `last_error` is a safe summary (status code and short
+    reason), never the stored text. `ended_at` is null while the delivery is pending."""
 
     id: str
     event_id: str

@@ -30,6 +30,7 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "contracts" / "events" / "e
 PUSH_ADDRESS = "https://web.push.apple.com/QSecretSubscriptionToken"
 P256DH = "p256dh-secret-key"
 AUTH = "auth-secret-key"
+TOKEN = "tok_SECRET_9f8e7d6c5b4a"
 T0 = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
 
 
@@ -165,12 +166,40 @@ def test_the_log_lists_every_delivery_newest_first_with_its_outcome(log: Log) ->
         "channel": "web_push",
         "status": "failed",
         "attempts": 1,
-        "last_error": "push service answered 400: bad",
+        "last_error": "push service answered 400 Bad Request",
         "created_at": failed["created_at"],
         "ended_at": failed["ended_at"],
     }
     assert datetime.fromisoformat(failed["ended_at"]) == T0 + timedelta(minutes=2, seconds=5)
     assert body["deliveries"][0]["ended_at"] is None
+
+
+def test_a_stored_error_carrying_a_push_address_or_token_is_never_returned(log: Log) -> None:
+    """Rows written before the notifier summarised its errors quote the endpoint
+    URL and the push service's answer body."""
+    phone = log.destination("dest-phone", "iPhone")
+    event = log.event(OPPORTUNITY_IDENTIFIED_V1)
+    other = log.event(DESTINATION_TEST_V1)
+    unknown = log.event(QUOTA_WARNING_V1)
+    log.delivery(
+        "d-answer", event, phone, "gone", 1,
+        f"push service answered 410: {PUSH_ADDRESS} unsubscribed {TOKEN}",
+    )
+    log.delivery(
+        "d-network", other, phone, "expired", 2,
+        f'gave up: sending push: Post "{PUSH_ADDRESS}": dial tcp: {TOKEN}',
+    )
+    log.delivery("d-unknown", unknown, phone, "failed", 3, f"boom at {PUSH_ADDRESS} {TOKEN}")
+
+    response = log.client.get("/api/v1/admin/deliveries")
+
+    for leak in (PUSH_ADDRESS, "web.push.apple.com", TOKEN):
+        assert leak not in response.text
+    assert {row["id"]: row["last_error"] for row in response.json()["deliveries"]} == {
+        "d-answer": "push service answered 410 Gone",
+        "d-network": "gave up: network error",
+        "d-unknown": "error details withheld",
+    }
 
 
 def test_the_log_never_returns_a_push_address_key_or_raw_payload(log: Log) -> None:

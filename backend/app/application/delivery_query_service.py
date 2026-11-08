@@ -8,6 +8,7 @@ from backend.app.domain.deliveries import (
     DeliveryPage,
     StoredDelivery,
 )
+from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
 from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 
 
@@ -15,7 +16,8 @@ class DeliveryQueryService:
     """The delivery log: every notification delivery, newest first (#105).
 
     Pure read path over what the notifier wrote. Each row's event data becomes a
-    one-line subject here and goes no further.
+    one-line subject here and goes no further; its stored error is reduced to an
+    allowlisted summary, so no push address or answer body reaches the API.
     """
 
     _logger = logging.getLogger(__name__)
@@ -24,9 +26,11 @@ class DeliveryQueryService:
         self,
         unit_of_work_factory: DeliveryReadUnitOfWorkFactory,
         subject_engine: DeliverySubjectEngine,
+        error_engine: DeliveryErrorEngine,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._subject_engine = subject_engine
+        self._error_engine = error_engine
 
     def list_deliveries(
         self, delivery_filter: DeliveryFilter, page: int = 1, page_size: int = 50
@@ -73,7 +77,7 @@ class DeliveryQueryService:
             channel=row.channel,
             status=row.status,
             attempts=row.attempts,
-            last_error=row.last_error,
+            last_error=self._error_engine.summary(row.last_error),
             created_at=row.created_at,
             ended_at=row.ended_at,
         )
