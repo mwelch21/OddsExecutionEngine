@@ -275,3 +275,23 @@ def test_the_last_outcome_columns_are_gone_after_migration(
 
     assert not {c for c in columns if c.startswith("last_outcome")}
     assert "ix_refresh_records_started_at" in indexes
+
+
+def test_a_failed_refresh_never_keeps_the_provider_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: object, sport: str) -> object:
+        # The shape httpx gives an upstream error: the request URL, key included.
+        raise RuntimeError(
+            "Server error '500' for url "
+            "'https://api.the-odds-api.com/v4/sports/basketball/odds?apiKey=s3cr3t&regions=us'"
+        )
+
+    monkeypatch.setattr(InMemoryQuoteProvider, "list_quotes_for_sport", fail)
+
+    with pytest.raises(RuntimeError):
+        client.post("/api/v1/ingestion/quotes/refresh-sport", json={"sport": FIXTURE_SPORT_KEY})
+
+    [row] = _rows(client)
+    assert "s3cr3t" not in str(row["error"])
+    assert "apiKey=[redacted]&regions=us" in str(row["error"])

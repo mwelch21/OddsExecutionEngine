@@ -6,14 +6,20 @@ balance check is a call with no refresh behind it. Every refresh leaves one reco
 whatever its outcome. Records are admin read data only; no event is emitted.
 """
 
+import re
 from datetime import datetime
 from enum import StrEnum
 
 from pydantic import Field
 
 from backend.app.domain.base import DomainModel
+from backend.app.domain.quota import OutOfUsageCreditsError
 
 OUT_OF_USAGE_CREDITS = "OUT_OF_USAGE_CREDITS"
+
+# An upstream HTTP error's text carries the request URL, and the provider's key
+# rides in its query string. The log is read back over the API, so it never keeps it.
+_SECRET_QUERY_PARAM = re.compile(r"(api_?key=)[^&\s'\"]+", re.IGNORECASE)
 
 
 class RefreshScope(StrEnum):
@@ -33,6 +39,30 @@ class RefreshOutcomeStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     REFUSED = "refused"
+
+
+class RefreshResult(DomainModel):
+    """How a refresh ended: the outcome, a short code and the operator-safe text."""
+
+    outcome: RefreshOutcomeStatus
+    error_code: str | None = None
+    error: str | None = None
+
+    @classmethod
+    def from_error(cls, error: Exception | None) -> "RefreshResult":
+        if error is None:
+            return cls(outcome=RefreshOutcomeStatus.SUCCEEDED)
+        if isinstance(error, OutOfUsageCreditsError):
+            return cls(
+                outcome=RefreshOutcomeStatus.REFUSED,
+                error_code=OUT_OF_USAGE_CREDITS,
+                error=str(error),
+            )
+        return cls(
+            outcome=RefreshOutcomeStatus.FAILED,
+            error_code=type(error).__name__,
+            error=_SECRET_QUERY_PARAM.sub(r"\1[redacted]", str(error) or type(error).__name__),
+        )
 
 
 class RefreshRecord(DomainModel):

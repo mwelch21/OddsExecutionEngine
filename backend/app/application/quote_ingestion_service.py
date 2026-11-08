@@ -22,11 +22,9 @@ from backend.app.domain.models import (
     SportRefreshResult,
     SupportedSport,
 )
-from backend.app.domain.quota import OutOfUsageCreditsError
 from backend.app.domain.refresh_records import (
-    OUT_OF_USAGE_CREDITS,
-    RefreshOutcomeStatus,
     RefreshRecord,
+    RefreshResult,
     RefreshScope,
     RefreshTrigger,
 )
@@ -309,20 +307,7 @@ class QuoteIngestionService:
         """
         if self._refresh_recorder is None:
             return
-        if error is None:
-            outcome, error_code, message = RefreshOutcomeStatus.SUCCEEDED, None, None
-        elif isinstance(error, OutOfUsageCreditsError):
-            outcome, error_code, message = (
-                RefreshOutcomeStatus.REFUSED,
-                OUT_OF_USAGE_CREDITS,
-                str(error),
-            )
-        else:
-            outcome, error_code, message = (
-                RefreshOutcomeStatus.FAILED,
-                type(error).__name__,
-                str(error) or type(error).__name__,
-            )
+        result = RefreshResult.from_error(error)
         try:
             self._refresh_recorder.record(
                 RefreshRecord(
@@ -332,16 +317,16 @@ class QuoteIngestionService:
                     trigger=trigger,
                     started_at=started_at,
                     finished_at=self._clock(),
-                    outcome=outcome,
-                    error_code=error_code,
-                    error=message,
+                    outcome=result.outcome,
+                    error_code=result.error_code,
+                    error=result.error,
                     events_refreshed=events_refreshed,
                 )
             )
         except Exception:
             self._logger.exception(
                 "refresh_record.write_failed",
-                extra={"sport": sport_key, "event_id": event_id, "outcome": outcome.value},
+                extra={"sport": sport_key, "event_id": event_id, "outcome": result.outcome.value},
             )
 
     def _resolve_sport_key(self, event_id: str) -> str:
