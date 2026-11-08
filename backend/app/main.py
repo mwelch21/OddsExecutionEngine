@@ -5,7 +5,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
-from backend.app.api.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin import create_admin_router
+from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
@@ -152,10 +153,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api_v1.include_router(create_watch_intent_router(watch_intent_service))
     api_v1.include_router(create_opportunity_router(watch_intent_service))
     api_v1.include_router(create_event_router(event_query_service))
-    api_v1.include_router(create_auto_refresh_router(auto_refresh_service))
     api_v1.include_router(
         create_destination_router(destination_service, app_settings.vapid_public_key)
     )
+
+    # Admin view routes: one include per feature, all behind the operator hook.
+    # Add features before `admin` joins api_v1: include_router copies routes once.
+    admin = create_admin_router()
+    admin.include_router(create_auto_refresh_router(auto_refresh_service))
+    api_v1.include_router(admin)
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router

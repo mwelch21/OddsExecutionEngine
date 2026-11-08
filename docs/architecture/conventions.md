@@ -14,6 +14,7 @@
 - API parity: every UI capability has a public API endpoint, and the UI reaches it only through that endpoint. Nothing is UI-only.
 - Events that leave the system (notifications today, webhook or SDK later) are a versioned public contract, not a dump of internal `workflow_events`.
 - The system notifies; it never places bets. Programmatic execution belongs in the consumer's code.
+- Operator-only routes (the Admin view's) mount on `create_admin_router()` under `/api/v1/admin`, so the `require_operator` hook gates them all (ADR-018). Each feature is its own route and schema module in `backend/app/api/admin/`, included into the admin router in `main.py` before the admin router joins `/api/v1`: `include_router` copies routes once.
 
 ## Layering
 

@@ -17,6 +17,7 @@
   --warn: #fbbf24;
   --danger: #fb7185;
   --radius: 8px;
+  --admin-gap: 16px;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
 }
 
@@ -1033,85 +1034,177 @@ select {
   border-top: none;
 }
 
-.auto-refresh {
-  position: relative;
+/* --- Admin view ----------------------------------------------------------- */
+
+.admin-view {
+  display: grid;
+  gap: var(--admin-gap);
 }
 
-.auto-refresh-switch {
+.admin-tabstrip {
   display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-tabstrip a {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-strong);
+  padding: 10px 16px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-tabstrip a:hover {
   color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
 }
 
-.auto-refresh-switch .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--text-muted);
+.admin-tabstrip a.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
 }
 
-.auto-refresh-switch.on .dot {
-  background: var(--good);
-  box-shadow: 0 0 8px var(--good);
-}
-
-.auto-refresh-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 50;
+.admin-two {
   display: grid;
-  gap: 10px;
-  width: min(320px, calc(100vw - 32px));
-  padding: 14px;
-  border-radius: var(--radius);
-  background: var(--surface-strong);
-  border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
 }
 
-.auto-refresh-row {
+/* A grid of section cards: a new section is one more card. `min()` keeps a
+   card from overflowing a phone narrower than 320px plus the gutters. */
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
+}
+
+.admin-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.admin-panel-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-panel-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.admin-panel .empty-state {
+  min-height: 120px;
+  text-align: center;
+}
+
+.admin-row,
+.admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
-.auto-refresh-muted,
-.auto-refresh-warn {
+.admin-form {
+  gap: 24px;
+}
+
+.admin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.admin-field .target-input {
+  padding: 0 10px;
+}
+
+.admin-field input {
+  width: 96px;
+}
+
+.admin-muted,
+.admin-warn {
   margin: 0;
   font-size: 13px;
 }
 
-.auto-refresh-muted {
+.admin-muted {
   color: var(--text-muted);
 }
 
-.auto-refresh-warn {
+.admin-warn {
   color: var(--warn);
 }
 
-.auto-refresh {
-  display: flex;
+.admin-switch {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 14px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.credit-pill {
-  padding: 4px 10px;
+.admin-switch-thumb {
+  position: relative;
+  width: 36px;
+  height: 20px;
   border-radius: 999px;
-  border: 1px solid var(--warn);
-  color: var(--warn);
-  font-size: 12px;
-  white-space: nowrap;
+  background: var(--surface-strong);
+  transition: background 140ms ease;
+}
+
+.admin-switch-thumb::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition:
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.admin-switch.on .admin-switch-thumb {
+  background: color-mix(in srgb, var(--good) 25%, transparent);
+}
+
+.admin-switch.on .admin-switch-thumb::after {
+  background: var(--good);
+  transform: translateX(16px);
+}
+
+.admin-switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (max-width: 1080px) {
+  .admin-two {
+    grid-template-columns: 1fr;
+  }
 }
 
 .credit-meter {

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from backend.app.api.auto_refresh_schemas import (
+from backend.app.api.admin.auto_refresh_schemas import (
     AutoRefreshResponse,
     AutoRefreshSettingsRequest,
 )

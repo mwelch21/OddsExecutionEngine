@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, CheckCircle2, RadioTower, TrendingUp } from "lucide-react";
+import { Bell, CheckCircle2, LineChart, RadioTower, ShieldCheck, TrendingUp } from "lucide-react";
 import {
   cancelWatch,
   createWatch,
@@ -19,13 +19,19 @@ import {
   type SupportedSport,
   type WatchIntent
 } from "./lib/api";
-import { canonicalizeLocation, HOME, pushRoute, replaceRoute, type Route } from "./lib/deepLink";
+import {
+  canonicalizeLocation,
+  HOME,
+  pushRoute,
+  replaceRoute,
+  type AdminTab,
+  type Route
+} from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
-import { AutoRefreshControl } from "./components/AutoRefreshControl";
+import { AdminView } from "./components/admin/AdminView";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
-import { PushToggle } from "./components/PushToggle";
 import { WatchPanel } from "./components/WatchPanel";
 import { Button, Panel, Pill } from "./components/primitives";
 
@@ -46,7 +52,6 @@ export function App() {
   const [route, setRoute] = useState<Route>(canonicalizeLocation);
   const selectedEventId = route.view === "event" ? route.eventId : null;
   const pinnedOpportunityId = route.view === "event" ? route.opportunityId : null;
-  // The Admin view shell lands in #102; until then its routes show a placeholder.
   const adminTab = route.view === "admin" ? route.tab : null;
   const [sports, setSports] = useState<SupportedSport[]>([]);
   const [refreshSportKey, setRefreshSportKey] = useState("");
@@ -200,6 +205,12 @@ export function App() {
     applyRoute(HOME);
   }
 
+  function handleOpenAdmin(tab: AdminTab = "systems") {
+    const route: Route = { view: "admin", tab };
+    pushRoute(route);
+    applyRoute(route);
+  }
+
   function handleDismissOpportunity() {
     if (route.view !== "event") return;
     const unpinned: Route = { ...route, opportunityId: null };
@@ -291,109 +302,115 @@ export function App() {
           </div>
           <div>
             <h1>OddsCafe</h1>
-            <p>Fillability, best book, nearest miss, watch signals.</p>
+            <p>{adminTab ? "Admin view" : "Fillability, best book, nearest miss, watch signals."}</p>
           </div>
         </div>
         <div className="topbar-status">
-          <Pill tone={loadState === "error" ? "warn" : "good"}>
-            <RadioTower size={14} />
-            {loadState}
-          </Pill>
-          <Pill>
-            <Bell size={14} />
-            {watches.length} watches
-          </Pill>
-          <AutoRefreshControl />
-          <PushToggle />
+          {adminTab ? (
+            // Lines always goes Home; a notification can cold-launch here with no history.
+            <Button variant="secondary" onClick={handleBack}>
+              <LineChart size={15} />
+              Lines
+            </Button>
+          ) : (
+            <>
+              <Pill tone={loadState === "error" ? "warn" : "good"}>
+                <RadioTower size={14} />
+                {loadState}
+              </Pill>
+              <Pill>
+                <Bell size={14} />
+                {watches.length} watches
+              </Pill>
+              <Button variant="secondary" onClick={() => handleOpenAdmin()}>
+                <ShieldCheck size={15} />
+                Admin view
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
-      <main className="workspace">
-        <section className="hero-strip">
-          <div>
-            <Pill tone="accent">
-              {adminTab ? "Admin" : selectedEventId ? "Line board" : "Event browser"}
-            </Pill>
-            <h2>{adminTab ? "Admin" : board ? matchupLabel(board.event) : "Stored events"}</h2>
-            <p>{message}</p>
-          </div>
-        </section>
+      {adminTab ? (
+        <AdminView tab={adminTab} onSelectTab={handleOpenAdmin} />
+      ) : (
+        <main className="workspace">
+          <section className="hero-strip">
+            <div>
+              <Pill tone="accent">{selectedEventId ? "Line board" : "Event browser"}</Pill>
+              <h2>{board ? matchupLabel(board.event) : "Stored events"}</h2>
+              <p>{message}</p>
+            </div>
+          </section>
 
-        {selectedEventId && opportunity && (
-          <OpportunityBanner
-            opportunity={opportunity}
-            board={board}
-            onDismiss={handleDismissOpportunity}
-          />
-        )}
-        {selectedEventId && opportunityNote && (
-          <div className="opportunity-note" role="status">
-            <p>{opportunityNote}</p>
-            <Button variant="ghost" title="Dismiss" onClick={handleDismissOpportunity}>
-              x
-            </Button>
-          </div>
-        )}
-
-        <div className="content-grid">
-          {adminTab ? (
-            <Panel>
-              <p>The Admin view is on its way. This page will hold its {adminTab} tab.</p>
-              {/* A notification can cold-launch here with no history to go Back to. */}
-              <Button variant="ghost" onClick={handleBack}>
-                Back to events
-              </Button>
-            </Panel>
-          ) : selectedEventId ? (
-            <LineBoard
+          {selectedEventId && opportunity && (
+            <OpportunityBanner
+              opportunity={opportunity}
               board={board}
-              loading={boardLoading}
-              onBack={handleBack}
-              onOpenWatch={openWatchModal}
-              pinnedMarket={opportunity}
-            />
-          ) : (
-            <EventList
-              page={eventPage}
-              sports={sports}
-              league={league}
-              includeStarted={includeStarted}
-              refreshSport={refreshSportKey}
-              loading={loadState === "loading"}
-              refreshing={refreshing}
-              cooldown={cooldown}
-              onLeagueChange={(value) => {
-                setLeague(value);
-                setPage(1);
-              }}
-              onIncludeStartedChange={(value) => {
-                setIncludeStarted(value);
-                setPage(1);
-              }}
-              onRefreshSportChange={setRefreshSportKey}
-              onRefresh={() => void handleRefresh()}
-              onPageChange={setPage}
-              onSelectEvent={handleSelectEvent}
+              onDismiss={handleDismissOpportunity}
             />
           )}
+          {selectedEventId && opportunityNote && (
+            <div className="opportunity-note" role="status">
+              <p>{opportunityNote}</p>
+              <Button variant="ghost" title="Dismiss" onClick={handleDismissOpportunity}>
+                x
+              </Button>
+            </div>
+          )}
 
-          <aside className="side-rail">
-            {selectedEventId && (
-              <WatchPanel watches={watches} onCancel={(id) => void handleCancelWatch(id)} />
+          <div className="content-grid">
+            {selectedEventId ? (
+              <LineBoard
+                board={board}
+                loading={boardLoading}
+                onBack={handleBack}
+                onOpenWatch={openWatchModal}
+                pinnedMarket={opportunity}
+              />
+            ) : (
+              <EventList
+                page={eventPage}
+                sports={sports}
+                league={league}
+                includeStarted={includeStarted}
+                refreshSport={refreshSportKey}
+                loading={loadState === "loading"}
+                refreshing={refreshing}
+                cooldown={cooldown}
+                onLeagueChange={(value) => {
+                  setLeague(value);
+                  setPage(1);
+                }}
+                onIncludeStartedChange={(value) => {
+                  setIncludeStarted(value);
+                  setPage(1);
+                }}
+                onRefreshSportChange={setRefreshSportKey}
+                onRefresh={() => void handleRefresh()}
+                onPageChange={setPage}
+                onSelectEvent={handleSelectEvent}
+              />
             )}
-            <Panel className="execution-note">
-              <CheckCircle2 size={22} />
-              <div>
-                <strong>Browsing is free</strong>
-                <p>
-                  Events and boards are read from the database. Only the refresh control
-                  contacts the provider, and it is billed per market per region.
-                </p>
-              </div>
-            </Panel>
-          </aside>
-        </div>
-      </main>
+
+            <aside className="side-rail">
+              {selectedEventId && (
+                <WatchPanel watches={watches} onCancel={(id) => void handleCancelWatch(id)} />
+              )}
+              <Panel className="execution-note">
+                <CheckCircle2 size={22} />
+                <div>
+                  <strong>Browsing is free</strong>
+                  <p>
+                    Events and boards are read from the database. Only the refresh control
+                    contacts the provider, and it is billed per market per region.
+                  </p>
+                </div>
+              </Panel>
+            </aside>
+          </div>
+        </main>
+      )}
 
       {watchDraft && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setWatchDraft(null)}>
