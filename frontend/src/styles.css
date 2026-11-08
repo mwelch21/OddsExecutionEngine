@@ -17,6 +17,7 @@
   --warn: #fbbf24;
   --danger: #fb7185;
   --radius: 8px;
+  --admin-gap: 16px;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
 }
 
@@ -1037,7 +1038,7 @@ select {
 
 .admin-view {
   display: grid;
-  gap: 16px;
+  gap: var(--admin-gap);
 }
 
 .admin-tabstrip {
@@ -1071,13 +1072,17 @@ select {
 .admin-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--admin-gap);
   align-items: start;
 }
 
-.admin-stack {
+/* A grid of section cards: a new section is one more card. `min()` keeps a
+   card from overflowing a phone narrower than 320px plus the gutters. */
+.admin-cards {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
 }
 
 .admin-panel {
