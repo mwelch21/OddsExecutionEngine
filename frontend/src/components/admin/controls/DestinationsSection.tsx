@@ -89,6 +89,11 @@ function DestinationRow({
   // button mid-rename blurs the input first, and that save must not disable the
   // button before its click lands. The queue orders them instead.
   const queue = useRef<Promise<void>>(Promise.resolve());
+  // The newest label queued or in flight. A draft is compared against it, not
+  // the server's last answer, so renaming A -> B -> A before B lands still sends
+  // A. Cleared when that save settles; a failed one can then be sent again.
+  const pendingLabel = useRef<string | undefined>(undefined);
+  const latestLabel = () => pendingLabel.current ?? destination.label;
   const status: DestinationStatus = destination.active
     ? "active"
     : (destination.disabled_reason ?? "user_removed");
@@ -112,11 +117,18 @@ function DestinationRow({
   function saveLabel() {
     const label = draft.trim();
     setRenaming(false);
-    if (cancelled.current || !label || label === destination.label) {
-      setDraft(destination.label);
+    if (cancelled.current || !label || label === latestLabel()) {
+      setDraft(latestLabel());
       return;
     }
-    run(() => updateDestination(destination.id, { label }));
+    pendingLabel.current = label;
+    run(async () => {
+      try {
+        return await updateDestination(destination.id, { label });
+      } finally {
+        if (pendingLabel.current === label) pendingLabel.current = undefined;
+      }
+    });
   }
 
   return (
@@ -135,7 +147,7 @@ function DestinationRow({
               if (event.key === "Enter") event.currentTarget.blur();
               if (event.key === "Escape") {
                 cancelled.current = true;
-                setDraft(destination.label);
+                setDraft(latestLabel());
                 setRenaming(false);
               }
             }}
@@ -166,7 +178,7 @@ function DestinationRow({
           disabled={renaming}
           onClick={() => {
             cancelled.current = false;
-            setDraft(destination.label);
+            setDraft(latestLabel());
             setRenaming(true);
           }}
         >
