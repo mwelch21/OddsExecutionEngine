@@ -27,6 +27,7 @@ from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnit
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
+from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRefreshRecorder
 from backend.app.infrastructure.persistence.schema import events_table, watch_intents_table
 from backend.app.infrastructure.publishers.in_memory_publisher import (
     InMemoryWorkflowEventPublisher,
@@ -159,6 +160,7 @@ class Harness:
             quote_provider=self.provider,
             normalization_engine=NormalizationEngine(),
             workflow_event_publisher=InMemoryWorkflowEventPublisher(),
+            refresh_recorder=SqlAlchemyRefreshRecorder(self.session_factory),
         )
         self.service = self.build_service(PostgresAdvisoryCycleLock(self.session_factory))
 
@@ -335,7 +337,7 @@ def test_out_of_credits_pauses_auto_refresh_without_switching_it_off(
     harness.clock.now += timedelta(minutes=6)
     paused = harness.service.run_cycle()
 
-    assert exhausted.refreshed[0].status is RefreshOutcomeStatus.FAILED
+    assert exhausted.refreshed[0].status is RefreshOutcomeStatus.REFUSED
     assert paused.paused is True
     assert paused.refreshed == []
     # Only the first, refused pull reached a paid endpoint.

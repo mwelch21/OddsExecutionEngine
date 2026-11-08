@@ -8,7 +8,8 @@ const ADMIN = "/admin";
 
 export type AutoRefreshOutcome = {
   sport: string;
-  status: "succeeded" | "failed";
+  /** `refused`: the provider declined the call, out of credits. */
+  status: RefreshOutcome;
   at: string;
   events_refreshed: number;
   error: string | null;
@@ -50,4 +51,47 @@ export async function putAutoRefresh(settings: AutoRefreshSettings) {
     method: "PUT",
     body: JSON.stringify(settings)
   });
+}
+
+export type RefreshTrigger = "manual" | "auto";
+export type RefreshOutcome = "succeeded" | "failed" | "refused";
+
+/** One refresh, manual or Auto-Refresh. `event_id` is null for a sport-wide refresh. */
+export type RefreshRecord = {
+  scope: "sport" | "event";
+  sport: string;
+  event_id: string | null;
+  trigger: RefreshTrigger;
+  started_at: string;
+  finished_at: string;
+  outcome: RefreshOutcome;
+  error_code: string | null;
+  error: string | null;
+  events_refreshed: number;
+};
+
+export type RefreshPage = {
+  refreshes: RefreshRecord[];
+  page: number;
+  page_size: number;
+  total_items: number;
+  total_pages: number;
+};
+
+export type RefreshQuery = {
+  sport?: string;
+  trigger?: RefreshTrigger;
+  outcome?: RefreshOutcome;
+  page?: number;
+  page_size?: number;
+};
+
+/** The refresh log, newest first. A stored read: it never refreshes or spends credits. */
+export async function getRefreshes(query: RefreshQuery = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const search = params.toString();
+  return request<RefreshPage>(`${ADMIN}/refreshes${search ? `?${search}` : ""}`);
 }

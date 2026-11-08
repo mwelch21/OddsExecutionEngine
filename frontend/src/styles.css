@@ -1207,6 +1207,55 @@ select {
   }
 }
 
+/* Refresh log (#103): failed and refused rows carry a coloured edge. */
+.refresh-log {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.refresh-log-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.refresh-log-failed {
+  border-left-color: var(--danger);
+}
+
+.refresh-log-refused {
+  border-left-color: var(--warn);
+}
+
+.refresh-log-main,
+.refresh-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.refresh-log-meta {
+  font-size: 12px;
+}
+
+.refresh-log-target {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.refresh-log-error {
+  overflow-wrap: anywhere;
+}
+
 .credit-meter {
   display: grid;
   gap: 6px;

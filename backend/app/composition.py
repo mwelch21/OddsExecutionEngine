@@ -33,6 +33,7 @@ from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnit
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
+from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRefreshRecorder
 from backend.app.infrastructure.persistence.watch_intent_uow import (
     SqlAlchemyWatchIntentUnitOfWork,
 )
@@ -98,6 +99,8 @@ def build_quote_ingestion_service(
         normalization_engine=NormalizationEngine(),
         workflow_event_publisher=workflow_event_publisher,
         watch_intent_service=watch_intent_service,
+        # Every refresh, manual or automatic, leaves a refresh record (#96).
+        refresh_recorder=SqlAlchemyRefreshRecorder(session_factory),
     )
 
 

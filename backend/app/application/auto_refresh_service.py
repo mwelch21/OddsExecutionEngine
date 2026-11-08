@@ -18,6 +18,7 @@ from backend.app.domain.auto_refresh import (
 )
 from backend.app.domain.models import EventSport
 from backend.app.domain.quota import OutOfUsageCreditsError
+from backend.app.domain.refresh_records import RefreshTrigger
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
 
 
@@ -141,7 +142,10 @@ class AutoRefreshService:
         started_at = perf_counter()
         out_of_credits = False
         try:
-            result = self._quote_ingestion_service.refresh_sport(sport)
+            # Ingestion writes the refresh record; the status endpoint reads it back.
+            result = self._quote_ingestion_service.refresh_sport(
+                sport, trigger=RefreshTrigger.AUTO
+            )
             outcome = AutoRefreshOutcome(
                 sport=sport,
                 status=RefreshOutcomeStatus.SUCCEEDED,
@@ -153,7 +157,7 @@ class AutoRefreshService:
             out_of_credits = True
             outcome = AutoRefreshOutcome(
                 sport=sport,
-                status=RefreshOutcomeStatus.FAILED,
+                status=RefreshOutcomeStatus.REFUSED,
                 at=self._clock(),
                 error=str(error),
             )
@@ -167,8 +171,6 @@ class AutoRefreshService:
                 error=str(error) or type(error).__name__,
             )
 
-        with self._unit_of_work_factory() as uow:
-            uow.record_outcome(outcome)
         self._logger.info(
             "auto_refresh.refreshed",
             extra={

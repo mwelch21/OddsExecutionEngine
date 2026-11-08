@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
@@ -6,6 +7,7 @@ from uuid import uuid4
 from backend.app.application.ports import (
     QuoteIngestionProvider,
     QuoteIngestionUnitOfWorkFactory,
+    RefreshRecorder,
     WorkflowEventPublisher,
 )
 from backend.app.domain.events import (
@@ -19,6 +21,14 @@ from backend.app.domain.models import (
     QuoteRefreshSummary,
     SportRefreshResult,
     SupportedSport,
+)
+from backend.app.domain.quota import OutOfUsageCreditsError
+from backend.app.domain.refresh_records import (
+    OUT_OF_USAGE_CREDITS,
+    RefreshOutcomeStatus,
+    RefreshRecord,
+    RefreshScope,
+    RefreshTrigger,
 )
 from backend.app.engines.normalization_engine import NormalizationEngine
 
@@ -72,6 +82,8 @@ class QuoteIngestionService:
         normalization_engine: NormalizationEngine,
         workflow_event_publisher: WorkflowEventPublisher,
         watch_intent_service: object | None = None,
+        refresh_recorder: RefreshRecorder | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._quote_provider = quote_provider
@@ -80,11 +92,33 @@ class QuoteIngestionService:
         # WatchIntentService typed as Any to avoid circular import.
         # The service has an evaluate_for_event(event_id: str) method.
         self._watch_intent_service: object | None = watch_intent_service
+        self._refresh_recorder = refresh_recorder
+        self._clock = clock
 
     def refresh_quotes(
+        self, event_id: str, trigger: RefreshTrigger = RefreshTrigger.MANUAL
+    ) -> QuoteRefreshSummary:
+        """Refresh one event: one call to the single-event endpoint (ADR-012)."""
+        # Resolved before the refresh starts: an unknown or unresolvable event is
+        # the caller's mistake, not a refresh, and must cost nothing.
+        sport_key = self._resolve_sport_key(event_id)
+        started_at = self._clock()
+        try:
+            summary = self._ingest_event(
+                event_id, self._quote_provider.list_quotes(event_id, sport_key)
+            )
+        except Exception as error:
+            self._record_refresh(
+                RefreshScope.EVENT, sport_key, event_id, trigger, started_at, 0, error
+            )
+            raise
+        self._record_refresh(RefreshScope.EVENT, sport_key, event_id, trigger, started_at, 1)
+        return summary
+
+    def _ingest_event(
         self,
         event_id: str,
-        quotes_override: list[Quote] | None = None,
+        provider_quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshSummary:
         started_at = perf_counter()
@@ -99,17 +133,7 @@ class QuoteIngestionService:
             },
         )
 
-        # Resolved before the workflow starts: an unknown or unresolvable event is
-        # the caller's mistake, not an ingestion failure, and must cost nothing.
-        if quotes_override is None:
-            sport_key = self._resolve_sport_key(event_id)
-
         try:
-            provider_quotes = (
-                quotes_override
-                if quotes_override is not None
-                else self._quote_provider.list_quotes(event_id, sport_key)
-            )
             normalized_quotes = self._normalization_engine.normalize_quotes(
                 event_id,
                 provider_quotes,
@@ -191,14 +215,33 @@ class QuoteIngestionService:
         """A free balance check; the provider records what it reports."""
         self._quote_provider.check_quota()
 
-    def refresh_sport(self, sport: str) -> SportRefreshResult:
+    def refresh_sport(
+        self, sport: str, trigger: RefreshTrigger = RefreshTrigger.MANUAL
+    ) -> SportRefreshResult:
         """Refresh all events for a sport."""
         self._assert_sport_supported(sport)
+        started_at = self._clock()
+        summaries: list[QuoteRefreshSummary] = []
+        try:
+            result = self._refresh_sport(sport, summaries)
+        except Exception as error:
+            # Events ingested before the failure stay stored, and are counted.
+            self._record_refresh(
+                RefreshScope.SPORT, sport, None, trigger, started_at, len(summaries), error
+            )
+            raise
+        self._record_refresh(
+            RefreshScope.SPORT, sport, None, trigger, started_at, len(result.summaries)
+        )
+        return result
+
+    def _refresh_sport(
+        self, sport: str, summaries: list[QuoteRefreshSummary]
+    ) -> SportRefreshResult:
         self._logger.info("sport_refresh.started", extra={"sport": sport})
         started_at = perf_counter()
 
         all_quotes, fetch_report = self._quote_provider.list_quotes_for_sport(sport)
-        summaries: list[QuoteRefreshSummary] = []
 
         for event_id, quotes in all_quotes.items():
             event_info = self._quote_provider.get_event_info(event_id)
@@ -220,11 +263,7 @@ class QuoteIngestionService:
                     ],
                 }
 
-            summary = self.refresh_quotes(
-                event_id,
-                quotes_override=quotes,
-                event_metadata=metadata,
-            )
+            summary = self._ingest_event(event_id, quotes, event_metadata=metadata)
             summaries.append(summary)
 
         # Every sport-wide pull, manual or automatic, restarts that sport's
@@ -252,6 +291,58 @@ class QuoteIngestionService:
             summaries=summaries,
             fetch_report=fetch_report,
         )
+
+    def _record_refresh(
+        self,
+        scope: RefreshScope,
+        sport_key: str,
+        event_id: str | None,
+        trigger: RefreshTrigger,
+        started_at: datetime,
+        events_refreshed: int,
+        error: Exception | None = None,
+    ) -> None:
+        """Append the refresh record once ingestion has settled (#96).
+
+        Its own transaction, so a refresh that rolled back is still recorded, and a
+        failure here is logged, never raised: the record must not fail the refresh.
+        """
+        if self._refresh_recorder is None:
+            return
+        if error is None:
+            outcome, error_code, message = RefreshOutcomeStatus.SUCCEEDED, None, None
+        elif isinstance(error, OutOfUsageCreditsError):
+            outcome, error_code, message = (
+                RefreshOutcomeStatus.REFUSED,
+                OUT_OF_USAGE_CREDITS,
+                str(error),
+            )
+        else:
+            outcome, error_code, message = (
+                RefreshOutcomeStatus.FAILED,
+                type(error).__name__,
+                str(error) or type(error).__name__,
+            )
+        try:
+            self._refresh_recorder.record(
+                RefreshRecord(
+                    scope=scope,
+                    sport_key=sport_key,
+                    event_id=event_id,
+                    trigger=trigger,
+                    started_at=started_at,
+                    finished_at=self._clock(),
+                    outcome=outcome,
+                    error_code=error_code,
+                    error=message,
+                    events_refreshed=events_refreshed,
+                )
+            )
+        except Exception:
+            self._logger.exception(
+                "refresh_record.write_failed",
+                extra={"sport": sport_key, "event_id": event_id, "outcome": outcome.value},
+            )
 
     def _resolve_sport_key(self, event_id: str) -> str:
         """The provider sport key for one event, found without a paid call.

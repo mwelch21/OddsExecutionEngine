@@ -25,6 +25,7 @@ from backend.app.domain.models import (
 )
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.domain.quota import QuotaObservation, QuotaReading
+from backend.app.domain.refresh_records import RefreshRecord, RefreshRecordFilter
 
 
 class RecommendationUnitOfWork(Protocol):
@@ -110,6 +111,16 @@ class QuotaUnitOfWorkFactory(Protocol):
     def __call__(self) -> QuotaUnitOfWork: ...
 
 
+class RefreshRecorder(Protocol):
+    """Appends one refresh record in its own short transaction (#96).
+
+    Called after ingestion settles, so a failed refresh is still recorded. A raise
+    here is logged by the caller and never fails the refresh.
+    """
+
+    def record(self, record: RefreshRecord) -> None: ...
+
+
 class QuoteIngestionUnitOfWork(Protocol):
     def __enter__(self) -> Self: ...
 
@@ -155,9 +166,9 @@ class AutoRefreshUnitOfWork(Protocol):
 
     def save_settings(self, settings: AutoRefreshSettings) -> AutoRefreshSettings: ...
 
-    def get_last_outcome(self) -> AutoRefreshOutcome | None: ...
-
-    def record_outcome(self, outcome: AutoRefreshOutcome) -> None: ...
+    def get_last_outcome(self) -> AutoRefreshOutcome | None:
+        """The newest Auto-Refresh refresh record, in the status endpoint's shape."""
+        ...
 
     def list_watched_event_sports(self, now: datetime) -> list[EventSport]: ...
 
@@ -315,3 +326,26 @@ class DestinationUnitOfWork(Protocol):
 
 class DestinationUnitOfWorkFactory(Protocol):
     def __call__(self) -> DestinationUnitOfWork: ...
+
+
+class AdminReadUnitOfWork(Protocol):
+    """Read-only access for the Admin view. Nothing here writes or calls upstream."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def count_refreshes(self, refresh_filter: RefreshRecordFilter) -> int: ...
+
+    def list_refreshes(
+        self, refresh_filter: RefreshRecordFilter, limit: int, offset: int
+    ) -> list[RefreshRecord]: ...
+
+
+class AdminReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> AdminReadUnitOfWork: ...

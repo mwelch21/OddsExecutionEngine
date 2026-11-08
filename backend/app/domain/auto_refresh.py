@@ -7,12 +7,12 @@ whether and how often, the cadence engine says which sports are due.
 """
 
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import Field
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.quota import QuotaStatus
+from backend.app.domain.refresh_records import RefreshOutcomeStatus
 
 DEFAULT_INTERVAL_MINUTES = 5
 MIN_INTERVAL_MINUTES = 1
@@ -35,13 +35,12 @@ class AutoRefreshSettings(DomainModel):
     quota_floor: int | None = Field(default=None, ge=0)
 
 
-class RefreshOutcomeStatus(StrEnum):
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-
-
 class AutoRefreshOutcome(DomainModel):
-    """What the worker's most recent refresh did; a failure never stops the next poll."""
+    """What one of the worker's refreshes did; a failure never stops the next poll.
+
+    The status endpoint's `last_outcome` is the newest Auto-Refresh refresh record,
+    read back in this shape.
+    """
 
     sport: str
     status: RefreshOutcomeStatus
