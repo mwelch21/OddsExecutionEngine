@@ -101,24 +101,36 @@ class QuoteIngestionService:
         # the caller's mistake, not a refresh, and must cost nothing.
         sport_key = self._resolve_sport_key(event_id)
         started_at = self._clock()
+        persisted: list[str] = []
         try:
             summary = self._ingest_event(
-                event_id, self._quote_provider.list_quotes(event_id, sport_key)
+                event_id, self._quote_provider.list_quotes(event_id, sport_key), persisted
             )
         except Exception as error:
             self._record_refresh(
-                RefreshScope.EVENT, sport_key, event_id, trigger, started_at, 0, error
+                RefreshScope.EVENT,
+                sport_key,
+                event_id,
+                trigger,
+                started_at,
+                len(persisted),
+                error,
             )
             raise
-        self._record_refresh(RefreshScope.EVENT, sport_key, event_id, trigger, started_at, 1)
+        self._record_refresh(
+            RefreshScope.EVENT, sport_key, event_id, trigger, started_at, len(persisted)
+        )
         return summary
 
     def _ingest_event(
         self,
         event_id: str,
         provider_quotes: list[Quote],
+        persisted: list[str],
         event_metadata: dict[str, object] | None = None,
     ) -> QuoteRefreshSummary:
+        """Ingest one event's quotes. `persisted` gains the event id once its quotes
+        commit, so the refresh record counts it even if publishing then fails."""
         started_at = perf_counter()
         refresh_id = str(uuid4())
 
@@ -163,6 +175,7 @@ class QuoteIngestionService:
                         result=persistence_result,
                     )
                 )
+            persisted.append(event_id)
 
             self._workflow_event_publisher.publish(unit_of_work.committed_events)
         except Exception:
@@ -219,27 +232,26 @@ class QuoteIngestionService:
         """Refresh all events for a sport."""
         self._assert_sport_supported(sport)
         started_at = self._clock()
-        summaries: list[QuoteRefreshSummary] = []
+        persisted: list[str] = []
         try:
-            result = self._refresh_sport(sport, summaries)
+            result = self._refresh_sport(sport, persisted)
         except Exception as error:
-            # Events ingested before the failure stay stored, and are counted.
+            # Events committed before the failure stay stored, and are counted.
             self._record_refresh(
-                RefreshScope.SPORT, sport, None, trigger, started_at, len(summaries), error
+                RefreshScope.SPORT, sport, None, trigger, started_at, len(persisted), error
             )
             raise
         self._record_refresh(
-            RefreshScope.SPORT, sport, None, trigger, started_at, len(result.summaries)
+            RefreshScope.SPORT, sport, None, trigger, started_at, len(persisted)
         )
         return result
 
-    def _refresh_sport(
-        self, sport: str, summaries: list[QuoteRefreshSummary]
-    ) -> SportRefreshResult:
+    def _refresh_sport(self, sport: str, persisted: list[str]) -> SportRefreshResult:
         self._logger.info("sport_refresh.started", extra={"sport": sport})
         started_at = perf_counter()
 
         all_quotes, fetch_report = self._quote_provider.list_quotes_for_sport(sport)
+        summaries: list[QuoteRefreshSummary] = []
 
         for event_id, quotes in all_quotes.items():
             event_info = self._quote_provider.get_event_info(event_id)
@@ -261,7 +273,7 @@ class QuoteIngestionService:
                     ],
                 }
 
-            summary = self._ingest_event(event_id, quotes, event_metadata=metadata)
+            summary = self._ingest_event(event_id, quotes, persisted, event_metadata=metadata)
             summaries.append(summary)
 
         # Every sport-wide pull, manual or automatic, restarts that sport's

@@ -24,6 +24,9 @@ from backend.app.domain.refresh_records import (
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRefreshRecorder
+from backend.app.infrastructure.publishers.logging_publisher import (
+    LoggingWorkflowEventPublisher,
+)
 from backend.app.infrastructure.quote_provider import FIXTURE_EVENT_ID, InMemoryQuoteProvider
 from backend.app.main import create_app
 from backend.tests.db_helpers import prepare_test_database
@@ -295,3 +298,35 @@ def test_a_failed_refresh_never_keeps_the_provider_key(
     [row] = _rows(client)
     assert "s3cr3t" not in str(row["error"])
     assert "apiKey=[redacted]&regions=us" in str(row["error"])
+
+
+@pytest.fixture
+def broken_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Publishing fails only after the quotes have committed."""
+
+    def broken(self: object, events: object) -> None:
+        raise RuntimeError("publisher down")
+
+    monkeypatch.setattr(LoggingWorkflowEventPublisher, "publish", broken)
+
+
+@pytest.mark.usefixtures("broken_publisher")
+def test_an_event_whose_quotes_committed_counts_even_if_publishing_fails(
+    client: TestClient,
+) -> None:
+    with pytest.raises(RuntimeError, match="publisher down"):
+        client.post("/api/v1/ingestion/quotes/refresh", json={"event_id": FIXTURE_EVENT_ID})
+
+    [row] = _rows(client)
+    assert (row["scope"], row["outcome"], row["events_refreshed"]) == ("event", "failed", 1)
+
+
+@pytest.mark.usefixtures("broken_publisher")
+def test_a_sport_refresh_counts_committed_events_even_if_publishing_fails(
+    client: TestClient,
+) -> None:
+    with pytest.raises(RuntimeError, match="publisher down"):
+        client.post("/api/v1/ingestion/quotes/refresh-sport", json={"sport": FIXTURE_SPORT_KEY})
+
+    [row] = _rows(client)
+    assert (row["scope"], row["outcome"], row["events_refreshed"]) == ("sport", "failed", 1)
