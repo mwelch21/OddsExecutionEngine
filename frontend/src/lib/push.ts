@@ -113,3 +113,29 @@ export async function sendTestNotification(destinationId: string): Promise<void>
   }
   if (!response.ok) throw new Error(`Test failed: ${response.status}`);
 }
+
+/** Rename a destination, re-enable one the operator removed, or both. A gone one is a 409. */
+export async function updateDestination(
+  destinationId: string,
+  change: { label?: string; active?: true }
+): Promise<Destination> {
+  const response = await fetch(`${API_BASE}/destinations/${encodeURIComponent(destinationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(change)
+  });
+  if (response.status === 409) {
+    throw new Error("This device is gone. Enable notifications on it again to resubscribe.");
+  }
+  if (!response.ok) throw new Error(`Updating the device failed: ${response.status}`);
+  return (await response.json()) as Destination;
+}
+
+/** Soft-disable: the destination and its delivery history stay, and it can be re-enabled. */
+export async function removeDestination(destinationId: string): Promise<Destination> {
+  const response = await fetch(`${API_BASE}/destinations/${encodeURIComponent(destinationId)}`, {
+    method: "DELETE"
+  });
+  if (!response.ok) throw new Error(`Removing the device failed: ${response.status}`);
+  return (await response.json()) as Destination;
+}

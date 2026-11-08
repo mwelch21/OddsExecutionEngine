@@ -229,6 +229,8 @@ Notifications:
 - `POST /api/v1/destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
 - `GET /api/v1/destinations` (safe fields and status; channel secrets are never returned)
 - `POST /api/v1/destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
+- `PATCH /api/v1/destinations/{id}` (rename and/or `active: true` to re-enable a removed one; 404 unknown, 409 re-enabling a `gone` one)
+- `DELETE /api/v1/destinations/{id}` (soft-disable as `user_removed`; row and deliveries kept; idempotent, a `gone` one stays `gone`; 404 unknown)
 
 Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` hook, a no-op until auth #14; each feature is its own module in `backend/app/api/admin/`):
 
