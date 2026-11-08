@@ -493,6 +493,79 @@ func TestDisabledDestinationGetsNoDelivery(t *testing.T) {
 	}
 }
 
+func (h *harness) setRemoved(destinationID string, removed bool) {
+	h.t.Helper()
+	query := `UPDATE destinations SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1`
+	if removed {
+		query = `UPDATE destinations SET disabled_at = now(), disabled_reason = 'user_removed' WHERE id = $1`
+	}
+	if _, err := h.pool.Exec(h.ctx, query, destinationID); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestPendingDeliveryWaitsWhileItsDestinationIsRemoved(t *testing.T) {
+	h := newHarness(t)
+	h.push.script = []int{http.StatusServiceUnavailable}
+	target := h.addDestination("iPhone")
+	eventID := h.addTestEvent(target, time.Now())
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	h.setRemoved(target, true)
+	h.makeDue()
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusPending ||
+		got[0].attempts != 1 {
+		t.Fatalf("deliveries = %+v, want one pending, still on its first attempt", got)
+	}
+	if n := len(h.push.requests()); n != 1 {
+		t.Fatalf("removed destination was sent to: %d requests, want 1", n)
+	}
+
+	h.setRemoved(target, false)
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusDelivered {
+		t.Fatalf("deliveries = %+v, want delivered once re-enabled", got)
+	}
+}
+
+func TestPendingDeliveryThatAgedOutWhileRemovedExpiresOnReEnable(t *testing.T) {
+	h := newHarness(t)
+	target := h.addDestination("iPhone")
+	h.setRemoved(target, true)
+	eventID := h.addTestEvent(target, time.Now().Add(-11*time.Minute))
+	// Queued before the removal, so fan-out's active filter did not apply.
+	if _, err := h.pool.Exec(h.ctx, `
+		INSERT INTO deliveries (id, event_id, destination_id) VALUES ($1, $2, $3)`,
+		uuid.NewString(), eventID, target); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusPending {
+		t.Fatalf("deliveries = %+v, want one pending while removed", got)
+	}
+
+	h.setRemoved(target, false)
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusExpired {
+		t.Fatalf("deliveries = %+v, want expired after re-enable", got)
+	}
+	if n := len(h.push.requests()); n != 0 {
+		t.Fatalf("stale delivery was sent %d times", n)
+	}
+}
+
 // runInBackground starts Run with the given sweep and stops it at test end.
 func (h *harness) runInBackground(sweep time.Duration) {
 	h.t.Helper()

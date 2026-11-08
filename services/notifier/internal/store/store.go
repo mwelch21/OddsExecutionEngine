@@ -145,6 +145,9 @@ func (s *Store) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([
 		WITH due AS (
 			SELECT id FROM deliveries
 			WHERE status = 'pending'
+			  -- A removed destination's queued deliveries wait, unsent, until it is
+			  -- re-enabled; the max-age check then expires any that went stale.
+			  AND destination_id IN (SELECT id FROM destinations WHERE disabled_at IS NULL)
 			  AND next_attempt_at <= now()
 			  AND (locked_until IS NULL OR locked_until < now())
 			ORDER BY next_attempt_at

@@ -105,6 +105,36 @@ class SqlAlchemyDestinationUnitOfWork:
         )
         return None if row is None else _row_to_destination(row)
 
+    def update_destination(
+        self, destination_id: str, label: str | None, reactivate: bool
+    ) -> Destination:
+        values: dict[str, object] = {}
+        if label is not None:
+            values["label"] = label
+        if reactivate:
+            values |= {"disabled_at": None, "disabled_reason": None}
+        if values:
+            self._require_session().execute(
+                update(destinations_table)
+                .where(destinations_table.c.id == destination_id)
+                .values(**values)
+            )
+        return self._get(destination_id)
+
+    def disable_destination(
+        self, destination_id: str, reason: DisabledReason
+    ) -> Destination:
+        # Only an active destination is disabled, so the first reason and time stick.
+        self._require_session().execute(
+            update(destinations_table)
+            .where(
+                destinations_table.c.id == destination_id,
+                destinations_table.c.disabled_at.is_(None),
+            )
+            .values(disabled_at=func.now(), disabled_reason=reason.value)
+        )
+        return self._get(destination_id)
+
     def latest_test_requested_at(self, destination_id: str) -> datetime | None:
         return self._require_session().execute(
             select(func.max(public_events_table.c.created_at)).where(
