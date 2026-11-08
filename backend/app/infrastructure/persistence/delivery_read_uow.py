@@ -120,5 +120,6 @@ def _event_data(payload: Any) -> dict[str, Any]:
 
 
 def _as_utc(value: datetime) -> datetime:
-    """SQLite hands back naive datetimes; every time this system stores is UTC."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    """SQLite hands back naive datetimes; every time this system stores is UTC.
+    Aware ones are converted, so a non-UTC session time zone still serves UTC."""
+    return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)

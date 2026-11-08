@@ -10,9 +10,10 @@ from backend.app.domain.public_events import (
 class DeliverySubjectEngine:
     """The delivery log's one-line subject for a public event (#105).
 
-    Mirrors what the notifier shows on the device, from the few fields it needs,
-    so the log never has to carry the raw payload. An event type it does not
-    know, or data it cannot read, falls back to the event type.
+    Follows the notifier's device rendering (matchup, selection, best price) but
+    is worded for a log, not a push: the two may differ on purpose. Built from
+    the few fields it needs, so the log never has to carry the raw payload. An
+    event type it does not know, or data it cannot read, falls back to the type.
     """
 
     def subject_for(self, event_type: str, data: dict[str, Any]) -> str:

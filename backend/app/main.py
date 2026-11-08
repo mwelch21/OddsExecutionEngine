@@ -7,8 +7,8 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
-from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.admin.deliveries_router import create_deliveries_router
+from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
@@ -95,6 +95,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     destination_service = DestinationService(
         unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
     )
+    delivery_query_service = DeliveryQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyDeliveryReadUnitOfWork(session_factory),
+        subject_engine=DeliverySubjectEngine(),
+    )
     quota_service = build_quota_service(session_factory)
     quote_ingestion_service = build_quote_ingestion_service(
         app_settings,
@@ -176,14 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin = create_admin_router()
     admin.include_router(create_auto_refresh_router(auto_refresh_service))
     admin.include_router(create_refreshes_router(admin_query_service))
-    admin.include_router(
-        create_deliveries_router(
-            DeliveryQueryService(
-                unit_of_work_factory=lambda: SqlAlchemyDeliveryReadUnitOfWork(session_factory),
-                subject_engine=DeliverySubjectEngine(),
-            )
-        )
-    )
+    admin.include_router(create_deliveries_router(delivery_query_service))
     api_v1.include_router(admin)
 
     if app_settings.app_env == "development":
