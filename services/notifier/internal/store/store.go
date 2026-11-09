@@ -186,9 +186,11 @@ func (s *Store) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([
 }
 
 // Record stores a final outcome, but only while the claim token still
-// matches. StatusGone also soft-disables the destination and marks its other
-// pending deliveries gone; StatusDelivered stamps the destination. A worker whose lease expired gets ErrStaleClaim and must drop its
-// result, so it can never overwrite a newer worker's outcome.
+// matches. Every outcome stamps ended_at, the delivery log's end time.
+// StatusGone also soft-disables the destination and marks its other pending
+// deliveries gone (and ended); StatusDelivered stamps the destination. A worker
+// whose lease expired gets ErrStaleClaim and must drop its result, so it can
+// never overwrite a newer worker's outcome.
 func (s *Store) Record(ctx context.Context, claim Claim, status, lastError string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -204,6 +206,7 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 		UPDATE deliveries
 		SET status = $3::text,
 		    delivered_at = CASE WHEN $3::text = 'delivered' THEN now() END,
+		    ended_at = now(),
 		    last_error = $4::text,
 		    locked_until = NULL
 		WHERE id = $1 AND claim_token = $2 AND status = 'pending'`,
@@ -227,7 +230,8 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 			return fmt.Errorf("disabling destination %s: %w", claim.DestinationID, err)
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE deliveries SET status = 'gone', last_error = $2, locked_until = NULL
+			UPDATE deliveries
+			SET status = 'gone', ended_at = now(), last_error = $2, locked_until = NULL
 			WHERE destination_id = $1 AND status = 'pending'`,
 			claim.DestinationID, "destination is gone"); err != nil {
 			return fmt.Errorf("giving up deliveries to %s: %w", claim.DestinationID, err)

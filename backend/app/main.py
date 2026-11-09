@@ -7,6 +7,7 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.deliveries_router import create_deliveries_router
 from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
@@ -15,6 +16,7 @@ from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
 from backend.app.application.admin_query_service import AdminQueryService
+from backend.app.application.delivery_query_service import DeliveryQueryService
 from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.recommendation_service import RecommendationService
@@ -25,6 +27,8 @@ from backend.app.composition import (
     build_watch_intent_service,
 )
 from backend.app.config import Settings, get_settings
+from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
+from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
@@ -37,6 +41,9 @@ from backend.app.infrastructure.persistence.admin_read_uow import (
     SqlAlchemyAdminReadUnitOfWork,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.delivery_read_uow import (
+    SqlAlchemyDeliveryReadUnitOfWork,
+)
 from backend.app.infrastructure.persistence.destination_uow import (
     SqlAlchemyDestinationUnitOfWork,
 )
@@ -88,6 +95,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     destination_service = DestinationService(
         unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
+    )
+    delivery_query_service = DeliveryQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyDeliveryReadUnitOfWork(session_factory),
+        subject_engine=DeliverySubjectEngine(),
+        error_engine=DeliveryErrorEngine(),
     )
     quota_service = build_quota_service(session_factory)
     quote_ingestion_service = build_quote_ingestion_service(
@@ -170,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin = create_admin_router()
     admin.include_router(create_auto_refresh_router(auto_refresh_service))
     admin.include_router(create_refreshes_router(admin_query_service))
+    admin.include_router(create_deliveries_router(delivery_query_service))
     api_v1.include_router(admin)
 
     if app_settings.app_env == "development":

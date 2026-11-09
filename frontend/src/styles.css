@@ -1327,3 +1327,55 @@ select {
   margin-left: -1px;
   background: var(--danger);
 }
+
+/* --- Delivery log (#105) --------------------------------------------------- */
+
+.delivery-log {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.delivery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+/* Failed, expired and gone ended without arriving; the error is the row's title. */
+.delivery-row-problem {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-muted));
+  cursor: help;
+}
+
+.delivery-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.delivery-row-main strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Read by screen readers; sighted users get the same text on hover. */
+.delivery-row-error {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

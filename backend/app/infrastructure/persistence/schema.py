@@ -204,6 +204,8 @@ deliveries_table = Table(
     Column("delivered_at", DateTime(timezone=True), nullable=True),
     Column("last_error", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # When the delivery reached delivered, failed, expired or gone; null while pending.
+    Column("ended_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint("event_id", "destination_id", name="uq_deliveries_event_destination"),
 )
 

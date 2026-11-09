@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,8 @@ type fakePushService struct {
 	script []int
 	// delay holds every answer back, widening any window for a double send.
 	delay time.Duration
+	// body is written with every answer.
+	body string
 }
 
 const fakeDrop = -1
@@ -54,7 +57,7 @@ func newFakePushService(t *testing.T) *fakePushService {
 		if len(f.script) > 0 {
 			status, f.script = f.script[0], f.script[1:]
 		}
-		delay := f.delay
+		delay, body := f.delay, f.body
 		f.mu.Unlock()
 		select {
 		case <-time.After(delay):
@@ -67,6 +70,7 @@ func newFakePushService(t *testing.T) *fakePushService {
 			return
 		}
 		w.WriteHeader(status)
+		io.WriteString(w, body) //nolint:errcheck // test server
 	}))
 	t.Cleanup(f.server.Close)
 	return f
@@ -224,12 +228,13 @@ type deliveryRow struct {
 	destinationID, status string
 	attempts              int
 	lastError             *string
+	endedAt               *time.Time
 }
 
 func (h *harness) deliveries(eventID string) []deliveryRow {
 	h.t.Helper()
 	rows, err := h.pool.Query(h.ctx,
-		`SELECT destination_id, status, attempts, last_error FROM deliveries WHERE event_id = $1`,
+		`SELECT destination_id, status, attempts, last_error, ended_at FROM deliveries WHERE event_id = $1`,
 		eventID)
 	if err != nil {
 		h.t.Fatal(err)
@@ -238,7 +243,7 @@ func (h *harness) deliveries(eventID string) []deliveryRow {
 	var out []deliveryRow
 	for rows.Next() {
 		var r deliveryRow
-		if err := rows.Scan(&r.destinationID, &r.status, &r.attempts, &r.lastError); err != nil {
+		if err := rows.Scan(&r.destinationID, &r.status, &r.attempts, &r.lastError, &r.endedAt); err != nil {
 			h.t.Fatal(err)
 		}
 		out = append(out, r)
@@ -979,5 +984,120 @@ func TestSendsCutOffByTheLeaseAreLeftForLeaseRecovery(t *testing.T) {
 		if got := h.deliveries(eventID); got[0].status != store.StatusDelivered || got[0].attempts != 2 {
 			t.Fatalf("delivery of %s = %+v, want delivered on attempt 2", eventID, got[0])
 		}
+	}
+}
+
+// The delivery log shows when each delivery ended, whatever the outcome; a
+// delivery still pending, waiting on a retry, has not ended.
+func TestEveryFinalStatusStampsWhenTheDeliveryEnded(t *testing.T) {
+	cases := map[string]struct {
+		answer int
+		event  func(h *harness, destinationID string) string
+		want   string
+	}{
+		"delivered": {http.StatusCreated, func(h *harness, d string) string {
+			return h.addTestEvent(d, time.Now())
+		}, store.StatusDelivered},
+		"failed": {http.StatusBadRequest, func(h *harness, d string) string {
+			return h.addTestEvent(d, time.Now())
+		}, store.StatusFailed},
+		"expired": {http.StatusCreated, func(h *harness, d string) string {
+			return h.addTestEvent(d, time.Now().Add(-11*time.Minute))
+		}, store.StatusExpired},
+		"gone": {http.StatusGone, func(h *harness, d string) string {
+			return h.addTestEvent(d, time.Now())
+		}, store.StatusGone},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.push.status = c.answer
+			eventID := c.event(h, h.addDestination("iPhone"))
+			before := time.Now().Add(-time.Second)
+
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			got := h.deliveries(eventID)
+			if len(got) != 1 || got[0].status != c.want {
+				t.Fatalf("deliveries = %+v, want one %s", got, c.want)
+			}
+			if got[0].endedAt == nil || got[0].endedAt.Before(before) {
+				t.Fatalf("ended_at = %v, want stamped at the final write", got[0].endedAt)
+			}
+		})
+	}
+}
+
+// A gone answer gives up the destination's other pending deliveries too; each
+// of those ends then, though it was never sent.
+func TestDeliveriesGivenUpForAGoneDestinationAreStampedAsEnded(t *testing.T) {
+	h := newHarness(t)
+	h.push.status = http.StatusGone
+	phone := h.addDestination("iPhone")
+	h.notifier.BatchSize = 1
+	h.addTestEvent(phone, time.Now())
+	queued := h.addTestEvent(phone, time.Now())
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.deliveries(queued)
+	if len(got) != 1 || got[0].status != store.StatusGone || got[0].endedAt == nil {
+		t.Fatalf("queued delivery = %+v, want gone with ended_at stamped", got)
+	}
+}
+
+func TestDeliveryWaitingOnARetryHasNotEnded(t *testing.T) {
+	h := newHarness(t)
+	h.push.status = http.StatusServiceUnavailable
+	eventID := h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour))
+	h.addDestination("iPhone")
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.deliveries(eventID)
+	if len(got) != 1 || got[0].status != store.StatusPending || got[0].endedAt != nil {
+		t.Fatalf("deliveries = %+v, want pending with no ended_at", got)
+	}
+}
+
+// The delivery log shows last_error to the operator, so it must never carry
+// the push address (the endpoint URL) or whatever the push service answered.
+func TestRecordedErrorsNeverCarryThePushAddressOrAnswerBody(t *testing.T) {
+	const secret = "tok_SECRET_9f8e7d6c5b4a"
+	for name, answer := range map[string]int{
+		"failed": http.StatusBadRequest, "gone": http.StatusGone,
+		"retried": http.StatusServiceUnavailable, "network error": fakeDrop,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.push.script = []int{answer}
+			h.push.body = "rejected " + h.push.server.URL + " " + secret
+			eventID := h.addOpportunityEvent(time.Now(), time.Now().Add(time.Hour))
+			h.addDestination("iPhone")
+
+			if err := h.notifier.RunOnce(h.ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			got := h.deliveries(eventID)
+			if len(got) != 1 || got[0].lastError == nil {
+				t.Fatalf("deliveries = %+v, want one with an error recorded", got)
+			}
+			text := *got[0].lastError
+			for _, leak := range []string{h.push.server.URL, "127.0.0.1", "/push/", secret, "rejected"} {
+				if strings.Contains(text, leak) {
+					t.Fatalf("last_error %q carries %q", text, leak)
+				}
+			}
+			if answer != fakeDrop && !strings.Contains(text, strconv.Itoa(answer)) {
+				t.Fatalf("last_error %q, want the status code kept", text)
+			}
+		})
 	}
 }

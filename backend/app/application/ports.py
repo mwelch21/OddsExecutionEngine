@@ -4,6 +4,7 @@ from typing import Protocol, Self
 
 from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.base import DomainModel
+from backend.app.domain.deliveries import DeliveryFilter, StoredDelivery
 from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
@@ -293,6 +294,29 @@ class EventReadUnitOfWork(Protocol):
 
 class EventReadUnitOfWorkFactory(Protocol):
     def __call__(self) -> EventReadUnitOfWork: ...
+
+
+class DeliveryReadUnitOfWork(Protocol):
+    """Read-only access to the delivery log. The notifier is the only writer."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def count_deliveries(self, delivery_filter: DeliveryFilter) -> int: ...
+
+    def list_deliveries(
+        self, delivery_filter: DeliveryFilter, limit: int, offset: int
+    ) -> list[StoredDelivery]: ...
+
+
+class DeliveryReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> DeliveryReadUnitOfWork: ...
 
 
 class DestinationUnitOfWork(Protocol):

@@ -103,3 +103,51 @@ export async function getRefreshes(query: RefreshQuery = {}) {
   const search = params.toString();
   return request<RefreshPage>(`${ADMIN}/refreshes${search ? `?${search}` : ""}`);
 }
+
+export type DeliveryStatus = "pending" | "delivered" | "failed" | "expired" | "gone";
+
+/**
+ * One notification delivery. The device shows as its label and channel only and
+ * the event as a short subject: never the push address, keys or raw payload.
+ */
+export type Delivery = {
+  id: string;
+  event_id: string;
+  event_type: string;
+  subject: string;
+  destination_id: string;
+  destination_label: string;
+  channel: string;
+  status: DeliveryStatus;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  /** When it reached its final status; `null` while pending. */
+  ended_at: string | null;
+};
+
+export type DeliveryPage = {
+  deliveries: Delivery[];
+  page: number;
+  page_size: number;
+  total_items: number;
+  total_pages: number;
+};
+
+export type DeliveryQuery = {
+  status?: DeliveryStatus;
+  event_type?: string;
+  destination_id?: string;
+  page?: number;
+  page_size?: number;
+};
+
+/** Newest first. A database read: it never reaches upstream. */
+export async function getDeliveries(query: DeliveryQuery = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const search = params.toString();
+  return request<DeliveryPage>(`${ADMIN}/deliveries${search ? `?${search}` : ""}`);
+}
