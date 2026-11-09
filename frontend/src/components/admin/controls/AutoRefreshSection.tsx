@@ -138,7 +138,13 @@ export function AutoRefreshSection() {
         the plan.
       </p>
 
-      <p className={status?.last_outcome?.status === "failed" ? "admin-warn" : "admin-muted"}>
+      <p
+        className={
+          status?.last_outcome && status.last_outcome.status !== "succeeded"
+            ? "admin-warn"
+            : "admin-muted"
+        }
+      >
         {outcomeLabel(status?.last_outcome ?? null)}
       </p>
       {error && <p className="admin-warn">{error}</p>}
@@ -245,8 +251,8 @@ function toText(value: number | null) {
 function outcomeLabel(outcome: AutoRefresh["last_outcome"]) {
   if (!outcome) return "Last refresh: none yet";
   const when = ageLabel(outcome.at) ?? "at an unknown time";
-  if (outcome.status === "failed") {
-    return `Last refresh failed · ${outcome.sport} · ${when}${outcome.error ? ` · ${outcome.error}` : ""}`;
+  if (outcome.status !== "succeeded") {
+    return `Last refresh ${outcome.status} · ${outcome.sport} · ${when}${outcome.error ? ` · ${outcome.error}` : ""}`;
   }
   return `Last refresh · ${outcome.sport} · ${outcome.events_refreshed} events · ${when}`;
 }

@@ -217,11 +217,6 @@ auto_refresh_settings_table = Table(
     Column("enabled", Boolean, nullable=False, server_default="false"),
     Column("interval_minutes", Integer, nullable=False, server_default="5"),
     Column("quota_floor", Integer, nullable=True),
-    Column("last_outcome_sport", String(length=64), nullable=True),
-    Column("last_outcome_status", String(length=16), nullable=True),
-    Column("last_outcome_at", DateTime(timezone=True), nullable=True),
-    Column("last_outcome_events_refreshed", Integer, nullable=True),
-    Column("last_outcome_error", Text, nullable=True),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("id = 1", name="ck_auto_refresh_settings_single_row"),
     CheckConstraint(
@@ -250,4 +245,36 @@ sport_refreshes_table = Table(
     metadata,
     Column("sport_key", String(length=64), primary_key=True),
     Column("last_refreshed_at", DateTime(timezone=True), nullable=False),
+)
+
+# The refresh log (#96): one append-only row per refresh, manual or Auto-Refresh,
+# whatever its outcome. Written only by quote ingestion. Ordered by id within a
+# start time, so paging is stable.
+refresh_records_table = Table(
+    "refresh_records",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("scope", String(length=16), nullable=False),
+    Column("sport_key", String(length=64), nullable=False),
+    Column("event_id", String(length=255), nullable=True),
+    Column("trigger", String(length=16), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False, index=True),
+    Column("finished_at", DateTime(timezone=True), nullable=False),
+    Column("outcome", String(length=16), nullable=False),
+    Column("error_code", String(length=32), nullable=True),
+    Column("error", Text, nullable=True),
+    Column("events_refreshed", Integer, nullable=False, server_default="0"),
+    CheckConstraint("scope IN ('sport', 'event')", name="ck_refresh_records_scope"),
+    CheckConstraint("trigger IN ('manual', 'auto')", name="ck_refresh_records_trigger"),
+    CheckConstraint(
+        "outcome IN ('succeeded', 'failed', 'refused')", name="ck_refresh_records_outcome"
+    ),
+    CheckConstraint(
+        "(scope = 'sport') = (event_id IS NULL)", name="ck_refresh_records_event_scope"
+    ),
+    CheckConstraint(
+        "error_code IS NULL OR error_code IN ('UPSTREAM_HTTP', 'UPSTREAM_TIMEOUT', "
+        "'OUT_OF_USAGE_CREDITS', 'INVALID_RESPONSE', 'INTERNAL')",
+        name="ck_refresh_records_error_code",
+    ),
 )

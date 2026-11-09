@@ -5,16 +5,15 @@ from datetime import UTC, datetime
 from sqlalchemy import RowMapping, or_, select, text
 from sqlalchemy.orm import Session
 
-from backend.app.domain.auto_refresh import (
-    AutoRefreshOutcome,
-    AutoRefreshSettings,
-    RefreshOutcomeStatus,
-)
+from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.models import EventSport, WatchStatus
+from backend.app.domain.refresh_records import RefreshTrigger
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.refresh_records import refresh_record_from_row
 from backend.app.infrastructure.persistence.schema import (
     auto_refresh_settings_table,
     events_table,
+    refresh_records_table,
     sport_refreshes_table,
     watch_intents_table,
 )
@@ -77,36 +76,29 @@ class SqlAlchemyAutoRefreshUnitOfWork:
         return self.get_settings()
 
     def get_last_outcome(self) -> AutoRefreshOutcome | None:
-        row = self._settings_row()
-        if row is None or row["last_outcome_at"] is None:
-            return None
-        return AutoRefreshOutcome(
-            sport=row["last_outcome_sport"],
-            status=RefreshOutcomeStatus(row["last_outcome_status"]),
-            at=row["last_outcome_at"],
-            events_refreshed=row["last_outcome_events_refreshed"] or 0,
-            error=row["last_outcome_error"],
+        row = (
+            self._require_session()
+            .execute(
+                select(refresh_records_table)
+                .where(refresh_records_table.c.trigger == RefreshTrigger.AUTO.value)
+                .order_by(
+                    refresh_records_table.c.started_at.desc(),
+                    refresh_records_table.c.id.desc(),
+                )
+                .limit(1)
+            )
+            .mappings()
+            .one_or_none()
         )
-
-    def record_outcome(self, outcome: AutoRefreshOutcome) -> None:
-        # Settings are carried over unchanged: recording an outcome must never
-        # flip the operator's switch, even on a database with no row yet.
-        settings = self.get_settings()
-        upsert(
-            self._require_session(),
-            auto_refresh_settings_table,
-            {
-                "id": SETTINGS_ROW_ID,
-                "enabled": settings.enabled,
-                "interval_minutes": settings.interval_minutes,
-                "quota_floor": settings.quota_floor,
-                "last_outcome_sport": outcome.sport,
-                "last_outcome_status": outcome.status.value,
-                "last_outcome_at": outcome.at,
-                "last_outcome_events_refreshed": outcome.events_refreshed,
-                "last_outcome_error": outcome.error,
-            },
-            key_columns=["id"],
+        if row is None:
+            return None
+        record = refresh_record_from_row(row)
+        return AutoRefreshOutcome(
+            sport=record.sport_key,
+            status=record.outcome,
+            at=record.finished_at,
+            events_refreshed=record.events_refreshed,
+            error=record.error,
         )
 
     def list_watched_event_sports(self, now: datetime) -> list[EventSport]:

@@ -18,6 +18,7 @@ from backend.app.domain.auto_refresh import (
 )
 from backend.app.domain.models import EventSport
 from backend.app.domain.quota import OutOfUsageCreditsError
+from backend.app.domain.refresh_records import RefreshResult, RefreshTrigger
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
 
 
@@ -90,9 +91,7 @@ class AutoRefreshService:
         due = self._cadence_engine.due_sports(
             candidates, refresh_times, settings.interval_minutes, now
         )
-        report = AutoRefreshCycleReport(
-            ran=True, enabled=True, candidate_sports=sorted(candidates)
-        )
+        report = AutoRefreshCycleReport(ran=True, enabled=True, candidate_sports=sorted(candidates))
         if due and self._paused(settings.interval_minutes, now):
             return report.model_copy(update={"paused": True})
 
@@ -139,36 +138,30 @@ class AutoRefreshService:
 
     def _refresh(self, sport: str) -> tuple[AutoRefreshOutcome, bool]:
         started_at = perf_counter()
-        out_of_credits = False
+        error: Exception | None = None
+        events_refreshed = 0
         try:
-            result = self._quote_ingestion_service.refresh_sport(sport)
-            outcome = AutoRefreshOutcome(
-                sport=sport,
-                status=RefreshOutcomeStatus.SUCCEEDED,
-                at=self._clock(),
-                events_refreshed=len(result.summaries),
+            # Ingestion writes the refresh record; the status endpoint reads it back.
+            refreshed = self._quote_ingestion_service.refresh_sport(
+                sport, trigger=RefreshTrigger.AUTO
             )
-        except OutOfUsageCreditsError as error:
+            events_refreshed = len(refreshed.summaries)
+        except OutOfUsageCreditsError as refused:
             self._logger.warning("auto_refresh.out_of_credits", extra={"sport": sport})
-            out_of_credits = True
-            outcome = AutoRefreshOutcome(
-                sport=sport,
-                status=RefreshOutcomeStatus.FAILED,
-                at=self._clock(),
-                error=str(error),
-            )
-        except Exception as error:
+            error = refused
+        except Exception as failed:
             # Logged and reported; the next poll carries on regardless.
             self._logger.exception("auto_refresh.refresh_failed", extra={"sport": sport})
-            outcome = AutoRefreshOutcome(
-                sport=sport,
-                status=RefreshOutcomeStatus.FAILED,
-                at=self._clock(),
-                error=str(error) or type(error).__name__,
-            )
+            error = failed
 
-        with self._unit_of_work_factory() as uow:
-            uow.record_outcome(outcome)
+        result = RefreshResult.from_error(error)
+        outcome = AutoRefreshOutcome(
+            sport=sport,
+            status=result.outcome,
+            at=self._clock(),
+            events_refreshed=events_refreshed,
+            error=result.error,
+        )
         self._logger.info(
             "auto_refresh.refreshed",
             extra={
@@ -178,4 +171,4 @@ class AutoRefreshService:
                 "duration_ms": round((perf_counter() - started_at) * 1000, 2),
             },
         )
-        return outcome, out_of_credits
+        return outcome, result.outcome is RefreshOutcomeStatus.REFUSED

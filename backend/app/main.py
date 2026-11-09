@@ -7,12 +7,14 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
+from backend.app.application.admin_query_service import AdminQueryService
 from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.recommendation_service import RecommendationService
@@ -30,6 +32,9 @@ from backend.app.infrastructure.observability.logging import configure_logging
 from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
     set_request_id,
+)
+from backend.app.infrastructure.persistence.admin_read_uow import (
+    SqlAlchemyAdminReadUnitOfWork,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.destination_uow import (
@@ -94,6 +99,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     auto_refresh_service = build_auto_refresh_service(
         session_factory, quote_ingestion_service, quota_service
+    )
+    admin_query_service = AdminQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyAdminReadUnitOfWork(session_factory),
     )
 
     @app.middleware("http")
@@ -161,6 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Add features before `admin` joins api_v1: include_router copies routes once.
     admin = create_admin_router()
     admin.include_router(create_auto_refresh_router(auto_refresh_service))
+    admin.include_router(create_refreshes_router(admin_query_service))
     api_v1.include_router(admin)
 
     if app_settings.app_env == "development":

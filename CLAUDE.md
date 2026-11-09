@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`, `quota_observations`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`, `quota_observations`, `refresh_records`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -232,8 +232,9 @@ Notifications:
 
 Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` hook, a no-op until auth #14; each feature is its own module in `backend/app/api/admin/`):
 
-- `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
+- `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
 - `PUT /api/v1/admin/auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
+- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200)
 
 Dev only:
 
@@ -279,7 +280,7 @@ See `docs/flows/_index.md` for full flow documentation.
 | Service | Location | Responsibility |
 |---|---|---|
 | EventQueryService | `application/event_query_service.py` | Filtered, paged event browse with per-event quote freshness; one event's ranked line board |
-| QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish |
+| QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish; writes one refresh record per refresh |
 | RecommendationService | `application/recommendation_service.py` | Intent persistence -> quote matching -> recommendation -> event publish |
 | WatchIntentService | `application/watch_intent_service.py` | Watch intent persistence -> opportunity evaluation -> validity check -> event publish |
 | NormalizationEngine | `engines/normalization_engine.py` | Filters raw provider quotes into canonical form |
@@ -289,6 +290,7 @@ See `docs/flows/_index.md` for full flow documentation.
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
 | DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
 | AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
+| AdminQueryService | `application/admin_query_service.py` | Admin view reads over a read-only UoW: the refresh log, filtered and paged |
 | QuotaService | `application/quota_service.py` | Records each upstream call's quota observation; writes the quota warning on a floor crossing (ADR-016) |
 | QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation, derived floor, crossing rule, paused state |
 | AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown: which watched sports are due |
