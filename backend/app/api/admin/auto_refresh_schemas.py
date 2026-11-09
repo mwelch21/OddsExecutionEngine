@@ -53,6 +53,8 @@ class AutoRefreshResponse(BaseModel):
     last_outcome: AutoRefreshOutcomeResponse | None
     # Out of credits: still on, but nothing paid is pulled until credits return.
     paused: bool
+    # The newest upstream call was refused for credits. False before any call.
+    out_of_credits: bool
     quota: QuotaResponse | None
 
     @classmethod
@@ -74,6 +76,7 @@ class AutoRefreshResponse(BaseModel):
                 error=outcome.error,
             ),
             paused=quota.paused if quota else False,
+            out_of_credits=latest.out_of_credits if latest else False,
             quota=None
             if quota is None or latest is None
             else QuotaResponse(

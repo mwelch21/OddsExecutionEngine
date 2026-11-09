@@ -15,27 +15,33 @@ class QuotaEngine:
     def observe(
         self, reading: QuotaReading, previous: QuotaObservation | None
     ) -> QuotaObservation:
-        if reading.credits_remaining is not None:
-            return QuotaObservation(
-                remaining=0 if reading.out_of_credits else reading.credits_remaining,
-                used=reading.credits_used,
-                source=QuotaSource.HEADERS,
-                out_of_credits=reading.out_of_credits,
-                observed_at=reading.observed_at,
-            )
-
         # A refused call costs nothing; a served one costs markets x regions.
         cost = 0 if reading.out_of_credits else reading.estimated_cost
-        remaining = None if previous is None else previous.remaining
-        used = None if previous is None else previous.used
+        if reading.credits_remaining is not None:
+            remaining: int | None = 0 if reading.out_of_credits else reading.credits_remaining
+            used = reading.credits_used
+            source = QuotaSource.HEADERS
+        else:
+            remaining = None if previous is None else previous.remaining
+            used = None if previous is None else previous.used
+            remaining = (
+                0
+                if reading.out_of_credits
+                else (None if remaining is None else max(remaining - cost, 0))
+            )
+            used = None if used is None else used + cost
+            source = QuotaSource.LOCAL
         return QuotaObservation(
-            remaining=0
-            if reading.out_of_credits
-            else (None if remaining is None else max(remaining - cost, 0)),
-            used=None if used is None else used + cost,
-            source=QuotaSource.LOCAL,
+            remaining=remaining,
+            used=used,
+            source=source,
             out_of_credits=reading.out_of_credits,
             observed_at=reading.observed_at,
+            kind=reading.kind,
+            sport_key=reading.sport_key,
+            event_id=reading.event_id,
+            # The call's own cost header first; the local count when it is absent.
+            credits_spent=cost if reading.credits_spent is None else reading.credits_spent,
         )
 
     def floor(self, configured: int | None, latest: QuotaObservation | None) -> int | None:

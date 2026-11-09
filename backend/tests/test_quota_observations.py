@@ -1,12 +1,19 @@
 """Every upstream call hands its quota to the recorder, served or refused (ADR-016)."""
 
+import threading
+import time
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
 
-from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
+from backend.app.domain.quota import (
+    OutOfUsageCreditsError,
+    QuotaReading,
+    UpstreamCallKind,
+    linked_observation,
+)
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 
@@ -22,14 +29,19 @@ EVENT: dict[str, Any] = {
 
 
 class RecordingQuota:
+    """Hands back the reading's position as its observation id, as the store would."""
+
     def __init__(self, fail: bool = False) -> None:
         self.readings: list[QuotaReading] = []
         self._fail = fail
+        self._guard = threading.Lock()
 
-    def record(self, reading: QuotaReading) -> None:
+    def record(self, reading: QuotaReading) -> int:
         if self._fail:
             raise RuntimeError("database is down")
-        self.readings.append(reading)
+        with self._guard:
+            self.readings.append(reading)
+            return len(self.readings)
 
 
 def _provider(recorder: RecordingQuota, cache_ttl_seconds: int = 0) -> TheOddsApiProvider:
@@ -146,3 +158,96 @@ def test_a_recorder_failure_never_fails_the_refresh() -> None:
         quotes, _ = provider.list_quotes_for_sport("icehockey_nhl")
 
     assert "abc123" in quotes
+
+
+# --- what each call was, and which call a refresh used (#104) ---
+
+
+def test_a_sport_pull_records_its_kind_sport_and_cost() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with patch.object(provider._client, "get", return_value=_response(200, [EVENT], HEADERS)):
+        _, report = provider.list_quotes_for_sport("icehockey_nhl")
+
+    [reading] = recorder.readings
+    assert reading.kind is UpstreamCallKind.SPORT
+    assert (reading.sport_key, reading.event_id) == ("icehockey_nhl", None)
+    assert reading.credits_spent == 3
+    assert report.observation_id == 1
+
+
+def test_an_event_pull_records_its_kind_sport_event_and_cost() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with patch.object(provider._client, "get", return_value=_response(200, EVENT, HEADERS)):
+        _, report = provider.list_quotes("abc123", "icehockey_nhl")
+
+    [reading] = recorder.readings
+    assert reading.kind is UpstreamCallKind.EVENT
+    assert (reading.sport_key, reading.event_id) == ("icehockey_nhl", "abc123")
+    assert reading.credits_spent == 3
+    assert report.observation_id == 1
+
+
+def test_a_balance_check_records_its_kind_and_spends_nothing() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with patch.object(provider._client, "get", return_value=_response(200, [], HEADERS)):
+        provider.check_quota()
+
+    [reading] = recorder.readings
+    assert reading.kind is UpstreamCallKind.BALANCE_CHECK
+    assert (reading.sport_key, reading.event_id) == (None, None)
+    # The header repeats the last billed call's cost; a free call spent nothing.
+    assert reading.credits_spent == 0
+
+
+def test_a_failed_call_carries_its_observation_on_the_error() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with (
+        patch.object(provider._client, "get", return_value=_response(500, {}, HEADERS)),
+        pytest.raises(httpx.HTTPStatusError) as raised,
+    ):
+        provider.list_quotes_for_sport("icehockey_nhl")
+
+    assert linked_observation(raised.value) == 1
+
+
+def test_coalesced_refreshes_share_one_observation() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_get(*_: Any, **__: Any) -> httpx.Response:
+        entered.set()
+        assert release.wait(timeout=5), "upstream call was never released"
+        return _response(200, [EVENT], HEADERS)
+
+    observation_ids: list[int | None] = []
+    guard = threading.Lock()
+
+    def refresh() -> None:
+        _, report = provider.list_quotes_for_sport("icehockey_nhl")
+        with guard:
+            observation_ids.append(report.observation_id)
+
+    with patch.object(provider._client, "get", side_effect=slow_get):
+        first = threading.Thread(target=refresh)
+        first.start()
+        assert entered.wait(timeout=5), "first call never started"
+        second = threading.Thread(target=refresh)
+        second.start()
+        time.sleep(0.1)  # let the second refresh queue behind the call in flight
+        release.set()
+        for thread in (first, second):
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+
+    assert len(recorder.readings) == 1
+    assert observation_ids == [1, 1]

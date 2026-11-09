@@ -238,8 +238,17 @@ quota_observations_table = Table(
     Column("used", Integer, nullable=True),
     Column("source", String(length=16), nullable=False),
     Column("out_of_credits", Boolean, nullable=False, server_default="false"),
-    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False, index=True),
+    # What the call was and what it spent (#104); null on rows from before they were kept.
+    Column("call_kind", String(length=16), nullable=True),
+    Column("sport_key", String(length=64), nullable=True),
+    Column("event_id", String(length=255), nullable=True),
+    Column("credits_spent", Integer, nullable=True),
     CheckConstraint("source IN ('headers', 'local')", name="ck_quota_observations_source"),
+    CheckConstraint(
+        "call_kind IS NULL OR call_kind IN ('sport', 'event', 'balance_check')",
+        name="ck_quota_observations_call_kind",
+    ),
 )
 
 sport_refreshes_table = Table(
@@ -266,6 +275,13 @@ refresh_records_table = Table(
     Column("error_code", String(length=32), nullable=True),
     Column("error", Text, nullable=True),
     Column("events_refreshed", Integer, nullable=False, server_default="0"),
+    # The upstream call this refresh used; coalesced refreshes share one (#104).
+    Column(
+        "quota_observation_id",
+        Integer,
+        ForeignKey("quota_observations.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
     CheckConstraint("scope IN ('sport', 'event')", name="ck_refresh_records_scope"),
     CheckConstraint("trigger IN ('manual', 'auto')", name="ck_refresh_records_trigger"),
     CheckConstraint(

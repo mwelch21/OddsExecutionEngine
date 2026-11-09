@@ -31,9 +31,11 @@ class CountingQuoteProvider:
         self.sport_fetches: list[str] = []
         self.event_fetches: list[str] = []
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
         self.event_fetches.append(event_id)
-        return []
+        return [], ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def list_quotes_for_sport(
         self, sport: str

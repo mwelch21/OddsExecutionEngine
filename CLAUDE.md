@@ -234,9 +234,11 @@ Notifications:
 
 Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` hook, a no-op until auth #14; each feature is its own module in `backend/app/api/admin/`):
 
-- `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
+- `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, `out_of_credits`, latest `quota` with the floor in force; defaults to off, 5 minutes)
 - `PUT /api/v1/admin/auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
-- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200)
+- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200; each row's `credits_spent` is read through its linked upstream call, null when it made none)
+- `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
+- `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
 - `GET /api/v1/admin/deliveries` (delivery log, newest first; optional `status`, `event_type`, `destination_id`; paged `page` / `page_size`, default 50, max 200; a short subject and device label only, never the push address, keys or raw payload; `last_error` is an allowlisted summary, never the stored text)
 
 Dev only:
@@ -295,8 +297,10 @@ See `docs/flows/_index.md` for full flow documentation.
 | DeliveryQueryService | `application/delivery_query_service.py` | Delivery log: filtered, paged deliveries with a subject line from `DeliverySubjectEngine` |
 | AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
 | AdminQueryService | `application/admin_query_service.py` | Admin view reads over a read-only UoW: the refresh log, filtered and paged |
+| CreditQueryService | `application/credit_query_service.py` | Credits tab reads: hourly balance history and monthly burn from `CreditHistoryEngine` |
 | QuotaService | `application/quota_service.py` | Records each upstream call's quota observation; writes the quota warning on a floor crossing (ADR-016) |
-| QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation, derived floor, crossing rule, paused state |
+| QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation (kind, sport, event, credits spent), derived floor, crossing rule, paused state |
+| CreditHistoryEngine | `engines/credit_history_engine.py` | Hourly last-balance buckets, UTC month windows, burn per sport and call kind |
 | AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown: which watched sports are due |
 | auto-refresh worker | `auto_refresh_worker.py` (`odds-auto-refresh`) | Polls every 30s under a Postgres advisory lock; the only automatic refresh path |
 | notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |

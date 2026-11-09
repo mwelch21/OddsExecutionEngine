@@ -398,6 +398,7 @@ def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: st
         "quota_floor": None,
         "last_outcome": None,
         "paused": False,
+        "out_of_credits": False,
         "quota": None,
     }
 

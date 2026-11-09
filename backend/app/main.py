@@ -7,7 +7,9 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.credit_burn_router import create_credit_burn_router
 from backend.app.api.admin.deliveries_router import create_deliveries_router
+from backend.app.api.admin.quota_history_router import create_quota_history_router
 from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
@@ -16,6 +18,7 @@ from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
 from backend.app.application.admin_query_service import AdminQueryService
+from backend.app.application.credit_query_service import CreditQueryService
 from backend.app.application.delivery_query_service import DeliveryQueryService
 from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
@@ -27,6 +30,7 @@ from backend.app.composition import (
     build_watch_intent_service,
 )
 from backend.app.config import Settings, get_settings
+from backend.app.engines.credit_history_engine import CreditHistoryEngine
 from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
 from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
@@ -40,6 +44,7 @@ from backend.app.infrastructure.observability.request_context import (
 from backend.app.infrastructure.persistence.admin_read_uow import (
     SqlAlchemyAdminReadUnitOfWork,
 )
+from backend.app.infrastructure.persistence.credit_read_uow import SqlAlchemyCreditReadUnitOfWork
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.delivery_read_uow import (
     SqlAlchemyDeliveryReadUnitOfWork,
@@ -115,6 +120,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin_query_service = AdminQueryService(
         unit_of_work_factory=lambda: SqlAlchemyAdminReadUnitOfWork(session_factory),
     )
+    credit_query_service = CreditQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyCreditReadUnitOfWork(session_factory),
+        history_engine=CreditHistoryEngine(),
+    )
 
     @app.middleware("http")
     async def add_request_context(
@@ -183,6 +192,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin.include_router(create_auto_refresh_router(auto_refresh_service))
     admin.include_router(create_refreshes_router(admin_query_service))
     admin.include_router(create_deliveries_router(delivery_query_service))
+    admin.include_router(create_quota_history_router(credit_query_service))
+    admin.include_router(create_credit_burn_router(credit_query_service))
     api_v1.include_router(admin)
 
     if app_settings.app_env == "development":
