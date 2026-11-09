@@ -78,7 +78,8 @@ export type RefreshRecord = {
   error: string | null;
   events_refreshed: number;
   /**
-   * What the upstream call it used spent. `null` when it made no call. Refreshes
+   * What the upstream call it used spent. `null` when no call is linked: it made
+   * none, or the call was not recorded. Refreshes
    * coalesced onto one call each show that call's cost; it was billed once.
    */
   credits_spent: number | null;

@@ -168,9 +168,12 @@ function RefreshRow({ record }: { record: RefreshRecord }) {
   );
 }
 
-/** Cost through the linked upstream call; no call, no cost. */
+/**
+ * Cost through the linked upstream call. Null is "not known", never zero: the
+ * refresh failed before any call, or its call was not recorded.
+ */
 function costLabel(record: RefreshRecord) {
-  if (record.credits_spent === null) return "no call";
+  if (record.credits_spent === null) return "cost unknown";
   return `${record.credits_spent} credit${record.credits_spent === 1 ? "" : "s"}`;
 }
 

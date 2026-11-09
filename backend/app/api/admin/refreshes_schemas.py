@@ -25,8 +25,8 @@ class RefreshRecordResponse(BaseModel):
     error_code: RefreshErrorCode | None
     error: str | None
     events_refreshed: int
-    # What the upstream call it used spent. Null when it made no call, or the call's
-    # cost was never recorded. Coalesced refreshes each show their shared call's cost.
+    # What the upstream call it used spent. Null when no call is linked: it made
+    # none, or the call was not recorded. Coalesced refreshes each show their shared call's cost.
     credits_spent: int | None
 
     @classmethod

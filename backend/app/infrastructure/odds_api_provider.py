@@ -88,6 +88,17 @@ def _raise_for_status(response: httpx.Response) -> None:
     response.raise_for_status()
 
 
+def _checked_json(response: httpx.Response, observation_id: int | None) -> Any:
+    """The body of a successful response. A raise names the call it followed, so the
+    refresh that paid for the call still links to it."""
+    try:
+        _raise_for_status(response)
+        return response.json()
+    except Exception as error:
+        link_observation(error, observation_id)
+        raise
+
+
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
     """Split Odds API sport key into (sport, league)."""
     if sport_key in SPORT_LEAGUE_MAP:
@@ -238,13 +249,8 @@ class TheOddsApiProvider:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", sport)
         quota, observation_id = self._read_quota(response, UpstreamCallKind.SPORT, sport)
-        try:
-            _raise_for_status(response)
-            payload = cast(list[dict[str, Any]], response.json())
-        except Exception as error:
-            link_observation(error, observation_id)
-            raise
-        return payload, quota, observation_id
+        body = _checked_json(response, observation_id)
+        return cast(list[dict[str, Any]], body), quota, observation_id
 
     def _fetch_event_odds(
         self, sport: str, event_id: str
@@ -265,13 +271,8 @@ class TheOddsApiProvider:
                 extra={"sport": sport, "event_id": event_id},
             )
             return [], quota, observation_id
-        try:
-            _raise_for_status(response)
-            payload = [cast(dict[str, Any], response.json())]
-        except Exception as error:
-            link_observation(error, observation_id)
-            raise
-        return payload, quota, observation_id
+        body = _checked_json(response, observation_id)
+        return [cast(dict[str, Any], body)], quota, observation_id
 
     def check_quota(self) -> None:
         """GET /v4/sports: free, and it still carries the quota headers.
