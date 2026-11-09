@@ -5,15 +5,20 @@ integration database is configured.
 """
 
 import os
+import threading
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.application.quota_service import QuotaService
+from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.config import Settings
 from backend.app.domain.models import ProviderFetchReport, Quote
 from backend.app.domain.quota import (
@@ -22,9 +27,19 @@ from backend.app.domain.quota import (
     UpstreamCallKind,
     link_observation,
 )
+from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.quota_engine import QuotaEngine
+from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
+from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
+from backend.app.infrastructure.persistence.quote_ingestion_uow import (
+    SqlAlchemyQuoteIngestionUnitOfWork,
+)
+from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRefreshRecorder
+from backend.app.infrastructure.publishers.in_memory_publisher import (
+    InMemoryWorkflowEventPublisher,
+)
 from backend.app.infrastructure.quote_provider import (
     FIXTURE_EVENT_ID,
     InMemoryQuoteProvider,
@@ -322,3 +337,55 @@ def test_a_paused_balance_check_keeps_out_of_credits_while_none_are_left(
     auto = _get(client, "auto-refresh")
 
     assert (auto["out_of_credits"], auto["paused"]) == (True, True)
+
+
+def test_two_refreshes_coalesced_by_the_real_cache_link_one_stored_call(
+    client: TestClient, session_factory: DatabaseSessionFactory, quota: QuotaService
+) -> None:
+    """End to end on storage: provider cache, quota record, refresh records, burn."""
+    provider = TheOddsApiProvider(
+        api_key="test-key",
+        regions=["us"],
+        markets=["h2h", "spreads", "totals"],
+        response_cache=InProcessProviderCache(ttl_seconds=0),
+        quota_recorder=quota,
+    )
+    ingestion = QuoteIngestionService(
+        unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(session_factory),
+        quote_provider=provider,
+        normalization_engine=NormalizationEngine(),
+        workflow_event_publisher=InMemoryWorkflowEventPublisher(),
+        refresh_recorder=SqlAlchemyRefreshRecorder(session_factory),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_get(*_: Any, **__: Any) -> httpx.Response:
+        entered.set()
+        assert release.wait(timeout=5), "upstream call was never released"
+        return httpx.Response(
+            200,
+            json=[],
+            headers={"x-requests-remaining": "497", "x-requests-used": "3", "x-requests-last": "3"},
+            request=httpx.Request("GET", "https://api.the-odds-api.com/v4/sports"),
+        )
+
+    with patch.object(provider._client, "get", side_effect=slow_get):
+        first = threading.Thread(target=ingestion.refresh_sport, args=("icehockey_nhl",))
+        first.start()
+        assert entered.wait(timeout=5), "first call never started"
+        second = threading.Thread(target=ingestion.refresh_sport, args=("icehockey_nhl",))
+        second.start()
+        time.sleep(0.1)  # let the second refresh queue behind the call in flight
+        release.set()
+        for thread in (first, second):
+            thread.join(timeout=10)
+            assert not thread.is_alive()
+
+    rows = _get(client, "refreshes")["refreshes"]
+    assert [(row["sport"], row["credits_spent"]) for row in rows] == [
+        ("icehockey_nhl", 3),
+        ("icehockey_nhl", 3),
+    ]
+    burn = _get(client, "credit-burn")
+    assert (burn["total_credits"], burn["total_calls"]) == (3, 1)
