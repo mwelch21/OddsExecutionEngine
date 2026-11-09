@@ -5,7 +5,7 @@ from typing import Protocol, Self
 from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.base import DomainModel
 from backend.app.domain.credits import BurnRow, RemainingReading
-from backend.app.domain.deliveries import DeliveryFilter, StoredDelivery
+from backend.app.domain.deliveries import DeliveryFilter, DeliveryStatus, StoredDelivery
 from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
@@ -28,6 +28,11 @@ from backend.app.domain.models import (
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.domain.quota import QuotaObservation, QuotaReading
 from backend.app.domain.refresh_records import RefreshRecord, RefreshRecordFilter
+from backend.app.domain.system_status import (
+    LastSuccessfulRefresh,
+    PendingDeliveries,
+    ProviderAnswer,
+)
 
 
 class RecommendationUnitOfWork(Protocol):
@@ -324,6 +329,44 @@ class DeliveryReadUnitOfWork(Protocol):
 
 class DeliveryReadUnitOfWorkFactory(Protocol):
     def __call__(self) -> DeliveryReadUnitOfWork: ...
+
+
+class SystemStatusReadUnitOfWork(Protocol):
+    """Reads behind component status and operational metrics (#106). DB-only: the
+    provider's state comes from stored refreshes, never a live probe."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def database_reachable(self) -> bool:
+        """`SELECT 1` answered. False, never an error, when it did not."""
+        ...
+
+    def notifier_listener_count(self) -> int | None:
+        """Open `notifier-listener` connections; None when that cannot be read."""
+        ...
+
+    def newest_provider_answer(self) -> ProviderAnswer | None: ...
+
+    def last_successful_refresh(self) -> LastSuccessfulRefresh | None: ...
+
+    def latest_quota_observation(self) -> QuotaObservation | None: ...
+
+    def configured_quota_floor(self) -> int | None: ...
+
+    def delivery_counts_since(self, since: datetime) -> dict[DeliveryStatus, int]: ...
+
+    def pending_deliveries(self) -> PendingDeliveries: ...
+
+
+class SystemStatusReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> SystemStatusReadUnitOfWork: ...
 
 
 class DestinationUnitOfWork(Protocol):

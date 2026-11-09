@@ -7,8 +7,10 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.component_status_router import create_component_status_router
 from backend.app.api.admin.credit_burn_router import create_credit_burn_router
 from backend.app.api.admin.deliveries_router import create_deliveries_router
+from backend.app.api.admin.metrics_router import create_metrics_router
 from backend.app.api.admin.quota_history_router import create_quota_history_router
 from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
@@ -23,6 +25,7 @@ from backend.app.application.delivery_query_service import DeliveryQueryService
 from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
 from backend.app.application.recommendation_service import RecommendationService
+from backend.app.application.system_status_query_service import SystemStatusQueryService
 from backend.app.composition import (
     build_auto_refresh_service,
     build_quota_service,
@@ -30,10 +33,12 @@ from backend.app.composition import (
     build_watch_intent_service,
 )
 from backend.app.config import Settings, get_settings
+from backend.app.engines.component_status_engine import ComponentStatusEngine
 from backend.app.engines.credit_history_engine import CreditHistoryEngine
 from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
 from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
+from backend.app.engines.quota_engine import QuotaEngine
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
 from backend.app.infrastructure.observability.logging import configure_logging
@@ -57,6 +62,9 @@ from backend.app.infrastructure.persistence.event_read_uow import (
 )
 from backend.app.infrastructure.persistence.recommendation_uow import (
     SqlAlchemyRecommendationUnitOfWork,
+)
+from backend.app.infrastructure.persistence.system_status_read_uow import (
+    SqlAlchemySystemStatusReadUnitOfWork,
 )
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
@@ -124,6 +132,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unit_of_work_factory=lambda: SqlAlchemyCreditReadUnitOfWork(session_factory),
         history_engine=CreditHistoryEngine(),
     )
+    system_status_query_service = SystemStatusQueryService(
+        unit_of_work_factory=lambda: SqlAlchemySystemStatusReadUnitOfWork(session_factory),
+        component_status_engine=ComponentStatusEngine(),
+        quota_engine=QuotaEngine(),
+    )
 
     @app.middleware("http")
     async def add_request_context(
@@ -171,9 +184,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # not contract, so it sits under /api but outside the version.
     @app.get("/api/health", tags=["system"])
     def healthcheck() -> dict[str, str]:
+        # `status` says the API answered; the database is reported beside it (#106).
         return {
             "status": "ok",
             "environment": app_settings.app_env,
+            "database": "healthy"
+            if system_status_query_service.database_reachable()
+            else "unhealthy",
         }
 
     api_v1 = APIRouter(prefix="/api/v1")
@@ -194,6 +211,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin.include_router(create_deliveries_router(delivery_query_service))
     admin.include_router(create_quota_history_router(credit_query_service))
     admin.include_router(create_credit_burn_router(credit_query_service))
+    admin.include_router(create_component_status_router(system_status_query_service))
+    admin.include_router(create_metrics_router(system_status_query_service))
     api_v1.include_router(admin)
 
     if app_settings.app_env == "development":
