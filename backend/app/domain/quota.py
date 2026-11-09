@@ -71,6 +71,7 @@ class QuotaStatus(DomainModel):
     latest: QuotaObservation | None
     floor: int | None
     paused: bool
+    out_of_credits: bool = False
 
 
 class OutOfUsageCreditsError(Exception):

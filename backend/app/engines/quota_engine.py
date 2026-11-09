@@ -63,5 +63,11 @@ class QuotaEngine:
             return True
         return previous.remaining >= floor
 
-    def is_paused(self, latest: QuotaObservation | None) -> bool:
+    def is_out_of_credits(self, latest: QuotaObservation | None) -> bool:
+        """A refusal, or a zero balance: a free balance check answers 200 with 0
+        remaining, so the refusal flag alone would clear while credits are still gone."""
         return latest is not None and (latest.out_of_credits or latest.remaining == 0)
+
+    def is_paused(self, latest: QuotaObservation | None) -> bool:
+        # Out of credits pauses Auto-Refresh (ADR-016); the two are one rule.
+        return self.is_out_of_credits(latest)

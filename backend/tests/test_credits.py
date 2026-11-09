@@ -294,3 +294,31 @@ def test_auto_refresh_reports_out_of_credits(client: TestClient, quota: QuotaSer
     auto = _get(client, "auto-refresh")
 
     assert (auto["out_of_credits"], auto["paused"]) == (True, True)
+
+
+def test_a_paused_balance_check_keeps_out_of_credits_while_none_are_left(
+    client: TestClient, quota: QuotaService
+) -> None:
+    now = datetime.now(UTC)
+    quota.record(
+        QuotaReading(
+            kind=UpstreamCallKind.SPORT,
+            sport_key=FIXTURE_SPORT_KEY,
+            out_of_credits=True,
+            estimated_cost=3,
+            observed_at=now,
+        )
+    )
+    # The free balance check answers 200 with 0 left: not a refusal, still no credits.
+    _call(
+        quota,
+        now + timedelta(minutes=5),
+        kind=UpstreamCallKind.BALANCE_CHECK,
+        sport=None,
+        remaining=0,
+        spent=0,
+    )
+
+    auto = _get(client, "auto-refresh")
+
+    assert (auto["out_of_credits"], auto["paused"]) == (True, True)

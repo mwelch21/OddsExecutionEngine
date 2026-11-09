@@ -63,5 +63,8 @@ class QuotaService:
             latest = uow.latest_observation()
             floor = self._quota_engine.floor(uow.configured_floor(), latest)
         return QuotaStatus(
-            latest=latest, floor=floor, paused=self._quota_engine.is_paused(latest)
+            latest=latest,
+            floor=floor,
+            paused=self._quota_engine.is_paused(latest),
+            out_of_credits=self._quota_engine.is_out_of_credits(latest),
         )

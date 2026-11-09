@@ -171,3 +171,9 @@ def test_a_balance_check_spends_nothing() -> None:
     observation = engine.observe(reading, previous=None)
 
     assert (observation.kind, observation.credits_spent) == (UpstreamCallKind.BALANCE_CHECK, 0)
+
+
+def test_a_zero_balance_is_out_of_credits_even_without_a_refusal() -> None:
+    assert engine.is_out_of_credits(_observation(remaining=0)) is True
+    assert engine.is_out_of_credits(_observation(remaining=1)) is False
+    assert engine.is_out_of_credits(None) is False
