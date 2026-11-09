@@ -268,9 +268,19 @@ func (s *Store) Retry(ctx context.Context, claim Claim, delay time.Duration, las
 	return nil
 }
 
+// ListenerApplicationName names the listener connection in pg_stat_activity. The
+// API reads it there to show the notifier as Connected (#106). Pool connections
+// open and close as needed and prove nothing, so only this connection carries it.
+const ListenerApplicationName = "notifier-listener"
+
 // Listen opens a dedicated connection subscribed to the outbox channel.
 func Listen(ctx context.Context, databaseURL, channel string) (*pgx.Conn, error) {
-	conn, err := pgx.Connect(ctx, databaseURL)
+	config, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing listener database URL: %w", err)
+	}
+	config.RuntimeParams["application_name"] = ListenerApplicationName
+	conn, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connecting listener: %w", err)
 	}
