@@ -99,6 +99,9 @@ flowchart TD
   DestinationService{DestinationService} -->|missing destination| HTTP404
   DestinationService -->|disabled destination| HTTP409
   DestinationService -->|within 10 seconds| HTTP429
+  Manage{PATCH / DELETE destination} -->|missing destination| HTTP404
+  Manage -->|re-enable a gone one| HTTP409
+  Manage -->|DELETE| user_removed_soft_disable
 ```
 <!-- /ff -->
 
@@ -131,6 +134,7 @@ flowchart LR
 | Worker | 30-second sweep, 60-second lease, fresh claim token; stale results cannot overwrite a newer claim. `dispatched_at` means fan-out completed. |
 | Runtime | Mac must remain awake and online, with app and notifier running. After a branch switch, rebuild the notifier image (`just refresh` once #84 lands). |
 | Outcomes | 2xx `delivered`. 429/5xx/network: retried, backoff step 10s doubling to a 15 min cap, equal jitter; a retry past max age is `expired`. 404/410 `gone`: destination soft-disabled, its pending deliveries `gone`. Other 4xx, oversize payload or broken subscription keys: `failed`. Lease ran out mid-send: nothing recorded, lease recovery resends. |
+| Managing devices | Admin view, Controls tab, Devices card: Test, Rename, Remove, Re-enable. `PATCH /api/v1/destinations/{id}` renames or re-enables a removed one; a `gone` one is 409 and needs a fresh subscription. `DELETE` soft-disables as `user_removed`; row and deliveries stay. A removed destination gets no new deliveries, and its already-queued ones stay `pending`, unclaimed, until re-enable, when max age expires any that went stale. A send already claimed before the removal still completes, and a 404/410 on it marks the destination `gone`, overriding `user_removed`. |
 | Manual validation | 2026-10-26: opportunity notification delivered to Mac and iPhone; iPhone cold-launch tap opened the Home Screen app (#72). |
 | Operator commands | See [Web Push runbook](../../runbooks/web-push.md). Run repo commands from repository root. |
 <!-- /ff -->

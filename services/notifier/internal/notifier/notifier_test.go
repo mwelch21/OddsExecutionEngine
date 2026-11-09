@@ -493,6 +493,116 @@ func TestDisabledDestinationGetsNoDelivery(t *testing.T) {
 	}
 }
 
+func (h *harness) markRemoved(destinationID string) {
+	h.t.Helper()
+	if _, err := h.pool.Exec(h.ctx, `
+		UPDATE destinations SET disabled_at = now(), disabled_reason = 'user_removed'
+		WHERE id = $1`, destinationID); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func (h *harness) reEnable(destinationID string) {
+	h.t.Helper()
+	if _, err := h.pool.Exec(h.ctx, `
+		UPDATE destinations SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1`,
+		destinationID); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestPendingDeliveryWaitsWhileItsDestinationIsRemoved(t *testing.T) {
+	h := newHarness(t)
+	h.push.script = []int{http.StatusServiceUnavailable}
+	target := h.addDestination("iPhone")
+	eventID := h.addTestEvent(target, time.Now())
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	h.markRemoved(target)
+	h.makeDue()
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusPending ||
+		got[0].attempts != 1 {
+		t.Fatalf("deliveries = %+v, want one pending, still on its first attempt", got)
+	}
+	if n := len(h.push.requests()); n != 1 {
+		t.Fatalf("removed destination was sent to: %d requests, want 1", n)
+	}
+
+	h.reEnable(target)
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusDelivered {
+		t.Fatalf("deliveries = %+v, want delivered once re-enabled", got)
+	}
+}
+
+func TestPendingDeliveryThatAgedOutWhileRemovedExpiresOnReEnable(t *testing.T) {
+	h := newHarness(t)
+	target := h.addDestination("iPhone")
+	h.markRemoved(target)
+	eventID := h.addTestEvent(target, time.Now().Add(-11*time.Minute))
+	// Queued before the removal, so fan-out's active filter did not apply.
+	if _, err := h.pool.Exec(h.ctx, `
+		INSERT INTO deliveries (id, event_id, destination_id) VALUES ($1, $2, $3)`,
+		uuid.NewString(), eventID, target); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusPending {
+		t.Fatalf("deliveries = %+v, want one pending while removed", got)
+	}
+
+	h.reEnable(target)
+	if err := h.notifier.RunOnce(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deliveries(eventID); len(got) != 1 || got[0].status != store.StatusExpired {
+		t.Fatalf("deliveries = %+v, want expired after re-enable", got)
+	}
+	if n := len(h.push.requests()); n != 0 {
+		t.Fatalf("stale delivery was sent %d times", n)
+	}
+}
+
+func TestRejectionDuringASendMarksARemovedDestinationGone(t *testing.T) {
+	h := newHarness(t)
+	target := h.addDestination("iPhone")
+	h.addTestEvent(target, time.Now())
+	if _, err := h.notifier.Store.FanOut(h.ctx, events.Delivered, 10); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := h.notifier.Store.ClaimDue(h.ctx, 10, time.Minute)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims = %d, err = %v; want one", len(claims), err)
+	}
+
+	// The operator removes the device while its push is in flight, then the
+	// push service answers 410.
+	h.markRemoved(target)
+	if err := h.notifier.Store.Record(h.ctx, claims[0], store.StatusGone, "410"); err != nil {
+		t.Fatal(err)
+	}
+
+	var reason string
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT disabled_reason FROM destinations WHERE id = $1`, target).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	// `gone` is what makes the API refuse a re-enable (409).
+	if reason != "gone" {
+		t.Fatalf("disabled_reason = %q, want gone", reason)
+	}
+}
+
 // runInBackground starts Run with the given sweep and stops it at test end.
 func (h *harness) runInBackground(sweep time.Duration) {
 	h.t.Helper()

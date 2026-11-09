@@ -145,6 +145,9 @@ func (s *Store) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([
 		WITH due AS (
 			SELECT id FROM deliveries
 			WHERE status = 'pending'
+			  -- A removed destination's queued deliveries wait, unsent, until it is
+			  -- re-enabled; the max-age check then expires any that went stale.
+			  AND destination_id IN (SELECT id FROM destinations WHERE disabled_at IS NULL)
 			  AND next_attempt_at <= now()
 			  AND (locked_until IS NULL OR locked_until < now())
 			ORDER BY next_attempt_at
@@ -216,9 +219,11 @@ func (s *Store) Record(ctx context.Context, claim Claim, status, lastError strin
 		// fresh subscribe from the browser reactivates it) and give up on
 		// everything else queued for it. A worker mid-send on one of those finds
 		// it no longer pending, so its result is dropped as stale.
+		// A rejection outranks an operator removal: re-enabling would only revive
+		// a subscription the channel has already refused.
 		if _, err := tx.Exec(ctx, `
-			UPDATE destinations SET disabled_at = now(), disabled_reason = 'gone'
-			WHERE id = $1 AND disabled_at IS NULL`, claim.DestinationID); err != nil {
+			UPDATE destinations SET disabled_at = coalesce(disabled_at, now()), disabled_reason = 'gone'
+			WHERE id = $1 AND disabled_reason IS DISTINCT FROM 'gone'`, claim.DestinationID); err != nil {
 			return fmt.Errorf("disabling destination %s: %w", claim.DestinationID, err)
 		}
 		if _, err := tx.Exec(ctx, `

@@ -1201,6 +1201,45 @@ select {
   opacity: 0.6;
 }
 
+.destination-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.destination-row {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.destination-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.destination-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.destination-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.destination-label-input {
+  flex: 1;
+  min-width: 0;
+}
+
 @media (max-width: 1080px) {
   .admin-two {
     grid-template-columns: 1fr;

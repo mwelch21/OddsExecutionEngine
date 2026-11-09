@@ -4,7 +4,7 @@ from typing import Protocol, Self
 
 from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.base import DomainModel
-from backend.app.domain.destinations import Destination, WebPushKeys
+from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventFilter,
@@ -318,6 +318,16 @@ class DestinationUnitOfWork(Protocol):
     def list_destinations(self) -> list[Destination]: ...
 
     def get_destination(self, destination_id: str) -> Destination | None: ...
+
+    def update_destination(
+        self, destination_id: str, label: str | None, reactivate: bool
+    ) -> Destination:
+        """Reactivation never applies to a `gone` row; the result shows whether it did."""
+        ...
+
+    def disable_destination(
+        self, destination_id: str, reason: DisabledReason
+    ) -> Destination: ...
 
     def latest_test_requested_at(self, destination_id: str) -> datetime | None: ...
 
