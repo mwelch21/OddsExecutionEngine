@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from backend.app.domain.refresh_records import (
+    RefreshErrorCode,
     RefreshOutcomeStatus,
     RefreshRecord,
     RefreshRecordPage,
@@ -21,7 +22,7 @@ class RefreshRecordResponse(BaseModel):
     started_at: datetime
     finished_at: datetime
     outcome: RefreshOutcomeStatus
-    error_code: str | None
+    error_code: RefreshErrorCode | None
     error: str | None
     events_refreshed: int
 

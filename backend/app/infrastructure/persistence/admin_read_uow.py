@@ -78,4 +78,8 @@ def _filter_refreshes(query: SelectT, refresh_filter: RefreshRecordFilter) -> Se
         query = query.where(refresh_records_table.c.trigger == refresh_filter.trigger.value)
     if refresh_filter.outcome is not None:
         query = query.where(refresh_records_table.c.outcome == refresh_filter.outcome.value)
+    if refresh_filter.error_code is not None:
+        query = query.where(
+            refresh_records_table.c.error_code == refresh_filter.error_code.value
+        )
     return query

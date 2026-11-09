@@ -261,7 +261,7 @@ refresh_records_table = Table(
     Column("started_at", DateTime(timezone=True), nullable=False, index=True),
     Column("finished_at", DateTime(timezone=True), nullable=False),
     Column("outcome", String(length=16), nullable=False),
-    Column("error_code", String(length=64), nullable=True),
+    Column("error_code", String(length=32), nullable=True),
     Column("error", Text, nullable=True),
     Column("events_refreshed", Integer, nullable=False, server_default="0"),
     CheckConstraint("scope IN ('sport', 'event')", name="ck_refresh_records_scope"),
@@ -271,5 +271,10 @@ refresh_records_table = Table(
     ),
     CheckConstraint(
         "(scope = 'sport') = (event_id IS NULL)", name="ck_refresh_records_event_scope"
+    ),
+    CheckConstraint(
+        "error_code IS NULL OR error_code IN ('UPSTREAM_HTTP', 'UPSTREAM_TIMEOUT', "
+        "'OUT_OF_USAGE_CREDITS', 'INVALID_RESPONSE', 'INTERNAL')",
+        name="ck_refresh_records_error_code",
     ),
 )

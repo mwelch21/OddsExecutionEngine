@@ -37,6 +37,7 @@ from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRef
 from backend.app.infrastructure.persistence.watch_intent_uow import (
     SqlAlchemyWatchIntentUnitOfWork,
 )
+from backend.app.infrastructure.provider_errors import classify_provider_error
 from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 
 
@@ -101,6 +102,7 @@ def build_quote_ingestion_service(
         watch_intent_service=watch_intent_service,
         # Every refresh, manual or automatic, leaves a refresh record (#96).
         refresh_recorder=SqlAlchemyRefreshRecorder(session_factory),
+        error_classifier=classify_provider_error,
     )
 
 

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
@@ -173,7 +174,7 @@ def test_a_failed_refresh_is_recorded_and_still_raises(
     [row] = _rows(client)
     assert (row["outcome"], row["error_code"], row["error"], row["events_refreshed"]) == (
         "failed",
-        "RuntimeError",
+        "INTERNAL",
         "upstream 500",
         0,
     )
@@ -280,24 +281,33 @@ def test_the_last_outcome_columns_are_gone_after_migration(
     assert "ix_refresh_records_started_at" in indexes
 
 
-def test_a_failed_refresh_never_keeps_the_provider_key(
+def test_an_upstream_http_error_is_coded_and_never_keeps_the_provider_key(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    url = "https://api.the-odds-api.com/v4/sports/basketball/odds?apiKey=s3cr3t&regions=us"
+
     def fail(self: object, sport: str) -> object:
-        # The shape httpx gives an upstream error: the request URL, key included.
-        raise RuntimeError(
-            "Server error '500' for url "
-            "'https://api.the-odds-api.com/v4/sports/basketball/odds?apiKey=s3cr3t&regions=us'"
-        )
+        # What the real provider raises on a 5xx: the request URL, key included.
+        request = httpx.Request("GET", url)
+        httpx.Response(500, request=request).raise_for_status()
+        raise AssertionError("unreachable")
 
     monkeypatch.setattr(InMemoryQuoteProvider, "list_quotes_for_sport", fail)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(httpx.HTTPStatusError):
         client.post("/api/v1/ingestion/quotes/refresh-sport", json={"sport": FIXTURE_SPORT_KEY})
 
-    [row] = _rows(client)
+    [row] = _rows(client, error_code="UPSTREAM_HTTP")
+    assert row["outcome"] == "failed"
     assert "s3cr3t" not in str(row["error"])
     assert "apiKey=[redacted]&regions=us" in str(row["error"])
+    assert _rows(client, error_code="INTERNAL") == []
+
+
+def test_error_code_must_be_one_of_the_closed_set(client: TestClient) -> None:
+    response = client.get("/api/v1/admin/refreshes", params={"error_code": "RuntimeError"})
+
+    assert response.status_code == 422
 
 
 @pytest.fixture

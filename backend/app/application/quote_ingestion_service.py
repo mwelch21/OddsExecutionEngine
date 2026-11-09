@@ -23,10 +23,12 @@ from backend.app.domain.models import (
     SupportedSport,
 )
 from backend.app.domain.refresh_records import (
+    RefreshErrorClassifier,
     RefreshRecord,
     RefreshResult,
     RefreshScope,
     RefreshTrigger,
+    classify_domain_error,
 )
 from backend.app.engines.normalization_engine import NormalizationEngine
 
@@ -81,6 +83,7 @@ class QuoteIngestionService:
         workflow_event_publisher: WorkflowEventPublisher,
         watch_intent_service: object | None = None,
         refresh_recorder: RefreshRecorder | None = None,
+        error_classifier: RefreshErrorClassifier = classify_domain_error,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
@@ -91,6 +94,7 @@ class QuoteIngestionService:
         # The service has an evaluate_for_event(event_id: str) method.
         self._watch_intent_service: object | None = watch_intent_service
         self._refresh_recorder = refresh_recorder
+        self._error_classifier = error_classifier
         self._clock = clock
 
     def refresh_quotes(
@@ -319,7 +323,7 @@ class QuoteIngestionService:
         """
         if self._refresh_recorder is None:
             return
-        result = RefreshResult.from_error(error)
+        result = RefreshResult.from_error(error, self._error_classifier)
         try:
             self._refresh_recorder.record(
                 RefreshRecord(

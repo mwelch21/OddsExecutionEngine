@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import RowMapping, insert
 
 from backend.app.domain.refresh_records import (
+    RefreshErrorCode,
     RefreshOutcomeStatus,
     RefreshRecord,
     RefreshScope,
@@ -32,7 +33,7 @@ class SqlAlchemyRefreshRecorder:
                     started_at=record.started_at,
                     finished_at=record.finished_at,
                     outcome=record.outcome.value,
-                    error_code=record.error_code,
+                    error_code=record.error_code.value if record.error_code else None,
                     error=record.error,
                     events_refreshed=record.events_refreshed,
                 )
@@ -49,7 +50,7 @@ def refresh_record_from_row(row: RowMapping) -> RefreshRecord:
         started_at=_utc(row["started_at"]),
         finished_at=_utc(row["finished_at"]),
         outcome=RefreshOutcomeStatus(row["outcome"]),
-        error_code=row["error_code"],
+        error_code=RefreshErrorCode(row["error_code"]) if row["error_code"] else None,
         error=row["error"],
         events_refreshed=row["events_refreshed"],
     )

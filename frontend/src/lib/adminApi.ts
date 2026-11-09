@@ -55,6 +55,13 @@ export async function putAutoRefresh(settings: AutoRefreshSettings) {
 
 export type RefreshTrigger = "manual" | "auto";
 export type RefreshOutcome = "succeeded" | "failed" | "refused";
+/** Why a refresh did not succeed: a closed set. `error` carries the detail. */
+export type RefreshErrorCode =
+  | "UPSTREAM_HTTP"
+  | "UPSTREAM_TIMEOUT"
+  | "OUT_OF_USAGE_CREDITS"
+  | "INVALID_RESPONSE"
+  | "INTERNAL";
 
 /** One refresh, manual or Auto-Refresh. `event_id` is null for a sport-wide refresh. */
 export type RefreshRecord = {
@@ -65,7 +72,7 @@ export type RefreshRecord = {
   started_at: string;
   finished_at: string;
   outcome: RefreshOutcome;
-  error_code: string | null;
+  error_code: RefreshErrorCode | null;
   error: string | null;
   events_refreshed: number;
 };
@@ -82,6 +89,7 @@ export type RefreshQuery = {
   sport?: string;
   trigger?: RefreshTrigger;
   outcome?: RefreshOutcome;
+  error_code?: RefreshErrorCode;
   page?: number;
   page_size?: number;
 };

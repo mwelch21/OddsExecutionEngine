@@ -1,7 +1,8 @@
 """add refresh_records, the refresh log; drop the Auto-Refresh last-outcome columns (#96)
 
 One append-only row per refresh: manual or Auto-Refresh, sport-wide or one event,
-succeeded, failed or refused. Quote ingestion is the only writer. A refresh is not an
+succeeded, failed or refused. Quote ingestion is the only writer. `error_code` is
+one of a closed set (`RefreshErrorCode`), never an exception class name. A refresh is not an
 upstream call: coalesced refreshes share one call, and a balance check is a call with
 no refresh behind it.
 
@@ -30,7 +31,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("outcome", sa.String(length=16), nullable=False),
-        sa.Column("error_code", sa.String(length=64), nullable=True),
+        sa.Column("error_code", sa.String(length=32), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("events_refreshed", sa.Integer(), nullable=False, server_default="0"),
         sa.CheckConstraint("scope IN ('sport', 'event')", name="ck_refresh_records_scope"),
@@ -40,6 +41,11 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "(scope = 'sport') = (event_id IS NULL)", name="ck_refresh_records_event_scope"
+        ),
+        sa.CheckConstraint(
+            "error_code IS NULL OR error_code IN ('UPSTREAM_HTTP', 'UPSTREAM_TIMEOUT', "
+            "'OUT_OF_USAGE_CREDITS', 'INVALID_RESPONSE', 'INTERNAL')",
+            name="ck_refresh_records_error_code",
         ),
     )
     op.create_index("ix_refresh_records_started_at", "refresh_records", ["started_at"])

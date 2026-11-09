@@ -234,7 +234,7 @@ Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` 
 
 - `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, latest `quota` with the floor in force; defaults to off, 5 minutes)
 - `PUT /api/v1/admin/auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
-- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome` filters; page-based `page` / `page_size`, default 50, max 200)
+- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200)
 
 Dev only:
 
