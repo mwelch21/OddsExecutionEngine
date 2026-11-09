@@ -29,6 +29,7 @@ import {
 } from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { AdminView } from "./components/admin/AdminView";
+import { AttentionPill } from "./components/admin/systems/AttentionPill";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
@@ -306,6 +307,12 @@ export function App() {
           </div>
         </div>
         <div className="topbar-status">
+          {/* Operator only. Until auth (#14) every viewer is the operator, as the
+              admin router's hook is a no-op; #14 gates this with it. */}
+          <AttentionPill
+            routeKey={adminTab ?? selectedEventId ?? "home"}
+            onOpen={handleOpenAdmin}
+          />
           {adminTab ? (
             // Lines always goes Home; a notification can cold-launch here with no history.
             <Button variant="secondary" onClick={handleBack}>
