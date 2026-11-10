@@ -97,22 +97,26 @@ function MarketGroup({
   pinnedMarket: Props["pinnedMarket"];
   onOpenWatch: (market: LineBoardMarket) => void;
 }) {
-  const [collapsed, toggle] = useCollapsed(`market.${marketType}`);
+  const [collapsed, toggle, expand] = useCollapsed(`market.${marketType}`);
   const heading = marketTypeHeading(marketType);
   const isPinned = (market: LineBoardMarket) =>
     pinnedMarket ? sameMarket(market, pinnedMarket) : false;
-  // A pinned opportunity's group always shows, so its row can scroll into view.
-  const holdsPin = markets.some(isPinned);
-  const open = !collapsed || holdsPin;
+  const pinned = markets.find(isPinned);
+  const pinKey = pinned ? `${pinned.selection}-${pinned.line ?? "na"}` : null;
+
+  // A pin arriving opens its group so the row can scroll into view. The user
+  // may collapse it again; that holds until a different pin arrives.
+  useEffect(() => {
+    if (pinKey) expand();
+  }, [pinKey, expand]);
+
   return (
     <article className="market-group">
       <div className="market-group-heading">
         <h3>{heading}</h3>
-        {!holdsPin && (
-          <CollapseToggle collapsed={collapsed} onToggle={toggle} label={heading} />
-        )}
+        <CollapseToggle collapsed={collapsed} onToggle={toggle} label={heading} />
       </div>
-      {open &&
+      {!collapsed &&
         markets.map((market) => (
           <MarketRow
             key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}

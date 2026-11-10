@@ -1,4 +1,4 @@
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useCallback, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -37,25 +37,33 @@ function readCollapsed(id: string): boolean {
   }
 }
 
+function writeCollapsed(id: string, collapsed: boolean) {
+  try {
+    if (collapsed) window.localStorage.setItem(COLLAPSED_KEY_PREFIX + id, "1");
+    else window.localStorage.removeItem(COLLAPSED_KEY_PREFIX + id);
+  } catch {
+    // Storage blocked: the section still toggles for this visit.
+  }
+}
+
 /**
  * Open/closed state for one collapsible section, remembered per browser.
  * A convenience only: blocked storage means every section starts open.
+ * `expand` opens the section without toggling, for content that must show.
  */
-export function useCollapsed(id: string): [boolean, () => void] {
+export function useCollapsed(id: string): [boolean, () => void, () => void] {
   const [collapsed, setCollapsed] = useState(() => readCollapsed(id));
-  function toggle() {
+  const toggle = useCallback(() => {
     setCollapsed((current) => {
-      const next = !current;
-      try {
-        if (next) window.localStorage.setItem(COLLAPSED_KEY_PREFIX + id, "1");
-        else window.localStorage.removeItem(COLLAPSED_KEY_PREFIX + id);
-      } catch {
-        // Storage blocked: the section still toggles for this visit.
-      }
-      return next;
+      writeCollapsed(id, !current);
+      return !current;
     });
-  }
-  return [collapsed, toggle];
+  }, [id]);
+  const expand = useCallback(() => {
+    setCollapsed(false);
+    writeCollapsed(id, false);
+  }, [id]);
+  return [collapsed, toggle, expand];
 }
 
 /** Chevron that opens or closes the section named by `label`. */
