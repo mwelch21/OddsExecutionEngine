@@ -37,7 +37,10 @@ export function CreditBurnPanel({ reloads }: { reloads: number }) {
   const top = burn ? Math.max(...burn.by_sport.map((s) => s.credits), 1) : 1;
 
   return (
-    <AdminPanel title={burn ? `Burn, ${monthLabel(burn.starts_at)}` : "Burn this month"}>
+    <AdminPanel
+      title={burn ? `Burn, ${monthLabel(burn.starts_at)}` : "Burn this month"}
+      storageKey="credit-burn"
+    >
       {error && <p className="admin-warn">{error}</p>}
       {!burn && !error && <p className="admin-muted">Loading…</p>}
       {burn && burn.total_calls === 0 && (

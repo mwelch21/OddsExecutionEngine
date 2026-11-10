@@ -35,7 +35,7 @@ import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
 import { WatchPanel } from "./components/WatchPanel";
-import { Button, Panel, Pill } from "./components/primitives";
+import { Button, CollapseToggle, Panel, Pill, useCollapsed } from "./components/primitives";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 
@@ -330,11 +330,18 @@ export function App() {
               </Pill>
               <Pill>
                 <Bell size={14} />
-                {watches.length} watches
+                {watches.length}
+                <span className="topbar-label"> watches</span>
               </Pill>
-              <Button variant="secondary" onClick={() => handleOpenAdmin()}>
+              <Button
+                variant="secondary"
+                className="topbar-admin"
+                aria-label="Admin view"
+                title="Admin view"
+                onClick={() => handleOpenAdmin()}
+              >
                 <ShieldCheck size={15} />
-                Admin view
+                <span className="topbar-label">Admin view</span>
               </Button>
             </>
           )}
@@ -407,16 +414,7 @@ export function App() {
               {selectedEventId && (
                 <WatchPanel watches={watches} onCancel={(id) => void handleCancelWatch(id)} />
               )}
-              <Panel className="execution-note">
-                <CheckCircle2 size={22} />
-                <div>
-                  <strong>Browsing is free</strong>
-                  <p>
-                    Events and boards are read from the database. Only the refresh control
-                    contacts the provider, and it is billed per market per region.
-                  </p>
-                </div>
-              </Panel>
+              <ExecutionNote />
             </aside>
           </div>
         </main>
@@ -484,6 +482,27 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+function ExecutionNote() {
+  const [collapsed, toggle] = useCollapsed("browsing-note");
+  return (
+    <Panel className="execution-note">
+      <CheckCircle2 size={22} />
+      <div>
+        <div className="section-title">
+          <strong>Browsing is free</strong>
+          <CollapseToggle collapsed={collapsed} onToggle={toggle} label="browsing note" />
+        </div>
+        {!collapsed && (
+          <p>
+            Events and boards are read from the database. Only the refresh control
+            contacts the provider, and it is billed per market per region.
+          </p>
+        )}
+      </div>
+    </Panel>
   );
 }
 

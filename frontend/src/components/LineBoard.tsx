@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { ArrowLeft, Bell, Crown } from "lucide-react";
 import type { LineBoard as LineBoardData, LineBoardMarket } from "../lib/api";
 import {
@@ -10,7 +10,7 @@ import {
   sameMarket,
   summarizeFreshness
 } from "../lib/format";
-import { Button, EmptyState, Pill } from "./primitives";
+import { Button, CollapseToggle, EmptyState, Pill, useCollapsed } from "./primitives";
 
 type Props = {
   board: LineBoardData | null;
@@ -24,6 +24,17 @@ type Props = {
 const MARKET_ORDER: Record<string, number> = { moneyline: 0, spread: 1, total: 2 };
 
 export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }: Props) {
+  // Held above the loading boundary: a board reload remounts the groups, and
+  // must not re-expand one the user collapsed for the same pin.
+  const pinKey = pinnedMarket
+    ? `${pinnedMarket.market_type}-${pinnedMarket.selection}-${pinnedMarket.line ?? "na"}`
+    : null;
+  const handledPin = useRef<string | null>(null);
+  const markPinHandled = useCallback(() => {
+    handledPin.current = pinKey;
+  }, [pinKey]);
+  const expandPin = pinKey !== null && handledPin.current !== pinKey;
+
   if (loading) {
     return (
       <section className="line-board">
@@ -72,21 +83,68 @@ export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }:
       ) : (
         <div className="market-stack">
           {groups.map(([marketType, markets]) => (
-            <article className="market-group" key={marketType}>
-              <h3>{marketTypeHeading(marketType)}</h3>
-              {markets.map((market) => (
-                <MarketRow
-                  key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
-                  market={market}
-                  pinned={pinnedMarket ? sameMarket(market, pinnedMarket) : false}
-                  onOpenWatch={onOpenWatch}
-                />
-              ))}
-            </article>
+            <MarketGroup
+              key={marketType}
+              marketType={marketType}
+              markets={markets}
+              pinnedMarket={pinnedMarket}
+              expandPin={expandPin}
+              onPinHandled={markPinHandled}
+              onOpenWatch={onOpenWatch}
+            />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function MarketGroup({
+  marketType,
+  markets,
+  pinnedMarket,
+  expandPin,
+  onPinHandled,
+  onOpenWatch
+}: {
+  marketType: string;
+  markets: LineBoardMarket[];
+  pinnedMarket: Props["pinnedMarket"];
+  /** True until the current pin has opened its group once. */
+  expandPin: boolean;
+  onPinHandled: () => void;
+  onOpenWatch: (market: LineBoardMarket) => void;
+}) {
+  const [collapsed, toggle, expand] = useCollapsed(`market.${marketType}`);
+  const heading = marketTypeHeading(marketType);
+  const isPinned = (market: LineBoardMarket) =>
+    pinnedMarket ? sameMarket(market, pinnedMarket) : false;
+  const holdsPin = markets.some(isPinned);
+
+  // A new pin opens its group once so the row can scroll into view. The user
+  // may collapse it again; that holds until a different pin arrives.
+  useEffect(() => {
+    if (!expandPin || !holdsPin) return;
+    expand();
+    onPinHandled();
+  }, [expandPin, holdsPin, expand, onPinHandled]);
+
+  return (
+    <article className="market-group">
+      <div className="market-group-heading">
+        <h3>{heading}</h3>
+        <CollapseToggle collapsed={collapsed} onToggle={toggle} label={heading} />
+      </div>
+      {!collapsed &&
+        markets.map((market) => (
+          <MarketRow
+            key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
+            market={market}
+            pinned={isPinned(market)}
+            onOpenWatch={onOpenWatch}
+          />
+        ))}
+    </article>
   );
 }
 
