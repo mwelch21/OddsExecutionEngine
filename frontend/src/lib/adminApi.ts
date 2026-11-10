@@ -189,3 +189,46 @@ export type CreditBurn = {
 export async function getCreditBurn(month?: string) {
   return request<CreditBurn>(`${ADMIN}/credit-burn${month ? `?month=${month}` : ""}`);
 }
+
+export type ComponentName = "database" | "notifier" | "provider";
+/** Each component uses only the words its signal can prove. */
+export type ComponentState = "healthy" | "unhealthy" | "connected" | "disconnected" | "unknown";
+
+export type ComponentStatus = {
+  component: ComponentName;
+  state: ComponentState;
+  observed_at: string;
+};
+
+/** The API row is not here: the UI shows it from whether this call got an answer. */
+export async function getComponentStatus(signal?: AbortSignal) {
+  return request<{ components: ComponentStatus[] }>(`${ADMIN}/component-status`, { signal });
+}
+
+/** Facts from stored records, shown as they are; never judged against a threshold. */
+export type Metrics = {
+  last_successful_refresh: {
+    scope: "sport" | "event";
+    sport: string;
+    event_id: string | null;
+    finished_at: string;
+  } | null;
+  /** `null` before any upstream call. `below_floor` drives the attention pill. */
+  credits: {
+    remaining: number | null;
+    used: number | null;
+    floor: number | null;
+    out_of_credits: boolean;
+    below_floor: boolean;
+    observed_at: string;
+  } | null;
+  /** Delivery counts cover deliveries created since this time (the last 24h). */
+  deliveries_since: string;
+  delivery_counts: { status: DeliveryStatus; count: number }[];
+  pending_deliveries: { count: number; oldest_created_at: string | null };
+};
+
+/** A database read: it never reaches upstream. */
+export async function getMetrics(signal?: AbortSignal) {
+  return request<Metrics>(`${ADMIN}/metrics`, { signal });
+}

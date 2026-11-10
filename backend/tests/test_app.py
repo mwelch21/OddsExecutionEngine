@@ -37,6 +37,7 @@ def test_healthcheck_returns_ok(sqlite_database_url: str) -> None:
     assert response.json() == {
         "status": "ok",
         "environment": "development",
+        "database": "healthy",
     }
 
 

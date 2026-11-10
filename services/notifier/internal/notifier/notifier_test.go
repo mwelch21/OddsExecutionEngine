@@ -1101,3 +1101,30 @@ func TestRecordedErrorsNeverCarryThePushAddressOrAnswerBody(t *testing.T) {
 		})
 	}
 }
+
+func TestListenerConnectionIsNamedInPgStatActivity(t *testing.T) {
+	h := newHarness(t)
+	listener, err := store.Listen(h.ctx, h.url, Channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close(context.Background()) //nolint:errcheck // test cleanup
+
+	// The API shows the notifier as Connected by finding this name (#106).
+	var pid uint32
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT pid FROM pg_stat_activity WHERE application_name = $1 AND pid = $2`,
+		store.ListenerApplicationName, listener.PgConn().PID()).Scan(&pid); err != nil {
+		t.Fatalf("listener connection not named %q: %v", store.ListenerApplicationName, err)
+	}
+
+	// Pool connections stay unnamed: only the listener proves the notifier is listening.
+	var poolName string
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid()`).Scan(&poolName); err != nil {
+		t.Fatal(err)
+	}
+	if poolName == store.ListenerApplicationName {
+		t.Fatalf("pool connection is named %q too", poolName)
+	}
+}

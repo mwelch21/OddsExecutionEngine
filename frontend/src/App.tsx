@@ -29,6 +29,8 @@ import {
 } from "./lib/deepLink";
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { AdminView } from "./components/admin/AdminView";
+import { AttentionPill } from "./components/admin/systems/AttentionPill";
+import { invalidateSystemStatus } from "./components/admin/systems/systemStatus";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
@@ -224,7 +226,9 @@ export function App() {
     setRefreshing(true);
     setMessage(`Pulling ${refreshSportKey} from the provider`);
     try {
-      const result = await refreshSport(refreshSportKey);
+      // A refresh, failed or not, can move the provider row and the credits: tell
+      // the status readers as soon as it settles, before the browse reads below.
+      const result = await refreshSport(refreshSportKey).finally(invalidateSystemStatus);
       setMessage(`Refreshed ${result.events_refreshed} events for ${result.sport}`);
       setCooldown(REFRESH_COOLDOWN_SECONDS);
       await loadEvents();
@@ -306,6 +310,12 @@ export function App() {
           </div>
         </div>
         <div className="topbar-status">
+          {/* Operator only. Until auth (#14) every viewer is the operator, as the
+              admin router's hook is a no-op; #14 gates this with it. */}
+          <AttentionPill
+            routeKey={adminTab ?? selectedEventId ?? "home"}
+            onOpen={handleOpenAdmin}
+          />
           {adminTab ? (
             // Lines always goes Home; a notification can cold-launch here with no history.
             <Button variant="secondary" onClick={handleBack}>

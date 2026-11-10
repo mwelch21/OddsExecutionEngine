@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getAutoRefresh, putAutoRefresh, type AutoRefresh, type AutoRefreshSettings } from "../../../lib/adminApi";
+import { invalidateSystemStatus } from "../systems/systemStatus";
 import { ageLabel } from "../../../lib/format";
 import { AdminPanel } from "../AdminPanel";
 
@@ -59,6 +60,8 @@ export function AutoRefreshSection() {
         latest.current = next;
         setStatus(next);
         setError(null);
+        // The floor drives the attention pill's credits rule.
+        invalidateSystemStatus();
         return true;
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "Save failed");

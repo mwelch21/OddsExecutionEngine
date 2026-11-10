@@ -1541,3 +1541,84 @@ select {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Component status (#106): four cards, one per component, above the metrics. */
+.status-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--admin-gap);
+}
+
+.status-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  justify-items: start;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.status-card-problem {
+  border-left: 3px solid var(--warn);
+}
+
+.status-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-card-heading h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--admin-gap);
+  margin: 0;
+}
+
+.metric {
+  display: grid;
+  gap: 4px;
+}
+
+.metric dt {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.metric dd {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.metric strong {
+  font-size: 1.25rem;
+}
+
+.metric-warn {
+  color: var(--warn);
+}
+
+.metric-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attention-pill {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.status-card-heading svg {
+  flex: none;
+}

@@ -196,7 +196,7 @@ docker compose exec postgres psql -U app -d odds_execution
 
 Verified against `backend/app/main.py` route registration on `main`.
 
-Every route below is served under `/api/v1`; `GET /api/health` is the only unversioned route (ADR-018). Additive change keeps `v1`; breaking change adds `/api/v2` beside it. The dev proxy forwards `/api/*` unchanged.
+Every route below is served under `/api/v1`; `GET /api/health` is the only unversioned route (ADR-018); it reports `database` (`healthy`/`unhealthy`, from `SELECT 1`) beside `status`. Additive change keeps `v1`; breaking change adds `/api/v2` beside it. The dev proxy forwards `/api/*` unchanged.
 
 Core:
 
@@ -240,6 +240,8 @@ Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` 
 - `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
 - `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
 - `GET /api/v1/admin/deliveries` (delivery log, newest first; optional `status`, `event_type`, `destination_id`; paged `page` / `page_size`, default 50, max 200; a short subject and device label only, never the push address, keys or raw payload; `last_error` is an allowlisted summary, never the stored text)
+- `GET /api/v1/admin/component-status` (database, notifier, provider, each `{component, state, observed_at}`; database from `SELECT 1`, notifier from its `notifier-listener` connection in `pg_stat_activity`, provider from the newest refresh that reached it; no verdict, nothing stored; the API row is UI-side)
+- `GET /api/v1/admin/metrics` (last successful refresh; credits remaining, used, floor, `out_of_credits`, `below_floor`; delivery counts by status over the last 24h; pending deliveries count and oldest)
 
 Dev only:
 
@@ -298,6 +300,8 @@ See `docs/flows/_index.md` for full flow documentation.
 | AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
 | AdminQueryService | `application/admin_query_service.py` | Admin view reads over a read-only UoW: the refresh log, filtered and paged |
 | CreditQueryService | `application/credit_query_service.py` | Credits tab reads: hourly balance history and monthly burn from `CreditHistoryEngine` |
+| SystemStatusQueryService | `application/system_status_query_service.py` | Component status (via `ComponentStatusEngine`) and operational metrics for the Systems tab; DB reads only |
+| ComponentStatusEngine | `engines/component_status_engine.py` | Maps each signal to its component's state; the credits-below-floor attention rule |
 | QuotaService | `application/quota_service.py` | Records each upstream call's quota observation; writes the quota warning on a floor crossing (ADR-016) |
 | QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation (kind, sport, event, credits spent), derived floor, crossing rule, paused state |
 | CreditHistoryEngine | `engines/credit_history_engine.py` | Hourly last-balance buckets, UTC month windows, burn per sport and call kind |
