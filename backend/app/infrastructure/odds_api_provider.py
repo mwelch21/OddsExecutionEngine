@@ -346,7 +346,7 @@ class TheOddsApiProvider:
         error or timeout) is still a call: it is recorded, then the error is raised."""
         try:
             return self._client.get(url, params=params)
-        except httpx.TransportError as error:
+        except httpx.RequestError as error:
             observation_id = self._record_quota(
                 QuotaReading(
                     kind=kind,
