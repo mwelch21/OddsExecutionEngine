@@ -282,9 +282,14 @@ class TheOddsApiProvider:
     ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", UpstreamCallKind.SPORT, sport)
+        answered_at = datetime.now(UTC)
         unusable = self._unusable_body(response, sport, single=False)
         quota, observation_id = self._read_quota(
-            response, UpstreamCallKind.SPORT, sport, unusable=unusable is not None
+            response,
+            UpstreamCallKind.SPORT,
+            sport,
+            answered_at=answered_at,
+            unusable=unusable is not None,
         )
         _raise_unusable(unusable, observation_id)
         body = _checked_json(response, observation_id)
@@ -305,6 +310,7 @@ class TheOddsApiProvider:
             sport,
             event_id=event_id,
         )
+        answered_at = datetime.now(UTC)
         not_offered = response.status_code == 404
         unusable = None if not_offered else self._unusable_body(response, sport, single=True)
         quota, observation_id = self._read_quota(
@@ -312,6 +318,7 @@ class TheOddsApiProvider:
             UpstreamCallKind.EVENT,
             sport,
             event_id=event_id,
+            answered_at=answered_at,
             unusable=unusable is not None,
         )
         _raise_unusable(unusable, observation_id)
@@ -332,7 +339,13 @@ class TheOddsApiProvider:
         response = self._send(
             ODDS_API_BASE, {"apiKey": self._api_key}, UpstreamCallKind.BALANCE_CHECK, None
         )
-        self._read_quota(response, UpstreamCallKind.BALANCE_CHECK, sport=None, cost=0)
+        self._read_quota(
+            response,
+            UpstreamCallKind.BALANCE_CHECK,
+            sport=None,
+            answered_at=datetime.now(UTC),
+            cost=0,
+        )
         _raise_for_status(response)
 
     def _get(
@@ -407,6 +420,8 @@ class TheOddsApiProvider:
         response: httpx.Response,
         kind: UpstreamCallKind,
         sport: str | None,
+        *,
+        answered_at: datetime,
         event_id: str | None = None,
         cost: int | None = None,
         unusable: bool = False,
@@ -414,6 +429,9 @@ class TheOddsApiProvider:
         """Read the quota off a response. Callers do this before raising on it:
         a rejected call is still a call, and what it cost is exactly what an
         operator needs to know when upstream starts failing.
+
+        `answered_at` is when the response arrived, taken before the body is mapped:
+        a slow-mapping answer must not be stamped after a later call (#121).
 
         Returns the recorded observation's id too: None when nothing was stored."""
         quota = _parse_quota(response.headers)
@@ -431,7 +449,7 @@ class TheOddsApiProvider:
                 outcome=UpstreamCallOutcome.INVALID_RESPONSE
                 if unusable
                 else _call_outcome(response),
-                observed_at=datetime.now(UTC),
+                observed_at=answered_at,
             )
         )
         logger.info(

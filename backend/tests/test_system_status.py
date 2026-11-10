@@ -1,4 +1,5 @@
 import os
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -289,6 +290,50 @@ def test_a_failing_paused_balance_check_turns_the_provider_unhealthy(stack: Stac
         pytest.raises(httpx.ConnectError),
     ):
         provider.check_quota()
+
+    assert _states(stack)["provider"] == "unhealthy"
+
+
+def test_a_slow_mapping_answer_does_not_outrank_a_later_failure(stack: Stack) -> None:
+    """A sport pull answers, then maps slowly; meanwhile an event pull fails. The
+    failure came later, so it stays the newest call (#121)."""
+    provider = stack.provider()
+    event = {
+        "id": "evt-1",
+        "commence_time": "2026-11-09T23:00:00Z",
+        "home_team": "Boston Bruins",
+        "away_team": "New York Rangers",
+        "bookmakers": [],
+    }
+    request = httpx.Request("GET", "https://api.the-odds-api.com/v4/sports")
+
+    def upstream(url: str, **_: Any) -> httpx.Response:
+        if "/events/" in url:
+            return httpx.Response(500, json={}, request=request)
+        return httpx.Response(200, json=[event], request=request)
+
+    mapping = threading.Event()
+    release = threading.Event()
+    map_quotes = provider._map_event_to_quotes
+
+    def slow_map(raw: dict[str, Any]) -> Any:
+        if not release.is_set():
+            mapping.set()
+            assert release.wait(timeout=5), "mapping was never released"
+        return map_quotes(raw)
+
+    with (
+        patch.object(provider._client, "get", side_effect=upstream),
+        patch.object(provider, "_map_event_to_quotes", side_effect=slow_map),
+    ):
+        answer = threading.Thread(target=provider.list_quotes_for_sport, args=("icehockey_nhl",))
+        answer.start()
+        assert mapping.wait(timeout=5), "the answer never reached mapping"
+        with pytest.raises(httpx.HTTPStatusError):
+            provider.list_quotes("evt-1", "icehockey_nhl")
+        release.set()
+        answer.join(timeout=5)
+        assert not answer.is_alive()
 
     assert _states(stack)["provider"] == "unhealthy"
 
