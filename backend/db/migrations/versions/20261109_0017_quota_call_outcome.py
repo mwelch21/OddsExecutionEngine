@@ -2,8 +2,10 @@
 
 `call_outcome` says how the call ended: `answered`, `out_of_credits`,
 `network_error` (no response at all), `server_error` (5xx), `auth_failure`
-(401/403) or `client_error` (any other 4xx). The odds provider's component status
-reads it off the newest upstream call, balance checks included.
+(401/403), `rate_limited` (429 that is not out of credits), `invalid_response`
+(a 2xx body that is not usable) or `client_error` (any other 4xx). The odds
+provider's component status reads it off the newest upstream call, balance
+checks included.
 
 Rows recorded before this revision keep a null outcome: how those calls ended was
 never kept, so nothing is backfilled, and a null outcome reads as Unknown.
@@ -24,7 +26,8 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "ck_quota_observations_call_outcome",
             "call_outcome IS NULL OR call_outcome IN ('answered', 'out_of_credits',"
-            " 'network_error', 'server_error', 'auth_failure', 'client_error')",
+            " 'network_error', 'server_error', 'auth_failure', 'rate_limited',"
+            " 'invalid_response', 'client_error')",
         )
 
 

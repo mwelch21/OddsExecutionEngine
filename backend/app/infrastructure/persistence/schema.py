@@ -253,7 +253,8 @@ quota_observations_table = Table(
     ),
     CheckConstraint(
         "call_outcome IS NULL OR call_outcome IN ('answered', 'out_of_credits',"
-        " 'network_error', 'server_error', 'auth_failure', 'client_error')",
+        " 'network_error', 'server_error', 'auth_failure', 'rate_limited',"
+        " 'invalid_response', 'client_error')",
         name="ck_quota_observations_call_outcome",
     ),
 )

@@ -91,6 +91,8 @@ def _call_outcome(response: httpx.Response) -> UpstreamCallOutcome:
         return UpstreamCallOutcome.ANSWERED
     if response.status_code in (401, 403):
         return UpstreamCallOutcome.AUTH_FAILURE
+    if response.status_code == 429:
+        return UpstreamCallOutcome.RATE_LIMITED
     if 400 <= response.status_code < 500:
         return UpstreamCallOutcome.CLIENT_ERROR
     # 5xx, or anything else that is neither an answer nor a rejection of our request.
@@ -112,6 +114,13 @@ def _checked_json(response: httpx.Response, observation_id: int | None) -> Any:
     except Exception as error:
         link_observation(error, observation_id)
         raise
+
+
+def _raise_unusable(unusable: Exception | None, observation_id: int | None) -> None:
+    """Raise a body that proved unusable, naming the billed call it came from."""
+    if unusable is not None:
+        link_observation(unusable, observation_id)
+        raise unusable
 
 
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
@@ -273,7 +282,11 @@ class TheOddsApiProvider:
     ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", UpstreamCallKind.SPORT, sport)
-        quota, observation_id = self._read_quota(response, UpstreamCallKind.SPORT, sport)
+        unusable = self._unusable_body(response, sport, single=False)
+        quota, observation_id = self._read_quota(
+            response, UpstreamCallKind.SPORT, sport, unusable=unusable is not None
+        )
+        _raise_unusable(unusable, observation_id)
         body = _checked_json(response, observation_id)
         return cast(list[dict[str, Any]], body), quota, observation_id
 
@@ -292,10 +305,17 @@ class TheOddsApiProvider:
             sport,
             event_id=event_id,
         )
+        not_offered = response.status_code == 404
+        unusable = None if not_offered else self._unusable_body(response, sport, single=True)
         quota, observation_id = self._read_quota(
-            response, UpstreamCallKind.EVENT, sport, event_id=event_id
+            response,
+            UpstreamCallKind.EVENT,
+            sport,
+            event_id=event_id,
+            unusable=unusable is not None,
         )
-        if response.status_code == 404:
+        _raise_unusable(unusable, observation_id)
+        if not_offered:
             logger.info(
                 "odds_api.event_not_offered",
                 extra={"sport": sport, "event_id": event_id},
@@ -362,6 +382,26 @@ class TheOddsApiProvider:
             link_observation(error, observation_id)
             raise
 
+    def _unusable_body(
+        self, response: httpx.Response, sport: str, *, single: bool
+    ) -> Exception | None:
+        """Why a 2xx odds body is not a usable answer, or None when it is (#121).
+
+        Decoded and mapped before the call is recorded, so the call's outcome says
+        whether it answered with anything usable. Nothing is cached here; the
+        caller maps the same body again once the call is recorded.
+        """
+        if not response.is_success:
+            return None
+        try:
+            body = response.json()
+            for event in [body] if single else body:
+                self._event_info(event, sport)
+                self._map_event_to_quotes(event)
+        except Exception as error:
+            return error
+        return None
+
     def _read_quota(
         self,
         response: httpx.Response,
@@ -369,6 +409,7 @@ class TheOddsApiProvider:
         sport: str | None,
         event_id: str | None = None,
         cost: int | None = None,
+        unusable: bool = False,
     ) -> tuple[UpstreamQuota, int | None]:
         """Read the quota off a response. Callers do this before raising on it:
         a rejected call is still a call, and what it cost is exactly what an
@@ -387,7 +428,9 @@ class TheOddsApiProvider:
                 credits_used=_parse_credit_header(response.headers.get("x-requests-used")),
                 estimated_cost=self._call_cost if cost is None else cost,
                 out_of_credits=_is_out_of_credits(response),
-                outcome=_call_outcome(response),
+                outcome=UpstreamCallOutcome.INVALID_RESPONSE
+                if unusable
+                else _call_outcome(response),
                 observed_at=datetime.now(UTC),
             )
         )
@@ -413,6 +456,12 @@ class TheOddsApiProvider:
 
     def _cache_event(self, event: dict, sport_key: str) -> EventInfo:
         """Extract and cache event metadata."""
+        info = self._event_info(event, sport_key)
+        self._event_cache[info.id] = info
+        return info
+
+    def _event_info(self, event: dict, sport_key: str) -> EventInfo:
+        """Extract event metadata."""
         sport, league = _parse_sport_league(sport_key)
         participants: list[EventParticipant] = []
         home = event.get("home_team")
@@ -425,7 +474,7 @@ class TheOddsApiProvider:
             participants.append(
                 EventParticipant(name=away, role="team", side="away", sort_order=2)
             )
-        info = EventInfo(
+        return EventInfo(
             id=event["id"],
             sport=sport,
             league=league,
@@ -434,8 +483,6 @@ class TheOddsApiProvider:
                 event["commence_time"].replace("Z", "+00:00")
             ),
         )
-        self._event_cache[info.id] = info
-        return info
 
     def _map_event_to_quotes(self, event: dict) -> list[Quote]:
         """Map a single Odds API event response to domain Quote objects."""

@@ -254,6 +254,8 @@ def test_notifier_is_connected_while_a_listener_connection_is_open(stack: Stack)
         ("network_error", "unhealthy"),
         ("server_error", "unhealthy"),
         ("auth_failure", "unhealthy"),
+        ("rate_limited", "unhealthy"),
+        ("invalid_response", "unhealthy"),
         # Recorded before outcomes were kept: never read as Healthy.
         (None, "unknown"),
     ],

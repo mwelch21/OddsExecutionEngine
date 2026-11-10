@@ -7,12 +7,15 @@ from backend.app.domain.system_status import (
     SystemSignals,
 )
 
-# The provider could not be reached, broke, or would not let us in (#92, #121).
+# The provider could not be reached, broke, would not let us in or serve us, or
+# answered with nothing usable (#92, #121).
 _PROVIDER_FAILURES = frozenset(
     {
         UpstreamCallOutcome.NETWORK_ERROR,
         UpstreamCallOutcome.SERVER_ERROR,
         UpstreamCallOutcome.AUTH_FAILURE,
+        UpstreamCallOutcome.RATE_LIMITED,
+        UpstreamCallOutcome.INVALID_RESPONSE,
     }
 )
 
@@ -64,6 +67,6 @@ class ComponentStatusEngine:
             return ComponentState.UNKNOWN
         if answer.outcome in _PROVIDER_FAILURES:
             return ComponentState.UNHEALTHY
-        # Out of credits is an answer, not a failure; so is any other 4xx, which
-        # rejects our request and proves the provider is up.
+        # Out of credits is an answer, not a failure; so is any other 4xx but 429,
+        # which rejects our request and proves the provider is up.
         return ComponentState.HEALTHY

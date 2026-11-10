@@ -85,6 +85,10 @@ def test_notifier_is_connected_while_its_listener_connection_is_open(
         (_answer(UpstreamCallOutcome.NETWORK_ERROR), ComponentState.UNHEALTHY),
         (_answer(UpstreamCallOutcome.SERVER_ERROR), ComponentState.UNHEALTHY),
         (_answer(UpstreamCallOutcome.AUTH_FAILURE), ComponentState.UNHEALTHY),
+        # A 429 that is not out of credits: the provider will not serve us.
+        (_answer(UpstreamCallOutcome.RATE_LIMITED), ComponentState.UNHEALTHY),
+        # A 2xx whose body is not usable is not an answer.
+        (_answer(UpstreamCallOutcome.INVALID_RESPONSE), ComponentState.UNHEALTHY),
     ],
 )
 def test_provider_state_follows_the_newest_upstream_call(

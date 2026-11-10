@@ -30,14 +30,17 @@ class UpstreamCallKind(StrEnum):
 
 class UpstreamCallOutcome(StrEnum):
     """How an upstream call ended (#121). The odds provider's component status reads
-    the newest one: network error, 5xx and auth failure mean the provider is not
-    available; out of credits and any other 4xx are answers about our request."""
+    the newest one: network error, 5xx, auth failure, rate limiting and a 2xx body
+    that is not usable mean the provider is not available; out of credits and any
+    other 4xx are answers about our request."""
 
     ANSWERED = "answered"
     OUT_OF_CREDITS = "out_of_credits"
     NETWORK_ERROR = "network_error"
     SERVER_ERROR = "server_error"
     AUTH_FAILURE = "auth_failure"
+    RATE_LIMITED = "rate_limited"
+    INVALID_RESPONSE = "invalid_response"
     CLIENT_ERROR = "client_error"
 
 

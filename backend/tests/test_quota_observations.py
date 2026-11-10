@@ -275,6 +275,8 @@ def test_a_malformed_body_still_links_the_billed_call(event_pull: bool) -> None:
 
     assert len(recorder.readings) == 1
     assert linked_observation(raised.value) == 1
+    # A billed call whose body is not usable is recorded as such (#121).
+    assert recorder.readings[0].outcome is UpstreamCallOutcome.INVALID_RESPONSE
 
 
 OUT_OF_CREDITS_BODY = {
@@ -302,7 +304,8 @@ def _call(provider: TheOddsApiProvider, kind: UpstreamCallKind) -> None:
         (401, {"message": "invalid api key"}, UpstreamCallOutcome.AUTH_FAILURE),
         (403, {}, UpstreamCallOutcome.AUTH_FAILURE),
         (422, {}, UpstreamCallOutcome.CLIENT_ERROR),
-        (429, {}, UpstreamCallOutcome.CLIENT_ERROR),
+        (429, {}, UpstreamCallOutcome.RATE_LIMITED),
+        (404, {}, UpstreamCallOutcome.CLIENT_ERROR),
         (500, {}, UpstreamCallOutcome.SERVER_ERROR),
         (503, {}, UpstreamCallOutcome.SERVER_ERROR),
     ],
@@ -364,3 +367,23 @@ def test_a_call_that_gets_no_response_is_still_recorded(
     # No response, so no headers and nothing assumed spent.
     assert (reading.credits_remaining, reading.credits_spent) == (None, 0)
     assert linked_observation(raised.value) == 1
+
+
+@pytest.mark.parametrize("event_pull", [False, True])
+def test_a_body_that_is_not_json_is_an_invalid_response(event_pull: bool) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    response = httpx.Response(
+        200,
+        content=b"<html>gateway</html>",
+        headers=HEADERS,
+        request=httpx.Request("GET", "https://api.the-odds-api.com/v4/sports"),
+    )
+
+    with patch.object(provider._client, "get", return_value=response), pytest.raises(ValueError):
+        _call(provider, UpstreamCallKind.EVENT if event_pull else UpstreamCallKind.SPORT)
+
+    [reading] = recorder.readings
+    assert reading.outcome is UpstreamCallOutcome.INVALID_RESPONSE
+    # Billed all the same: the headers still say what the call cost.
+    assert reading.credits_spent == 3
