@@ -244,10 +244,17 @@ quota_observations_table = Table(
     Column("sport_key", String(length=64), nullable=True),
     Column("event_id", String(length=255), nullable=True),
     Column("credits_spent", Integer, nullable=True),
+    # How the call ended (#121); null on rows from before it was kept, read as Unknown.
+    Column("call_outcome", String(length=16), nullable=True),
     CheckConstraint("source IN ('headers', 'local')", name="ck_quota_observations_source"),
     CheckConstraint(
         "call_kind IS NULL OR call_kind IN ('sport', 'event', 'balance_check')",
         name="ck_quota_observations_call_kind",
+    ),
+    CheckConstraint(
+        "call_outcome IS NULL OR call_outcome IN ('answered', 'out_of_credits',"
+        " 'network_error', 'server_error', 'auth_failure', 'client_error')",
+        name="ck_quota_observations_call_outcome",
     ),
 )
 

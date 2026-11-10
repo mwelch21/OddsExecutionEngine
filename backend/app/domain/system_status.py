@@ -11,11 +11,8 @@ from enum import StrEnum
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.deliveries import DeliveryStatus
-from backend.app.domain.refresh_records import (
-    RefreshErrorCode,
-    RefreshOutcomeStatus,
-    RefreshScope,
-)
+from backend.app.domain.quota import UpstreamCallOutcome
+from backend.app.domain.refresh_records import RefreshScope
 
 
 class ComponentName(StrEnum):
@@ -38,18 +35,20 @@ class ComponentState(StrEnum):
 
 
 class ProviderAnswer(DomainModel):
-    """How the newest refresh that reached the odds provider ended."""
+    """How the newest upstream call ended, balance checks included (#121).
 
-    outcome: RefreshOutcomeStatus
-    error_code: RefreshErrorCode | None
-    finished_at: datetime
+    `outcome` is None on a call recorded before outcomes were kept.
+    """
+
+    outcome: UpstreamCallOutcome | None
+    observed_at: datetime
 
 
 class SystemSignals(DomainModel):
     """The raw signals, read once per request.
 
     `notifier_listeners` counts open connections named `notifier-listener`; None
-    when the count could not be read. `provider_answer` is None before any refresh.
+    when the count could not be read. `provider_answer` is None before any upstream call.
     """
 
     database_reachable: bool

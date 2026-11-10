@@ -20,6 +20,7 @@ from backend.app.domain.quota import (
     OutOfUsageCreditsError,
     QuotaReading,
     UpstreamCallKind,
+    UpstreamCallOutcome,
     link_observation,
 )
 
@@ -80,6 +81,20 @@ def _is_out_of_credits(response: httpx.Response) -> bool:
     except ValueError:
         return False
     return isinstance(body, dict) and body.get("error_code") == "OUT_OF_USAGE_CREDITS"
+
+
+def _call_outcome(response: httpx.Response) -> UpstreamCallOutcome:
+    """How a call that got a response ended (#121)."""
+    if _is_out_of_credits(response):
+        return UpstreamCallOutcome.OUT_OF_CREDITS
+    if response.is_success:
+        return UpstreamCallOutcome.ANSWERED
+    if response.status_code in (401, 403):
+        return UpstreamCallOutcome.AUTH_FAILURE
+    if 400 <= response.status_code < 500:
+        return UpstreamCallOutcome.CLIENT_ERROR
+    # 5xx, or anything else that is neither an answer nor a rejection of our request.
+    return UpstreamCallOutcome.SERVER_ERROR
 
 
 def _raise_for_status(response: httpx.Response) -> None:
@@ -257,7 +272,7 @@ class TheOddsApiProvider:
         self, sport: str
     ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
-        response = self._get(f"{ODDS_API_BASE}/{sport}/odds", sport)
+        response = self._get(f"{ODDS_API_BASE}/{sport}/odds", UpstreamCallKind.SPORT, sport)
         quota, observation_id = self._read_quota(response, UpstreamCallKind.SPORT, sport)
         body = _checked_json(response, observation_id)
         return cast(list[dict[str, Any]], body), quota, observation_id
@@ -271,7 +286,12 @@ class TheOddsApiProvider:
         sport has. A 404 means upstream no longer offers the event (finished or
         pulled), which is an empty answer rather than a failure.
         """
-        response = self._get(f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds", sport)
+        response = self._get(
+            f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds",
+            UpstreamCallKind.EVENT,
+            sport,
+            event_id=event_id,
+        )
         quota, observation_id = self._read_quota(
             response, UpstreamCallKind.EVENT, sport, event_id=event_id
         )
@@ -289,11 +309,19 @@ class TheOddsApiProvider:
 
         How a paused Auto-Refresh learns that credits are back (ADR-016).
         """
-        response = self._client.get(ODDS_API_BASE, params={"apiKey": self._api_key})
+        response = self._send(
+            ODDS_API_BASE, {"apiKey": self._api_key}, UpstreamCallKind.BALANCE_CHECK, None
+        )
         self._read_quota(response, UpstreamCallKind.BALANCE_CHECK, sport=None, cost=0)
         _raise_for_status(response)
 
-    def _get(self, url: str, sport: str) -> httpx.Response:
+    def _get(
+        self,
+        url: str,
+        kind: UpstreamCallKind,
+        sport: str,
+        event_id: str | None = None,
+    ) -> httpx.Response:
         params = {
             "apiKey": self._api_key,
             "regions": self._regions,
@@ -304,7 +332,35 @@ class TheOddsApiProvider:
             "odds_api.fetch",
             extra={"sport": sport, "url": url},
         )
-        return self._client.get(url, params=params)
+        return self._send(url, params, kind, sport, event_id)
+
+    def _send(
+        self,
+        url: str,
+        params: dict[str, str],
+        kind: UpstreamCallKind,
+        sport: str | None,
+        event_id: str | None = None,
+    ) -> httpx.Response:
+        """Make one upstream call. A call that fails before any response (network
+        error or timeout) is still a call: it is recorded, then the error is raised."""
+        try:
+            return self._client.get(url, params=params)
+        except httpx.TransportError as error:
+            observation_id = self._record_quota(
+                QuotaReading(
+                    kind=kind,
+                    sport_key=sport,
+                    event_id=event_id,
+                    # No response, so no headers; nothing is assumed spent.
+                    credits_spent=0,
+                    estimated_cost=0,
+                    outcome=UpstreamCallOutcome.NETWORK_ERROR,
+                    observed_at=datetime.now(UTC),
+                )
+            )
+            link_observation(error, observation_id)
+            raise
 
     def _read_quota(
         self,
@@ -331,6 +387,7 @@ class TheOddsApiProvider:
                 credits_used=_parse_credit_header(response.headers.get("x-requests-used")),
                 estimated_cost=self._call_cost if cost is None else cost,
                 out_of_credits=_is_out_of_credits(response),
+                outcome=_call_outcome(response),
                 observed_at=datetime.now(UTC),
             )
         )

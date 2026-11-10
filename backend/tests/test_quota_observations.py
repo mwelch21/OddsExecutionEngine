@@ -12,6 +12,7 @@ from backend.app.domain.quota import (
     OutOfUsageCreditsError,
     QuotaReading,
     UpstreamCallKind,
+    UpstreamCallOutcome,
     linked_observation,
 )
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
@@ -273,4 +274,93 @@ def test_a_malformed_body_still_links_the_billed_call(event_pull: bool) -> None:
             provider.list_quotes_for_sport("icehockey_nhl")
 
     assert len(recorder.readings) == 1
+    assert linked_observation(raised.value) == 1
+
+
+OUT_OF_CREDITS_BODY = {
+    "message": "Usage quota has been reached",
+    "error_code": "OUT_OF_USAGE_CREDITS",
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "outcome"),
+    [
+        (200, [], UpstreamCallOutcome.ANSWERED),
+        (401, OUT_OF_CREDITS_BODY, UpstreamCallOutcome.OUT_OF_CREDITS),
+        (429, OUT_OF_CREDITS_BODY, UpstreamCallOutcome.OUT_OF_CREDITS),
+        (401, {"message": "invalid api key"}, UpstreamCallOutcome.AUTH_FAILURE),
+        (403, {}, UpstreamCallOutcome.AUTH_FAILURE),
+        (422, {}, UpstreamCallOutcome.CLIENT_ERROR),
+        (429, {}, UpstreamCallOutcome.CLIENT_ERROR),
+        (500, {}, UpstreamCallOutcome.SERVER_ERROR),
+        (503, {}, UpstreamCallOutcome.SERVER_ERROR),
+    ],
+)
+@pytest.mark.parametrize("kind", list(UpstreamCallKind))
+def test_every_call_records_how_it_ended(
+    kind: UpstreamCallKind, status: int, body: Any, outcome: UpstreamCallOutcome
+) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    if kind is UpstreamCallKind.EVENT and status == 200:
+        body = EVENT  # the single-event endpoint answers with one event object
+
+    with patch.object(provider._client, "get", return_value=_response(status, body, HEADERS)):
+        try:
+            if kind is UpstreamCallKind.SPORT:
+                provider.list_quotes_for_sport("icehockey_nhl")
+            elif kind is UpstreamCallKind.EVENT:
+                provider.list_quotes("abc123", "icehockey_nhl")
+            else:
+                provider.check_quota()
+        except (httpx.HTTPStatusError, OutOfUsageCreditsError):
+            pass
+
+    [reading] = recorder.readings
+    assert reading.kind is kind
+    assert reading.outcome is outcome
+
+
+def test_an_event_the_provider_no_longer_offers_is_a_client_error_not_a_failure() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with patch.object(provider._client, "get", return_value=_response(404, {}, HEADERS)):
+        quotes, _ = provider.list_quotes("abc123", "icehockey_nhl")
+
+    assert quotes == []
+    assert recorder.readings[0].outcome is UpstreamCallOutcome.CLIENT_ERROR
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.ReadTimeout("timed out"),
+    ],
+)
+@pytest.mark.parametrize("kind", list(UpstreamCallKind))
+def test_a_call_that_gets_no_response_is_still_recorded(
+    kind: UpstreamCallKind, error: httpx.TransportError
+) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with (
+        patch.object(provider._client, "get", side_effect=error),
+        pytest.raises(httpx.TransportError) as raised,
+    ):
+        if kind is UpstreamCallKind.SPORT:
+            provider.list_quotes_for_sport("icehockey_nhl")
+        elif kind is UpstreamCallKind.EVENT:
+            provider.list_quotes("abc123", "icehockey_nhl")
+        else:
+            provider.check_quota()
+
+    [reading] = recorder.readings
+    assert reading.kind is kind
+    assert reading.outcome is UpstreamCallOutcome.NETWORK_ERROR
+    # No response, so no headers and nothing assumed spent.
+    assert (reading.credits_remaining, reading.credits_spent) == (None, 0)
     assert linked_observation(raised.value) == 1

@@ -1,4 +1,4 @@
-from backend.app.domain.refresh_records import RefreshErrorCode, RefreshOutcomeStatus
+from backend.app.domain.quota import UpstreamCallOutcome
 from backend.app.domain.system_status import (
     ComponentName,
     ComponentState,
@@ -7,12 +7,12 @@ from backend.app.domain.system_status import (
     SystemSignals,
 )
 
-# The provider answered, but not with anything usable, or could not be reached.
+# The provider could not be reached, broke, or would not let us in (#92, #121).
 _PROVIDER_FAILURES = frozenset(
     {
-        RefreshErrorCode.UPSTREAM_HTTP,
-        RefreshErrorCode.UPSTREAM_TIMEOUT,
-        RefreshErrorCode.INVALID_RESPONSE,
+        UpstreamCallOutcome.NETWORK_ERROR,
+        UpstreamCallOutcome.SERVER_ERROR,
+        UpstreamCallOutcome.AUTH_FAILURE,
     }
 )
 
@@ -43,7 +43,7 @@ class ComponentStatusEngine:
             ComponentStatus(
                 component=ComponentName.PROVIDER,
                 state=self._provider(answer),
-                observed_at=now if answer is None else answer.finished_at,
+                observed_at=now if answer is None else answer.observed_at,
             ),
         ]
 
@@ -59,14 +59,11 @@ class ComponentStatusEngine:
         return ComponentState.CONNECTED if listeners > 0 else ComponentState.DISCONNECTED
 
     def _provider(self, answer: ProviderAnswer | None) -> ComponentState:
-        if answer is None:
+        # No call yet, or a call recorded before outcomes were kept: never Healthy.
+        if answer is None or answer.outcome is None:
             return ComponentState.UNKNOWN
-        # Out of credits (`refused`) is an answer, not a failure.
-        if answer.outcome is not RefreshOutcomeStatus.FAILED:
-            return ComponentState.HEALTHY
-        if answer.error_code in _PROVIDER_FAILURES:
+        if answer.outcome in _PROVIDER_FAILURES:
             return ComponentState.UNHEALTHY
-        # INTERNAL: the refresh broke on our side; it says nothing about the provider.
-        # The read already passes such refreshes over; Unknown is the safe answer if
-        # one arrives anyway.
-        return ComponentState.UNKNOWN
+        # Out of credits is an answer, not a failure; so is any other 4xx, which
+        # rejects our request and proves the provider is up.
+        return ComponentState.HEALTHY

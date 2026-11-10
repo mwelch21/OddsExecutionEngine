@@ -45,6 +45,7 @@ class QuotaEngine:
             sport_key=reading.sport_key,
             event_id=reading.event_id,
             credits_spent=cost,
+            outcome=reading.outcome,
         )
 
     def floor(self, configured: int | None, latest: QuotaObservation | None) -> int | None:

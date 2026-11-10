@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from backend.app.domain.refresh_records import RefreshErrorCode, RefreshOutcomeStatus
+from backend.app.domain.quota import UpstreamCallOutcome
 from backend.app.domain.system_status import (
     ComponentName,
     ComponentState,
@@ -31,10 +31,8 @@ def _state(signals: SystemSignals, component: ComponentName) -> ComponentState:
     return next(status.state for status in statuses if status.component is component)
 
 
-def _answer(
-    outcome: RefreshOutcomeStatus, error_code: RefreshErrorCode | None = None
-) -> ProviderAnswer:
-    return ProviderAnswer(outcome=outcome, error_code=error_code, finished_at=ANSWERED_AT)
+def _answer(outcome: UpstreamCallOutcome | None) -> ProviderAnswer:
+    return ProviderAnswer(outcome=outcome, observed_at=ANSWERED_AT)
 
 
 def test_reports_database_notifier_and_provider_in_that_order() -> None:
@@ -75,36 +73,31 @@ def test_notifier_is_connected_while_its_listener_connection_is_open(
 @pytest.mark.parametrize(
     ("answer", "state"),
     [
+        # No upstream call yet.
         (None, ComponentState.UNKNOWN),
-        (_answer(RefreshOutcomeStatus.SUCCEEDED), ComponentState.HEALTHY),
+        # A call recorded before outcomes were kept: never read as Healthy.
+        (_answer(None), ComponentState.UNKNOWN),
+        (_answer(UpstreamCallOutcome.ANSWERED), ComponentState.HEALTHY),
         # Out of credits is an answer, not a failure: it shows under metrics.
-        (
-            _answer(RefreshOutcomeStatus.REFUSED, RefreshErrorCode.OUT_OF_USAGE_CREDITS),
-            ComponentState.HEALTHY,
-        ),
-        (
-            _answer(RefreshOutcomeStatus.FAILED, RefreshErrorCode.UPSTREAM_HTTP),
-            ComponentState.UNHEALTHY,
-        ),
-        (
-            _answer(RefreshOutcomeStatus.FAILED, RefreshErrorCode.UPSTREAM_TIMEOUT),
-            ComponentState.UNHEALTHY,
-        ),
-        (
-            _answer(RefreshOutcomeStatus.FAILED, RefreshErrorCode.INVALID_RESPONSE),
-            ComponentState.UNHEALTHY,
-        ),
-        # A failure on our side says nothing about the provider.
-        (
-            _answer(RefreshOutcomeStatus.FAILED, RefreshErrorCode.INTERNAL),
-            ComponentState.UNKNOWN,
-        ),
+        (_answer(UpstreamCallOutcome.OUT_OF_CREDITS), ComponentState.HEALTHY),
+        # Any other 4xx rejects our request; the provider is up.
+        (_answer(UpstreamCallOutcome.CLIENT_ERROR), ComponentState.HEALTHY),
+        (_answer(UpstreamCallOutcome.NETWORK_ERROR), ComponentState.UNHEALTHY),
+        (_answer(UpstreamCallOutcome.SERVER_ERROR), ComponentState.UNHEALTHY),
+        (_answer(UpstreamCallOutcome.AUTH_FAILURE), ComponentState.UNHEALTHY),
     ],
 )
-def test_provider_state_follows_the_newest_upstream_answer(
+def test_provider_state_follows_the_newest_upstream_call(
     answer: ProviderAnswer | None, state: ComponentState
 ) -> None:
     assert _state(_signals(provider_answer=answer), ComponentName.PROVIDER) is state
+
+
+def test_every_call_outcome_maps_to_a_provider_state() -> None:
+    for outcome in UpstreamCallOutcome:
+        assert _state(
+            _signals(provider_answer=_answer(outcome)), ComponentName.PROVIDER
+        ) is not ComponentState.UNKNOWN
 
 
 def test_unreachable_database_leaves_the_other_signals_unknown() -> None:
@@ -121,7 +114,7 @@ def test_unreachable_database_leaves_the_other_signals_unknown() -> None:
 
 def test_database_and_notifier_are_observed_now_and_the_provider_at_its_answer() -> None:
     statuses = ComponentStatusEngine().statuses(
-        _signals(provider_answer=_answer(RefreshOutcomeStatus.SUCCEEDED))
+        _signals(provider_answer=_answer(UpstreamCallOutcome.ANSWERED))
     )
 
     assert [status.observed_at for status in statuses] == [NOW, NOW, ANSWERED_AT]
