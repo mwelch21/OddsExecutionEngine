@@ -15,8 +15,12 @@ class QuotaEngine:
     def observe(
         self, reading: QuotaReading, previous: QuotaObservation | None
     ) -> QuotaObservation:
-        # A refused call costs nothing; a served one costs markets x regions.
-        cost = 0 if reading.out_of_credits else reading.estimated_cost
+        # The call's own cost header when present. Without it, a refused call costs
+        # nothing and a served one costs markets x regions.
+        if reading.credits_spent is not None:
+            cost = reading.credits_spent
+        else:
+            cost = 0 if reading.out_of_credits else reading.estimated_cost
         if reading.credits_remaining is not None:
             remaining: int | None = 0 if reading.out_of_credits else reading.credits_remaining
             used = reading.credits_used
@@ -40,8 +44,7 @@ class QuotaEngine:
             kind=reading.kind,
             sport_key=reading.sport_key,
             event_id=reading.event_id,
-            # The call's own cost header first; the local count when it is absent.
-            credits_spent=cost if reading.credits_spent is None else reading.credits_spent,
+            credits_spent=cost,
         )
 
     def floor(self, configured: int | None, latest: QuotaObservation | None) -> int | None:

@@ -177,3 +177,11 @@ def test_a_zero_balance_is_out_of_credits_even_without_a_refusal() -> None:
     assert engine.is_out_of_credits(_observation(remaining=0)) is True
     assert engine.is_out_of_credits(_observation(remaining=1)) is False
     assert engine.is_out_of_credits(None) is False
+
+
+def test_without_a_balance_header_the_cost_header_is_what_comes_off_the_balance() -> None:
+    reading = QuotaReading(credits_spent=1, estimated_cost=3, observed_at=T0)
+
+    observation = engine.observe(reading, previous=_observation(remaining=100, used=400))
+
+    assert (observation.remaining, observation.used, observation.credits_spent) == (99, 401, 1)
