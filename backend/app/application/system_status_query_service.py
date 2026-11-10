@@ -64,14 +64,17 @@ class SystemStatusQueryService:
         credits = None
         if latest is not None:
             floor = self._quota_engine.floor(configured_floor, latest)
+            # The Credits tab's rule (#120): refused, or nothing left.
+            out_of_credits = self._quota_engine.is_out_of_credits(latest)
             credits = CreditsMetric(
                 remaining=latest.remaining,
                 used=latest.used,
                 floor=floor,
-                out_of_credits=latest.out_of_credits,
-                below_floor=self._component_status_engine.credits_below_floor(
-                    latest.remaining, floor
-                ),
+                out_of_credits=out_of_credits,
+                # Out of credits is below any floor, known or not, as the Credits
+                # tab's meter shows it.
+                below_floor=out_of_credits
+                or self._component_status_engine.credits_below_floor(latest.remaining, floor),
                 observed_at=latest.observed_at,
             )
         return OperationalMetrics(

@@ -304,6 +304,16 @@ def test_metrics_never_return_a_push_address(stack: Stack) -> None:
     assert "push.example" not in response.text
 
 
+def test_nothing_left_counts_as_out_of_credits_as_the_credits_tab_shows(stack: Stack) -> None:
+    # A local-count row at 0 is not a refusal, but the Credits tab reads it as out.
+    stack.quota(remaining=0, used=500, minutes_ago=1)
+
+    credits = stack.client.get("/api/v1/admin/metrics").json()["credits"]
+
+    assert credits["out_of_credits"] is True
+    assert credits["below_floor"] is True
+
+
 def test_derived_floor_applies_when_none_is_configured(stack: Stack) -> None:
     stack.quota(remaining=40, used=460, minutes_ago=1)
 
