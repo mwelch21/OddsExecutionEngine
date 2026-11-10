@@ -157,9 +157,14 @@ class TheOddsApiProvider:
             live=True,
         )
         quotes: list[Quote] = []
-        for event in raw_events:
-            self._cache_event(event, sport)
-            quotes.extend(self._map_event_to_quotes(event))
+        try:
+            for event in raw_events:
+                self._cache_event(event, sport)
+                quotes.extend(self._map_event_to_quotes(event))
+        except Exception as error:
+            # The call was billed before its body proved unusable.
+            link_observation(error, report.observation_id)
+            raise
         return quotes, report
 
     def list_events_for_sport(self, sport: str) -> list[EventInfo]:
@@ -188,10 +193,15 @@ class TheOddsApiProvider:
             sport, lambda: self._fetch_sport_odds(sport), live=True
         )
         result: dict[str, list[Quote]] = {}
-        for event in raw_events:
-            event_id = event["id"]
-            self._cache_event(event, sport)
-            result[event_id] = self._map_event_to_quotes(event)
+        try:
+            for event in raw_events:
+                event_id = event["id"]
+                self._cache_event(event, sport)
+                result[event_id] = self._map_event_to_quotes(event)
+        except Exception as error:
+            # The call was billed before its body proved unusable.
+            link_observation(error, report.observation_id)
+            raise
         return result, report
 
     def get_event_info(self, event_id: str) -> EventInfo | None:

@@ -251,3 +251,26 @@ def test_coalesced_refreshes_share_one_observation() -> None:
 
     assert len(recorder.readings) == 1
     assert observation_ids == [1, 1]
+
+
+@pytest.mark.parametrize("event_pull", [False, True])
+def test_a_malformed_body_still_links_the_billed_call(event_pull: bool) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    malformed: dict[str, Any] = {"sport_key": "icehockey_nhl"}  # no id, no teams
+
+    with (
+        patch.object(
+            provider._client,
+            "get",
+            return_value=_response(200, malformed if event_pull else [malformed], HEADERS),
+        ),
+        pytest.raises(Exception) as raised,
+    ):
+        if event_pull:
+            provider.list_quotes("abc123", "icehockey_nhl")
+        else:
+            provider.list_quotes_for_sport("icehockey_nhl")
+
+    assert len(recorder.readings) == 1
+    assert linked_observation(raised.value) == 1
