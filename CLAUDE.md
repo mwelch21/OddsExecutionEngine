@@ -240,7 +240,7 @@ Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` 
 - `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
 - `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
 - `GET /api/v1/admin/deliveries` (delivery log, newest first; optional `status`, `event_type`, `destination_id`; paged `page` / `page_size`, default 50, max 200; a short subject and device label only, never the push address, keys or raw payload; `last_error` is an allowlisted summary, never the stored text)
-- `GET /api/v1/admin/component-status` (database, notifier, provider, each `{component, state, observed_at}`; database from `SELECT 1`, notifier from its `notifier-listener` connection in `pg_stat_activity`, provider from the newest refresh that reached it; no verdict, nothing stored; the API row is UI-side)
+- `GET /api/v1/admin/component-status` (database, notifier, provider, each `{component, state, observed_at}`; database from `SELECT 1`, notifier from its `notifier-listener` connection in `pg_stat_activity`, provider from the newest upstream call's outcome (balance checks included; a call stored before outcomes were kept reads `unknown`); no verdict, nothing stored; the API row is UI-side)
 - `GET /api/v1/admin/metrics` (last successful refresh; credits remaining, used, floor, `out_of_credits`, `below_floor`; delivery counts by status over the last 24h; pending deliveries count and oldest)
 
 Dev only:

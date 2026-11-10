@@ -2,17 +2,23 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import insert, update
 
+from backend.app.application.quota_service import QuotaService
 from backend.app.application.system_status_query_service import SystemStatusQueryService
 from backend.app.config import Settings
 from backend.app.engines.component_status_engine import ComponentStatusEngine
 from backend.app.engines.quota_engine import QuotaEngine
+from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
+from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
 from backend.app.infrastructure.persistence.schema import (
     auto_refresh_settings_table,
     deliveries_table,
@@ -91,6 +97,35 @@ class Stack:
             error_code=error_code,
             error=None if error_code is None else "detail",
             events_refreshed=3 if outcome == "succeeded" else 0,
+        )
+
+    def call(self, outcome: str | None, minutes_ago: int, kind: str = "sport") -> None:
+        """One upstream call, as the provider records it; a None outcome is a row
+        from before outcomes were kept."""
+        self._insert(
+            quota_observations_table,
+            remaining=400,
+            used=100,
+            source="headers",
+            out_of_credits=outcome == "out_of_credits",
+            observed_at=NOW - timedelta(minutes=minutes_ago),
+            call_kind=kind,
+            credits_spent=0 if kind == "balance_check" else 3,
+            call_outcome=outcome,
+        )
+
+    def provider(self) -> TheOddsApiProvider:
+        """The real provider recording through the real quota store; tests patch
+        its HTTP client, so nothing reaches upstream."""
+        return TheOddsApiProvider(
+            api_key="test-key",
+            regions=["us"],
+            markets=["h2h", "spreads", "totals"],
+            response_cache=InProcessProviderCache(ttl_seconds=0),
+            quota_recorder=QuotaService(
+                unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(self.session_factory),
+                quota_engine=QuotaEngine(),
+            ),
         )
 
     def quota(self, remaining: int, used: int, minutes_ago: int, out: bool = False) -> None:
@@ -211,32 +246,74 @@ def test_notifier_is_connected_while_a_listener_connection_is_open(stack: Stack)
 
 
 @pytest.mark.parametrize(
-    ("outcome", "error_code", "state"),
+    ("outcome", "state"),
     [
-        ("succeeded", None, "healthy"),
-        ("refused", "OUT_OF_USAGE_CREDITS", "healthy"),
-        ("failed", "UPSTREAM_HTTP", "unhealthy"),
-        ("failed", "UPSTREAM_TIMEOUT", "unhealthy"),
+        ("answered", "healthy"),
+        ("out_of_credits", "healthy"),
+        ("client_error", "healthy"),
+        ("network_error", "unhealthy"),
+        ("server_error", "unhealthy"),
+        ("auth_failure", "unhealthy"),
+        # Recorded before outcomes were kept: never read as Healthy.
+        (None, "unknown"),
     ],
 )
-def test_provider_follows_the_newest_refresh(
-    stack: Stack, outcome: str, error_code: str | None, state: str
+def test_provider_follows_the_newest_upstream_call(
+    stack: Stack, outcome: str | None, state: str
 ) -> None:
-    # An older answer of the opposite kind: only the newest one counts.
-    if outcome == "failed":
-        stack.refresh("succeeded", 10)
-    else:
-        stack.refresh("failed", 10, "UPSTREAM_HTTP")
-    stack.refresh(outcome, 1, error_code)
+    # An older call of the opposite kind: only the newest one counts.
+    stack.call("answered" if state != "healthy" else "server_error", 10)
+    stack.call(outcome, 1)
 
     assert _states(stack)["provider"] == state
 
 
-def test_an_internal_failure_does_not_hide_the_last_provider_answer(stack: Stack) -> None:
-    stack.refresh("failed", 10, "UPSTREAM_TIMEOUT")
-    stack.refresh("failed", 1, "INTERNAL")
+def test_provider_reads_upstream_calls_not_refresh_records(stack: Stack) -> None:
+    stack.call("answered", 10)
+    # A refresh that finished later, after a slow ingestion, does not decide.
+    stack.refresh("failed", 1, "UPSTREAM_HTTP")
+
+    assert _states(stack)["provider"] == "healthy"
+
+
+def test_a_failing_paused_balance_check_turns_the_provider_unhealthy(stack: Stack) -> None:
+    stack.call("out_of_credits", 10)
+    stack.refresh("refused", 10, "OUT_OF_USAGE_CREDITS")
+    assert _states(stack)["provider"] == "healthy"
+
+    provider = stack.provider()
+    with (
+        patch.object(provider._client, "get", side_effect=httpx.ConnectError("refused")),
+        pytest.raises(httpx.ConnectError),
+    ):
+        provider.check_quota()
 
     assert _states(stack)["provider"] == "unhealthy"
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "state"),
+    [
+        (200, [], "healthy"),
+        (401, {"error_code": "OUT_OF_USAGE_CREDITS"}, "healthy"),
+        (401, {"message": "invalid api key"}, "unhealthy"),
+        (500, {}, "unhealthy"),
+    ],
+)
+def test_a_recorded_balance_check_outcome_round_trips_to_provider_state(
+    stack: Stack, status: int, body: Any, state: str
+) -> None:
+    provider = stack.provider()
+    response = httpx.Response(
+        status, json=body, request=httpx.Request("GET", "https://api.the-odds-api.com/v4/sports")
+    )
+    with patch.object(provider._client, "get", return_value=response):
+        try:
+            provider.check_quota()
+        except Exception:
+            pass
+
+    assert _states(stack)["provider"] == state
 
 
 def test_empty_metrics(stack: Stack) -> None:
