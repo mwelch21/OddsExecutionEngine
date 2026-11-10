@@ -10,7 +10,7 @@ import {
   sameMarket,
   summarizeFreshness
 } from "../lib/format";
-import { Button, EmptyState, Pill } from "./primitives";
+import { Button, CollapseToggle, EmptyState, Pill, useCollapsed } from "./primitives";
 
 type Props = {
   board: LineBoardData | null;
@@ -72,21 +72,56 @@ export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }:
       ) : (
         <div className="market-stack">
           {groups.map(([marketType, markets]) => (
-            <article className="market-group" key={marketType}>
-              <h3>{marketTypeHeading(marketType)}</h3>
-              {markets.map((market) => (
-                <MarketRow
-                  key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
-                  market={market}
-                  pinned={pinnedMarket ? sameMarket(market, pinnedMarket) : false}
-                  onOpenWatch={onOpenWatch}
-                />
-              ))}
-            </article>
+            <MarketGroup
+              key={marketType}
+              marketType={marketType}
+              markets={markets}
+              pinnedMarket={pinnedMarket}
+              onOpenWatch={onOpenWatch}
+            />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function MarketGroup({
+  marketType,
+  markets,
+  pinnedMarket,
+  onOpenWatch
+}: {
+  marketType: string;
+  markets: LineBoardMarket[];
+  pinnedMarket: Props["pinnedMarket"];
+  onOpenWatch: (market: LineBoardMarket) => void;
+}) {
+  const [collapsed, toggle] = useCollapsed(`market.${marketType}`);
+  const heading = marketTypeHeading(marketType);
+  const isPinned = (market: LineBoardMarket) =>
+    pinnedMarket ? sameMarket(market, pinnedMarket) : false;
+  // A pinned opportunity's group always shows, so its row can scroll into view.
+  const holdsPin = markets.some(isPinned);
+  const open = !collapsed || holdsPin;
+  return (
+    <article className="market-group">
+      <div className="market-group-heading">
+        <h3>{heading}</h3>
+        {!holdsPin && (
+          <CollapseToggle collapsed={collapsed} onToggle={toggle} label={heading} />
+        )}
+      </div>
+      {open &&
+        markets.map((market) => (
+          <MarketRow
+            key={`${market.market_type}-${market.selection}-${market.line ?? "na"}`}
+            market={market}
+            pinned={isPinned(market)}
+            onOpenWatch={onOpenWatch}
+          />
+        ))}
+    </article>
   );
 }
 

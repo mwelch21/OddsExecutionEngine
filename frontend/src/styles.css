@@ -651,6 +651,56 @@ select {
   flex: 0 0 auto;
 }
 
+.execution-note > div {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Collapsible sections ------------------------------------------------- */
+
+.section-title,
+.section-actions,
+.market-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.execution-note .section-title,
+.market-group-heading {
+  justify-content: space-between;
+}
+
+.section-title {
+  margin-top: 10px;
+}
+
+.section-title h2 {
+  margin: 0;
+}
+
+.execution-note .section-title {
+  margin-top: 0;
+}
+
+.market-group-heading {
+  min-height: 32px;
+}
+
+.collapse-toggle {
+  flex: 0 0 auto;
+  width: 32px;
+  min-height: 32px;
+}
+
+.collapse-toggle svg {
+  transition: transform 140ms ease;
+}
+
+.collapse-toggle.collapsed svg {
+  transform: rotate(-90deg);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -765,6 +815,30 @@ select {
   .panel-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar {
+    gap: 14px;
+    padding: 12px 16px;
+  }
+
+  /* Status pills and the Admin view button share one row on a phone. */
+  .topbar-status {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .topbar-status > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .topbar-admin {
+    min-height: 30px;
+    margin-left: auto;
+    padding: 0 10px;
+    font-size: 0.85rem;
   }
 
   .workspace {
