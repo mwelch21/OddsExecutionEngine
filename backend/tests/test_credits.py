@@ -291,7 +291,7 @@ def test_burn_totals_a_seeded_month_per_sport_and_kind(
 
 
 def test_burn_month_must_be_yyyy_mm(client: TestClient) -> None:
-    for month in ("2026-13", "2026-1", "october"):
+    for month in ("2026-13", "2026-1", "october", "0000-01", "9999-12"):
         assert client.get("/api/v1/admin/credit-burn", params={"month": month}).status_code == 422
 
 

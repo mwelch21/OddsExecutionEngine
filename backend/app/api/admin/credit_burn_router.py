@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.api.admin.credit_burn_schemas import CreditBurnResponse
 from backend.app.application.credit_query_service import CreditQueryService
+from backend.app.engines.credit_history_engine import InvalidMonthError
 
 MONTH_QUERY = Query(
     default=None,
@@ -15,6 +16,11 @@ def create_credit_burn_router(service: CreditQueryService) -> APIRouter:
 
     @router.get("/credit-burn", response_model=CreditBurnResponse)
     def get_credit_burn(month: str | None = MONTH_QUERY) -> CreditBurnResponse:
-        return CreditBurnResponse.from_domain(service.credit_burn(month))
+        try:
+            burn = service.credit_burn(month)
+        except InvalidMonthError as err:
+            # The pattern admits months a calendar cannot hold (0000-01, 9999-12).
+            raise HTTPException(status_code=422, detail=str(err)) from err
+        return CreditBurnResponse.from_domain(burn)
 
     return router

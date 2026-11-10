@@ -50,8 +50,12 @@ class CreditHistoryEngine:
         if match is None:
             raise InvalidMonthError(month)
         year, number = int(match.group(1)), int(match.group(2))
-        start = datetime(year, number, 1, tzinfo=UTC)
-        end = datetime(year + number // 12, number % 12 + 1, 1, tzinfo=UTC)
+        try:
+            start = datetime(year, number, 1, tzinfo=UTC)
+            end = datetime(year + number // 12, number % 12 + 1, 1, tzinfo=UTC)
+        except ValueError as error:
+            # Year 0000, or a 9999-12 whose end falls past the last datetime.
+            raise InvalidMonthError(month) from error
         return start, end
 
     def month_of(self, now: datetime) -> str:

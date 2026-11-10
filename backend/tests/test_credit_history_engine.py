@@ -35,7 +35,7 @@ def test_december_ends_at_the_next_new_year() -> None:
     )
 
 
-@pytest.mark.parametrize("month", ["2026-00", "2026-13", "26-01", ""])
+@pytest.mark.parametrize("month", ["2026-00", "2026-13", "26-01", "", "0000-01", "9999-12"])
 def test_a_month_must_be_yyyy_mm(month: str) -> None:
     with pytest.raises(InvalidMonthError):
         engine.month_window(month)
