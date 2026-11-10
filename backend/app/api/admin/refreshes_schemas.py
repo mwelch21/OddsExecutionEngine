@@ -25,6 +25,9 @@ class RefreshRecordResponse(BaseModel):
     error_code: RefreshErrorCode | None
     error: str | None
     events_refreshed: int
+    # What the upstream call it used spent. Null when no call is linked: it made
+    # none, or the call was not recorded. Coalesced refreshes each show their shared call's cost.
+    credits_spent: int | None
 
     @classmethod
     def from_domain(cls, record: RefreshRecord) -> "RefreshRecordResponse":
@@ -39,6 +42,7 @@ class RefreshRecordResponse(BaseModel):
             error_code=record.error_code,
             error=record.error,
             events_refreshed=record.events_refreshed,
+            credits_spent=record.credits_spent,
         )
 
 

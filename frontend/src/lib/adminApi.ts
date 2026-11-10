@@ -33,6 +33,8 @@ export type AutoRefresh = {
   last_outcome: AutoRefreshOutcome | null;
   /** Out of credits: still on, but nothing paid is pulled until credits return. */
   paused: boolean;
+  /** The newest upstream call was refused for credits. False before any call. */
+  out_of_credits: boolean;
   quota: Quota | null;
 };
 
@@ -75,6 +77,12 @@ export type RefreshRecord = {
   error_code: RefreshErrorCode | null;
   error: string | null;
   events_refreshed: number;
+  /**
+   * What the upstream call it used spent. `null` when no call is linked: it made
+   * none, or the call was not recorded. Refreshes
+   * coalesced onto one call each show that call's cost; it was billed once.
+   */
+  credits_spent: number | null;
 };
 
 export type RefreshPage = {
@@ -150,4 +158,34 @@ export async function getDeliveries(query: DeliveryQuery = {}) {
   }
   const search = params.toString();
   return request<DeliveryPage>(`${ADMIN}/deliveries${search ? `?${search}` : ""}`);
+}
+
+/** The last remaining balance observed in one UTC hour. */
+export type QuotaHistoryPoint = { hour: string; remaining: number };
+
+/** Hourly points, oldest first; an hour with no upstream call has no point. */
+export type QuotaHistory = { days: number; points: QuotaHistoryPoint[] };
+
+/** The balance over the last `days` days (1-30). A stored read; spends nothing. */
+export async function getQuotaHistory(days = 30) {
+  return request<QuotaHistory>(`${ADMIN}/quota-history?days=${days}`);
+}
+
+export type UpstreamCallKind = "sport" | "event" | "balance_check";
+
+/** One UTC month of spend, counted per upstream call, most credits first. */
+export type CreditBurn = {
+  month: string;
+  starts_at: string;
+  ends_at: string;
+  total_credits: number;
+  total_calls: number;
+  by_sport: { sport: string; credits: number; calls: number }[];
+  /** Balance checks name no sport, so they show here only. */
+  by_kind: { kind: UpstreamCallKind; credits: number; calls: number }[];
+};
+
+/** Credits spent in `month` (`YYYY-MM`, UTC); the current month when omitted. */
+export async function getCreditBurn(month?: string) {
+  return request<CreditBurn>(`${ADMIN}/credit-burn${month ? `?month=${month}` : ""}`);
 }

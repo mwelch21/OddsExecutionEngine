@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 from backend.app.domain.refresh_records import RefreshRecord, RefreshRecordFilter
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.refresh_records import refresh_record_from_row
-from backend.app.infrastructure.persistence.schema import refresh_records_table
+from backend.app.infrastructure.persistence.schema import (
+    quota_observations_table,
+    refresh_records_table,
+)
 
 SelectT = TypeVar("SelectT", bound=Select[tuple[Any, ...]])
 
@@ -48,7 +51,12 @@ class SqlAlchemyAdminReadUnitOfWork:
         self, refresh_filter: RefreshRecordFilter, limit: int, offset: int
     ) -> list[RefreshRecord]:
         query = (
-            select(refresh_records_table)
+            # Cost is read through the linked upstream call, never stored twice (#104).
+            select(refresh_records_table, quota_observations_table.c.credits_spent)
+            .outerjoin(
+                quota_observations_table,
+                refresh_records_table.c.quota_observation_id == quota_observations_table.c.id,
+            )
             # Newest first; id breaks ties so paging never repeats or skips a row.
             .order_by(
                 refresh_records_table.c.started_at.desc(),

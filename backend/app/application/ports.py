@@ -4,6 +4,7 @@ from typing import Protocol, Self
 
 from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
 from backend.app.domain.base import DomainModel
+from backend.app.domain.credits import BurnRow, RemainingReading
 from backend.app.domain.deliveries import DeliveryFilter, StoredDelivery
 from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
 from backend.app.domain.events import WorkflowEvent
@@ -64,7 +65,9 @@ class WorkflowEventPublisher(Protocol):
 
 
 class QuoteIngestionProvider(Protocol):
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]: ...
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]: ...
 
     def list_quotes_for_sport(
         self, sport: str
@@ -80,9 +83,13 @@ class QuoteIngestionProvider(Protocol):
 
 
 class QuotaRecorder(Protocol):
-    """Receives the quota of every upstream call, served or refused (ADR-016)."""
+    """Receives the quota of every upstream call, served or refused (ADR-016).
 
-    def record(self, reading: QuotaReading) -> None: ...
+    Returns the recorded observation's id, so the refresh that made the call can
+    link to it; None when nothing was stored.
+    """
+
+    def record(self, reading: QuotaReading) -> int | None: ...
 
 
 class QuotaUnitOfWork(Protocol):
@@ -101,7 +108,7 @@ class QuotaUnitOfWork(Protocol):
 
     def latest_observation(self) -> QuotaObservation | None: ...
 
-    def add_observation(self, observation: QuotaObservation) -> None: ...
+    def add_observation(self, observation: QuotaObservation) -> int: ...
 
     def configured_floor(self) -> int | None: ...
 
@@ -383,3 +390,28 @@ class AdminReadUnitOfWork(Protocol):
 
 class AdminReadUnitOfWorkFactory(Protocol):
     def __call__(self) -> AdminReadUnitOfWork: ...
+
+
+class CreditReadUnitOfWork(Protocol):
+    """Read-only access to quota observations for the Credits tab (#104)."""
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def list_remaining(self, since: datetime) -> list[RemainingReading]:
+        """Observations from `since` on that know the balance, in observation order."""
+        ...
+
+    def sum_burn(self, starts_at: datetime, ends_at: datetime) -> list[BurnRow]:
+        """Calls and credits per (sport, kind) observed in [starts_at, ends_at)."""
+        ...
+
+
+class CreditReadUnitOfWorkFactory(Protocol):
+    def __call__(self) -> CreditReadUnitOfWork: ...

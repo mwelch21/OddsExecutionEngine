@@ -32,9 +32,12 @@ class RecordingQuoteIngestionProvider:
         self._known_event = known_event
         self.list_quotes_calls: list[tuple[str, str]] = []
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
         self.list_quotes_calls.append((event_id, sport))
-        return list(self._quotes)
+        report = ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
+        return list(self._quotes), report
 
     def list_quotes_for_sport(
         self, sport: str

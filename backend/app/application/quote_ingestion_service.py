@@ -17,11 +17,13 @@ from backend.app.domain.events import (
 )
 from backend.app.domain.models import (
     EventSport,
+    ProviderFetchReport,
     Quote,
     QuoteRefreshSummary,
     SportRefreshResult,
     SupportedSport,
 )
+from backend.app.domain.quota import link_observation, linked_observation
 from backend.app.domain.refresh_records import (
     RefreshErrorClassifier,
     RefreshRecord,
@@ -107,9 +109,12 @@ class QuoteIngestionService:
         started_at = self._clock()
         persisted: list[str] = []
         try:
-            summary = self._ingest_event(
-                event_id, self._quote_provider.list_quotes(event_id, sport_key), persisted
-            )
+            quotes, fetch_report = self._quote_provider.list_quotes(event_id, sport_key)
+            try:
+                summary = self._ingest_event(event_id, quotes, persisted)
+            except Exception as error:
+                link_observation(error, fetch_report.observation_id)
+                raise
         except Exception as error:
             self._record_refresh(
                 RefreshScope.EVENT,
@@ -118,11 +123,18 @@ class QuoteIngestionService:
                 trigger,
                 started_at,
                 len(persisted),
+                linked_observation(error),
                 error,
             )
             raise
         self._record_refresh(
-            RefreshScope.EVENT, sport_key, event_id, trigger, started_at, len(persisted)
+            RefreshScope.EVENT,
+            sport_key,
+            event_id,
+            trigger,
+            started_at,
+            len(persisted),
+            fetch_report.observation_id,
         )
         return summary
 
@@ -242,11 +254,24 @@ class QuoteIngestionService:
         except Exception as error:
             # Events committed before the failure stay stored, and are counted.
             self._record_refresh(
-                RefreshScope.SPORT, sport, None, trigger, started_at, len(persisted), error
+                RefreshScope.SPORT,
+                sport,
+                None,
+                trigger,
+                started_at,
+                len(persisted),
+                linked_observation(error),
+                error,
             )
             raise
         self._record_refresh(
-            RefreshScope.SPORT, sport, None, trigger, started_at, len(persisted)
+            RefreshScope.SPORT,
+            sport,
+            None,
+            trigger,
+            started_at,
+            len(persisted),
+            result.fetch_report.observation_id,
         )
         return result
 
@@ -255,6 +280,21 @@ class QuoteIngestionService:
         started_at = perf_counter()
 
         all_quotes, fetch_report = self._quote_provider.list_quotes_for_sport(sport)
+        try:
+            return self._ingest_sport(sport, all_quotes, fetch_report, persisted, started_at)
+        except Exception as error:
+            # The call was made; a failure after it still links the refresh to it.
+            link_observation(error, fetch_report.observation_id)
+            raise
+
+    def _ingest_sport(
+        self,
+        sport: str,
+        all_quotes: dict[str, list[Quote]],
+        fetch_report: ProviderFetchReport,
+        persisted: list[str],
+        started_at: float,
+    ) -> SportRefreshResult:
         summaries: list[QuoteRefreshSummary] = []
 
         for event_id, quotes in all_quotes.items():
@@ -314,6 +354,7 @@ class QuoteIngestionService:
         trigger: RefreshTrigger,
         started_at: datetime,
         events_refreshed: int,
+        observation_id: int | None,
         error: Exception | None = None,
     ) -> None:
         """Append the refresh record once ingestion has settled (#96).
@@ -337,6 +378,7 @@ class QuoteIngestionService:
                     error_code=result.error_code,
                     error=result.error,
                     events_refreshed=events_refreshed,
+                    quota_observation_id=observation_id,
                 )
             )
         except Exception:

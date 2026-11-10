@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.public_events import PublicEvent
-from backend.app.domain.quota import QuotaObservation, QuotaSource
+from backend.app.domain.quota import QuotaObservation, QuotaSource, UpstreamCallKind
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import (
     auto_refresh_settings_table,
@@ -78,18 +78,30 @@ class SqlAlchemyQuotaUnitOfWork:
             observed_at=row["observed_at"]
             if row["observed_at"].tzinfo
             else row["observed_at"].replace(tzinfo=UTC),
+            kind=UpstreamCallKind(row["call_kind"]) if row["call_kind"] else None,
+            sport_key=row["sport_key"],
+            event_id=row["event_id"],
+            credits_spent=row["credits_spent"],
         )
 
-    def add_observation(self, observation: QuotaObservation) -> None:
-        self._require_session().execute(
-            insert(quota_observations_table).values(
+    def add_observation(self, observation: QuotaObservation) -> int:
+        """Insert the observation; its id is how a refresh links to the call."""
+        result = self._require_session().execute(
+            insert(quota_observations_table)
+            .values(
                 remaining=observation.remaining,
                 used=observation.used,
                 source=observation.source.value,
                 out_of_credits=observation.out_of_credits,
                 observed_at=observation.observed_at,
+                call_kind=observation.kind.value if observation.kind else None,
+                sport_key=observation.sport_key,
+                event_id=observation.event_id,
+                credits_spent=observation.credits_spent,
             )
+            .returning(quota_observations_table.c.id)
         )
+        return int(result.scalar_one())
 
     def configured_floor(self) -> int | None:
         return (

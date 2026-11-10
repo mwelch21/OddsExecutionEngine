@@ -36,6 +36,7 @@ class SqlAlchemyRefreshRecorder:
                     error_code=record.error_code.value if record.error_code else None,
                     error=record.error,
                     events_refreshed=record.events_refreshed,
+                    quota_observation_id=record.quota_observation_id,
                 )
             )
             session.commit()
@@ -53,6 +54,9 @@ def refresh_record_from_row(row: RowMapping) -> RefreshRecord:
         error_code=RefreshErrorCode(row["error_code"]) if row["error_code"] else None,
         error=row["error"],
         events_refreshed=row["events_refreshed"],
+        quota_observation_id=row["quota_observation_id"],
+        # Present only when the reader joined the linked call (the refresh log does).
+        credits_spent=row.get("credits_spent"),
     )
 
 

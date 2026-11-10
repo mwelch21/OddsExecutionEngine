@@ -43,3 +43,10 @@ No minimum-age floor ships, not even disabled by default.
 - `list_quotes_for_sport` returns `(quotes, ProviderFetchReport)`; `refresh_sport` returns a `SportRefreshResult`. The router no longer assembles the sport/count wrapper itself.
 - `SportRefreshResponse` reports `upstream_contacted`, `data_age_seconds`, `credits_spent` and `credits_remaining`. Credit nulls mean "not reported", never zero.
 - The cache is per-process. When #30 moves it to Redis, whether coalescing becomes cross-process is a decision for that ticket.
+
+## Amendment (#104): the cache carries which call loaded a payload
+
+- The cache is generic over what it stores. The provider stores `(payload, observation_id)`: the payload plus the id of the quota observation of the call that loaded it.
+- Callers coalesced onto one load get that id in `ProviderFetchReport.observation_id`, so their refresh records link to the one upstream call they shared. The credit figures in `quota` still go only to the caller that ran the loader, as above.
+- A failed load caches nothing, as before. Its observation id rides on the raised error, so the failed refresh still links to the call it paid for.
+- `list_quotes` (per event) now returns `(quotes, ProviderFetchReport)`, like `list_quotes_for_sport`.

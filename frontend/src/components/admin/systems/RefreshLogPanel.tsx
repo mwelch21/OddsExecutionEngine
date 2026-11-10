@@ -157,6 +157,7 @@ function RefreshRow({ record }: { record: RefreshRecord }) {
           {record.events_refreshed} event{record.events_refreshed === 1 ? "" : "s"}
         </span>
         <span>{durationLabel(record)}</span>
+        <span title="Credits the upstream call it used spent">{costLabel(record)}</span>
       </div>
       {bad && (record.error_code || record.error) && (
         <p className="admin-warn refresh-log-error">
@@ -165,6 +166,15 @@ function RefreshRow({ record }: { record: RefreshRecord }) {
       )}
     </li>
   );
+}
+
+/**
+ * Cost through the linked upstream call. Null is "not known", never zero: the
+ * refresh failed before any call, or its call was not recorded.
+ */
+function costLabel(record: RefreshRecord) {
+  if (record.credits_spent === null) return "cost unknown";
+  return `${record.credits_spent} credit${record.credits_spent === 1 ? "" : "s"}`;
 }
 
 function durationLabel(record: RefreshRecord) {

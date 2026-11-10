@@ -1,6 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
-from backend.app.domain.quota import QuotaObservation, QuotaReading, QuotaSource
+from backend.app.domain.quota import (
+    QuotaObservation,
+    QuotaReading,
+    QuotaSource,
+    UpstreamCallKind,
+)
 from backend.app.engines.quota_engine import QuotaEngine
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -122,3 +127,61 @@ def test_out_of_credits_or_zero_remaining_pauses() -> None:
     assert engine.is_paused(_observation(0)) is True
     assert engine.is_paused(_observation(1)) is False
     assert engine.is_paused(None) is False
+
+
+# --- what the call was and what it spent (#104) ---
+
+
+def test_an_observation_keeps_the_calls_kind_sport_event_and_cost_header() -> None:
+    reading = QuotaReading(
+        kind=UpstreamCallKind.EVENT,
+        sport_key="icehockey_nhl",
+        event_id="abc123",
+        credits_remaining=497,
+        credits_used=3,
+        credits_spent=2,
+        estimated_cost=3,
+        observed_at=T0,
+    )
+
+    observation = engine.observe(reading, previous=None)
+
+    assert observation.kind is UpstreamCallKind.EVENT
+    assert (observation.sport_key, observation.event_id) == ("icehockey_nhl", "abc123")
+    assert observation.credits_spent == 2
+
+
+def test_without_a_cost_header_the_spend_is_the_local_count() -> None:
+    reading = QuotaReading(kind=UpstreamCallKind.SPORT, estimated_cost=3, observed_at=T0)
+
+    assert engine.observe(reading, previous=None).credits_spent == 3
+
+
+def test_a_refused_call_spends_nothing() -> None:
+    reading = QuotaReading(out_of_credits=True, estimated_cost=3, observed_at=T0)
+
+    assert engine.observe(reading, previous=None).credits_spent == 0
+
+
+def test_a_balance_check_spends_nothing() -> None:
+    reading = QuotaReading(
+        kind=UpstreamCallKind.BALANCE_CHECK, credits_remaining=40, estimated_cost=0, observed_at=T0
+    )
+
+    observation = engine.observe(reading, previous=None)
+
+    assert (observation.kind, observation.credits_spent) == (UpstreamCallKind.BALANCE_CHECK, 0)
+
+
+def test_a_zero_balance_is_out_of_credits_even_without_a_refusal() -> None:
+    assert engine.is_out_of_credits(_observation(remaining=0)) is True
+    assert engine.is_out_of_credits(_observation(remaining=1)) is False
+    assert engine.is_out_of_credits(None) is False
+
+
+def test_without_a_balance_header_the_cost_header_is_what_comes_off_the_balance() -> None:
+    reading = QuotaReading(credits_spent=1, estimated_cost=3, observed_at=T0)
+
+    observation = engine.observe(reading, previous=_observation(remaining=100, used=400))
+
+    assert (observation.remaining, observation.used, observation.credits_spent) == (99, 401, 1)

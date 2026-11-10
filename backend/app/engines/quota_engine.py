@@ -15,27 +15,36 @@ class QuotaEngine:
     def observe(
         self, reading: QuotaReading, previous: QuotaObservation | None
     ) -> QuotaObservation:
+        # The call's own cost header when present. Without it, a refused call costs
+        # nothing and a served one costs markets x regions.
+        if reading.credits_spent is not None:
+            cost = reading.credits_spent
+        else:
+            cost = 0 if reading.out_of_credits else reading.estimated_cost
         if reading.credits_remaining is not None:
-            return QuotaObservation(
-                remaining=0 if reading.out_of_credits else reading.credits_remaining,
-                used=reading.credits_used,
-                source=QuotaSource.HEADERS,
-                out_of_credits=reading.out_of_credits,
-                observed_at=reading.observed_at,
+            remaining: int | None = 0 if reading.out_of_credits else reading.credits_remaining
+            used = reading.credits_used
+            source = QuotaSource.HEADERS
+        else:
+            remaining = None if previous is None else previous.remaining
+            used = None if previous is None else previous.used
+            remaining = (
+                0
+                if reading.out_of_credits
+                else (None if remaining is None else max(remaining - cost, 0))
             )
-
-        # A refused call costs nothing; a served one costs markets x regions.
-        cost = 0 if reading.out_of_credits else reading.estimated_cost
-        remaining = None if previous is None else previous.remaining
-        used = None if previous is None else previous.used
+            used = None if used is None else used + cost
+            source = QuotaSource.LOCAL
         return QuotaObservation(
-            remaining=0
-            if reading.out_of_credits
-            else (None if remaining is None else max(remaining - cost, 0)),
-            used=None if used is None else used + cost,
-            source=QuotaSource.LOCAL,
+            remaining=remaining,
+            used=used,
+            source=source,
             out_of_credits=reading.out_of_credits,
             observed_at=reading.observed_at,
+            kind=reading.kind,
+            sport_key=reading.sport_key,
+            event_id=reading.event_id,
+            credits_spent=cost,
         )
 
     def floor(self, configured: int | None, latest: QuotaObservation | None) -> int | None:
@@ -57,5 +66,11 @@ class QuotaEngine:
             return True
         return previous.remaining >= floor
 
-    def is_paused(self, latest: QuotaObservation | None) -> bool:
+    def is_out_of_credits(self, latest: QuotaObservation | None) -> bool:
+        """A refusal, or a zero balance: a free balance check answers 200 with 0
+        remaining, so the refusal flag alone would clear while credits are still gone."""
         return latest is not None and (latest.out_of_credits or latest.remaining == 0)
+
+    def is_paused(self, latest: QuotaObservation | None) -> bool:
+        # Out of credits pauses Auto-Refresh (ADR-016); the two are one rule.
+        return self.is_out_of_credits(latest)

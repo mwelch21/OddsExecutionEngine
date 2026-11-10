@@ -16,7 +16,12 @@ from backend.app.domain.models import (
     SupportedSport,
     UpstreamQuota,
 )
-from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
+from backend.app.domain.quota import (
+    OutOfUsageCreditsError,
+    QuotaReading,
+    UpstreamCallKind,
+    link_observation,
+)
 
 SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "icehockey_nhl": ("ice_hockey", "NHL"),
@@ -83,6 +88,17 @@ def _raise_for_status(response: httpx.Response) -> None:
     response.raise_for_status()
 
 
+def _checked_json(response: httpx.Response, observation_id: int | None) -> Any:
+    """The body of a successful response. A raise names the call it followed, so the
+    refresh that paid for the call still links to it."""
+    try:
+        _raise_for_status(response)
+        return response.json()
+    except Exception as error:
+        link_observation(error, observation_id)
+        raise
+
+
 def _parse_sport_league(sport_key: str) -> tuple[str, str]:
     """Split Odds API sport key into (sport, league)."""
     if sport_key in SPORT_LEAGUE_MAP:
@@ -125,7 +141,9 @@ class TheOddsApiProvider:
         # Cache: event_id → EventInfo, populated on fetch
         self._event_cache: dict[str, EventInfo] = {}
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
         """Fetch one event's quotes in a single call to the single-event endpoint.
 
         This is a deliberate refresh, so it pulls live; the cache only coalesces
@@ -133,16 +151,21 @@ class TheOddsApiProvider:
         scanning sport feeds to find the event is what made one event cost more
         than a whole sport.
         """
-        raw_events, _ = self._fetch_cached(
+        raw_events, report = self._fetch_cached(
             f"event:{sport}:{event_id}",
             lambda: self._fetch_event_odds(sport, event_id),
             live=True,
         )
         quotes: list[Quote] = []
-        for event in raw_events:
-            self._cache_event(event, sport)
-            quotes.extend(self._map_event_to_quotes(event))
-        return quotes
+        try:
+            for event in raw_events:
+                self._cache_event(event, sport)
+                quotes.extend(self._map_event_to_quotes(event))
+        except Exception as error:
+            # The call was billed before its body proved unusable.
+            link_observation(error, report.observation_id)
+            raise
+        return quotes, report
 
     def list_events_for_sport(self, sport: str) -> list[EventInfo]:
         """Fetch all upcoming events for a sport. Returns event metadata."""
@@ -170,10 +193,15 @@ class TheOddsApiProvider:
             sport, lambda: self._fetch_sport_odds(sport), live=True
         )
         result: dict[str, list[Quote]] = {}
-        for event in raw_events:
-            event_id = event["id"]
-            self._cache_event(event, sport)
-            result[event_id] = self._map_event_to_quotes(event)
+        try:
+            for event in raw_events:
+                event_id = event["id"]
+                self._cache_event(event, sport)
+                result[event_id] = self._map_event_to_quotes(event)
+        except Exception as error:
+            # The call was billed before its body proved unusable.
+            link_observation(error, report.observation_id)
+            raise
         return result, report
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
@@ -194,7 +222,7 @@ class TheOddsApiProvider:
     def _fetch_cached(
         self,
         key: str,
-        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota]],
+        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota, int | None]],
         *,
         live: bool,
     ) -> tuple[ProviderPayload, ProviderFetchReport]:
@@ -204,32 +232,39 @@ class TheOddsApiProvider:
         belongs to this call and cannot be read by another thread. It stays None
         when the cache answered, which is what keeps a reused response from
         reporting someone else's credit figures as though they were current.
+
+        The observation id is stored beside the payload instead: it names the call
+        the data came from, so callers coalesced onto that call all link to it.
         """
         quota: UpstreamQuota | None = None
 
-        def load() -> ProviderPayload:
+        def load() -> tuple[ProviderPayload, int | None]:
             nonlocal quota
-            payload, quota = fetch()
-            return payload
+            payload, quota, observation_id = fetch()
+            return payload, observation_id
 
         cached = self._response_cache.fetch(key, load, live=live)
+        payload, observation_id = cached.payload
         report = ProviderFetchReport(
             upstream_contacted=cached.upstream_contacted,
             data_age_seconds=cached.age_seconds,
             quota=quota if cached.upstream_contacted else None,
+            observation_id=observation_id,
         )
-        return cached.payload, report
+        return payload, report
 
-    def _fetch_sport_odds(self, sport: str) -> tuple[ProviderPayload, UpstreamQuota]:
+    def _fetch_sport_odds(
+        self, sport: str
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", sport)
-        quota = self._read_quota(response, sport)
-        _raise_for_status(response)
-        return cast(list[dict[str, Any]], response.json()), quota
+        quota, observation_id = self._read_quota(response, UpstreamCallKind.SPORT, sport)
+        body = _checked_json(response, observation_id)
+        return cast(list[dict[str, Any]], body), quota, observation_id
 
     def _fetch_event_odds(
         self, sport: str, event_id: str
-    ) -> tuple[ProviderPayload, UpstreamQuota]:
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
         """GET /v4/sports/{sport}/events/{eventId}/odds from The Odds API.
 
         Costs [markets returned] x [regions], independent of how many events the
@@ -237,15 +272,17 @@ class TheOddsApiProvider:
         pulled), which is an empty answer rather than a failure.
         """
         response = self._get(f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds", sport)
-        quota = self._read_quota(response, sport)
+        quota, observation_id = self._read_quota(
+            response, UpstreamCallKind.EVENT, sport, event_id=event_id
+        )
         if response.status_code == 404:
             logger.info(
                 "odds_api.event_not_offered",
                 extra={"sport": sport, "event_id": event_id},
             )
-            return [], quota
-        _raise_for_status(response)
-        return [cast(dict[str, Any], response.json())], quota
+            return [], quota, observation_id
+        body = _checked_json(response, observation_id)
+        return [cast(dict[str, Any], body)], quota, observation_id
 
     def check_quota(self) -> None:
         """GET /v4/sports: free, and it still carries the quota headers.
@@ -253,7 +290,7 @@ class TheOddsApiProvider:
         How a paused Auto-Refresh learns that credits are back (ADR-016).
         """
         response = self._client.get(ODDS_API_BASE, params={"apiKey": self._api_key})
-        self._read_quota(response, sport=None, cost=0)
+        self._read_quota(response, UpstreamCallKind.BALANCE_CHECK, sport=None, cost=0)
         _raise_for_status(response)
 
     def _get(self, url: str, sport: str) -> httpx.Response:
@@ -270,15 +307,27 @@ class TheOddsApiProvider:
         return self._client.get(url, params=params)
 
     def _read_quota(
-        self, response: httpx.Response, sport: str | None, cost: int | None = None
-    ) -> UpstreamQuota:
+        self,
+        response: httpx.Response,
+        kind: UpstreamCallKind,
+        sport: str | None,
+        event_id: str | None = None,
+        cost: int | None = None,
+    ) -> tuple[UpstreamQuota, int | None]:
         """Read the quota off a response. Callers do this before raising on it:
         a rejected call is still a call, and what it cost is exactly what an
-        operator needs to know when upstream starts failing."""
+        operator needs to know when upstream starts failing.
+
+        Returns the recorded observation's id too: None when nothing was stored."""
         quota = _parse_quota(response.headers)
-        self._record_quota(
+        observation_id = self._record_quota(
             QuotaReading(
+                kind=kind,
+                sport_key=sport,
+                event_id=event_id,
                 credits_remaining=quota.credits_remaining,
+                # A free endpoint spends nothing, whatever its cost header repeats.
+                credits_spent=0 if cost == 0 else quota.credits_spent,
                 credits_used=_parse_credit_header(response.headers.get("x-requests-used")),
                 estimated_cost=self._call_cost if cost is None else cost,
                 out_of_credits=_is_out_of_credits(response),
@@ -293,16 +342,17 @@ class TheOddsApiProvider:
                 "credits_remaining": quota.credits_remaining,
             },
         )
-        return quota
+        return quota, observation_id
 
-    def _record_quota(self, reading: QuotaReading) -> None:
+    def _record_quota(self, reading: QuotaReading) -> int | None:
         if self._quota_recorder is None:
-            return
+            return None
         try:
-            self._quota_recorder.record(reading)
+            return self._quota_recorder.record(reading)
         except Exception:
             # Bookkeeping must never fail the refresh that paid for it.
             logger.exception("odds_api.quota_record_failed")
+            return None
 
     def _cache_event(self, event: dict, sport_key: str) -> EventInfo:
         """Extract and cache event metadata."""

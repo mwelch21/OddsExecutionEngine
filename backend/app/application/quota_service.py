@@ -23,13 +23,14 @@ class QuotaService:
         self._unit_of_work_factory = unit_of_work_factory
         self._quota_engine = quota_engine
 
-    def record(self, reading: QuotaReading) -> None:
+    def record(self, reading: QuotaReading) -> int:
+        """Record one call's observation and return its id, for the refresh link."""
         with self._unit_of_work_factory() as uow:
             uow.lock()
             previous = uow.latest_observation()
             observation = self._quota_engine.observe(reading, previous)
             floor = self._quota_engine.floor(uow.configured_floor(), observation)
-            uow.add_observation(observation)
+            observation_id = uow.add_observation(observation)
             warn = self._quota_engine.should_warn(previous, observation, floor)
             if warn and floor is not None and observation.remaining is not None:
                 uow.stage_public_event(
@@ -46,16 +47,24 @@ class QuotaService:
                 "remaining": observation.remaining,
                 "used": observation.used,
                 "source": observation.source.value,
+                "kind": observation.kind.value if observation.kind else None,
+                "sport": observation.sport_key,
+                "event_id": observation.event_id,
+                "credits_spent": observation.credits_spent,
                 "out_of_credits": observation.out_of_credits,
                 "floor": floor,
                 "warned": warn,
             },
         )
+        return observation_id
 
     def status(self) -> QuotaStatus:
         with self._unit_of_work_factory() as uow:
             latest = uow.latest_observation()
             floor = self._quota_engine.floor(uow.configured_floor(), latest)
         return QuotaStatus(
-            latest=latest, floor=floor, paused=self._quota_engine.is_paused(latest)
+            latest=latest,
+            floor=floor,
+            paused=self._quota_engine.is_paused(latest),
+            out_of_credits=self._quota_engine.is_out_of_credits(latest),
         )

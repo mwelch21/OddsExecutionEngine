@@ -213,13 +213,16 @@ class ProviderFetchReport(DomainModel):
     """Whether a refresh actually contacted the provider, and what it cost.
 
     `upstream_contacted` is false when the answer came from a reused response.
-    `quota` is populated only in that case: replaying the credit figures from
+    `quota` is populated only when it is true: replaying the credit figures from
     someone else's earlier call would misreport both the cost and the balance.
     """
 
     upstream_contacted: bool
     data_age_seconds: float
     quota: UpstreamQuota | None = None
+    # The quota observation of the call that produced the data. Callers coalesced
+    # onto one call get the same id, so their refreshes link to one call (#104).
+    observation_id: int | None = None
 
 
 class EventSport(DomainModel):

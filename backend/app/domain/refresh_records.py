@@ -89,7 +89,13 @@ class RefreshResult(DomainModel):
 
 
 class RefreshRecord(DomainModel):
-    """One refresh. `event_id` is None for a sport-wide refresh."""
+    """One refresh. `event_id` is None for a sport-wide refresh.
+
+    `quota_observation_id` links the upstream call the refresh used (#104): None if
+    it failed before any call, shared by refreshes coalesced onto one call.
+    `credits_spent` is that call's cost, read back through the link and never
+    written: the call is billed once however many refreshes share it.
+    """
 
     scope: RefreshScope
     sport_key: str
@@ -101,6 +107,8 @@ class RefreshRecord(DomainModel):
     error_code: RefreshErrorCode | None = None
     error: str | None = None
     events_refreshed: int = Field(default=0, ge=0)
+    quota_observation_id: int | None = None
+    credits_spent: int | None = None
 
 
 class RefreshRecordFilter(DomainModel):
