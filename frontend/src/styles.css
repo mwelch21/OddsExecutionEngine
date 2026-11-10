@@ -843,8 +843,14 @@ select {
 
   /* With the attention pill showing, four items cannot fit at phone width:
      the watch count and Admin view drop their words and keep their icons. */
+  /* Visually hidden, still read aloud, so the count keeps its meaning. */
   .topbar-status:has(.attention-pill) .topbar-label {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .topbar-status:has(.attention-pill) .topbar-admin {

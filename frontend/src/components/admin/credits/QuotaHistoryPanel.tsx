@@ -32,7 +32,7 @@ export function QuotaHistoryPanel({ floor, reloads }: { floor: number | null; re
   }, [reloads]);
 
   return (
-    <AdminPanel title={`Balance, last ${DAYS} days`}>
+    <AdminPanel title={`Balance, last ${DAYS} days`} storageKey="quota-history">
       {error && <p className="admin-warn">{error}</p>}
       {!history && !error && <p className="admin-muted">Loading…</p>}
       {history && history.points.length === 0 && (
