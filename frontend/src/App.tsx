@@ -226,7 +226,9 @@ export function App() {
     setRefreshing(true);
     setMessage(`Pulling ${refreshSportKey} from the provider`);
     try {
-      const result = await refreshSport(refreshSportKey);
+      // A refresh, failed or not, can move the provider row and the credits: tell
+      // the status readers as soon as it settles, before the browse reads below.
+      const result = await refreshSport(refreshSportKey).finally(invalidateSystemStatus);
       setMessage(`Refreshed ${result.events_refreshed} events for ${result.sport}`);
       setCooldown(REFRESH_COOLDOWN_SECONDS);
       await loadEvents();
@@ -234,8 +236,6 @@ export function App() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Refresh failed");
     } finally {
-      // A refresh, failed or not, can move the provider row and the credits.
-      invalidateSystemStatus();
       refreshInFlight.current = false;
       setRefreshing(false);
     }
