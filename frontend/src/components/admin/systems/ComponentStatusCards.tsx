@@ -47,19 +47,20 @@ function tone(state: ComponentState): "good" | "warn" | "neutral" {
  * One card per component (#106), each read straight from one signal. No combined
  * verdict: four separate facts.
  */
-export function ComponentStatusCards({ status }: { status: SystemStatus | null }) {
+export function ComponentStatusCards({ status }: { status: SystemStatus }) {
   return (
     <div className="status-cards" aria-label="Component status">
       {CARDS.map((card) => {
         const row = status?.components?.find(({ component }) => component === card.key);
         // The API row is UI-side; with no answer, the others cannot be read.
-        const state: ComponentState | null = !status
-          ? null
-          : card.key === "api"
-            ? status.apiReachable
-              ? "healthy"
-              : "unhealthy"
-            : (row?.state ?? "unknown");
+        const state: ComponentState | null =
+          status.apiReachable === null
+            ? null
+            : card.key === "api"
+              ? status.apiReachable
+                ? "healthy"
+                : "unhealthy"
+              : (row?.state ?? "unknown");
         // The provider's time is its newest answer; with none yet there is no age to show.
         const seen =
           card.key === "provider" && row && row.state !== "unknown" ? ageLabel(row.observed_at) : null;

@@ -201,8 +201,8 @@ export type ComponentStatus = {
 };
 
 /** The API row is not here: the UI shows it from whether this call got an answer. */
-export async function getComponentStatus() {
-  return request<{ components: ComponentStatus[] }>(`${ADMIN}/component-status`);
+export async function getComponentStatus(signal?: AbortSignal) {
+  return request<{ components: ComponentStatus[] }>(`${ADMIN}/component-status`, { signal });
 }
 
 /** Facts from stored records, shown as they are; never judged against a threshold. */
@@ -229,6 +229,6 @@ export type Metrics = {
 };
 
 /** A database read: it never reaches upstream. */
-export async function getMetrics() {
-  return request<Metrics>(`${ADMIN}/metrics`);
+export async function getMetrics(signal?: AbortSignal) {
+  return request<Metrics>(`${ADMIN}/metrics`, { signal });
 }

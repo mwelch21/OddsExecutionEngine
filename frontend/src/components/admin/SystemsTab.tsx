@@ -14,7 +14,7 @@ export function SystemsTab() {
   return (
     <>
       <ComponentStatusCards status={status} />
-      <MetricsPanel metrics={status?.metrics ?? null} unavailable={status !== null && !status.metrics} />
+      <MetricsPanel metrics={status.metrics} unavailable={status.metricsUnavailable} />
       <div className="admin-two">
         <RefreshLogPanel />
         <DeliveryLogPanel />

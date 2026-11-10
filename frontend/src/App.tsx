@@ -30,6 +30,7 @@ import {
 import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
 import { AdminView } from "./components/admin/AdminView";
 import { AttentionPill } from "./components/admin/systems/AttentionPill";
+import { invalidateSystemStatus } from "./components/admin/systems/systemStatus";
 import { EventList } from "./components/EventList";
 import { LineBoard } from "./components/LineBoard";
 import { OpportunityBanner } from "./components/OpportunityBanner";
@@ -233,6 +234,8 @@ export function App() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Refresh failed");
     } finally {
+      // A refresh, failed or not, can move the provider row and the credits.
+      invalidateSystemStatus();
       refreshInFlight.current = false;
       setRefreshing(false);
     }
