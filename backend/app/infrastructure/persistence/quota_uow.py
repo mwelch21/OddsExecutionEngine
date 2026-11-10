@@ -87,7 +87,9 @@ class SqlAlchemyQuotaUnitOfWork:
             sport_key=row["sport_key"],
             event_id=row["event_id"],
             credits_spent=row["credits_spent"],
-            outcome=UpstreamCallOutcome(row["call_outcome"]) if row["call_outcome"] else None,
+            outcome=None
+            if row["call_outcome"] is None
+            else UpstreamCallOutcome(row["call_outcome"]),
         )
 
     def add_observation(self, observation: QuotaObservation) -> int:

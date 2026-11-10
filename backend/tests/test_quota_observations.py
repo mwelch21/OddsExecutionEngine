@@ -283,6 +283,16 @@ OUT_OF_CREDITS_BODY = {
 }
 
 
+def _call(provider: TheOddsApiProvider, kind: UpstreamCallKind) -> None:
+    """Make the one upstream call of `kind`."""
+    if kind is UpstreamCallKind.SPORT:
+        provider.list_quotes_for_sport("icehockey_nhl")
+    elif kind is UpstreamCallKind.EVENT:
+        provider.list_quotes("abc123", "icehockey_nhl")
+    else:
+        provider.check_quota()
+
+
 @pytest.mark.parametrize(
     ("status", "body", "outcome"),
     [
@@ -308,12 +318,7 @@ def test_every_call_records_how_it_ended(
 
     with patch.object(provider._client, "get", return_value=_response(status, body, HEADERS)):
         try:
-            if kind is UpstreamCallKind.SPORT:
-                provider.list_quotes_for_sport("icehockey_nhl")
-            elif kind is UpstreamCallKind.EVENT:
-                provider.list_quotes("abc123", "icehockey_nhl")
-            else:
-                provider.check_quota()
+            _call(provider, kind)
         except (httpx.HTTPStatusError, OutOfUsageCreditsError):
             pass
 
@@ -351,12 +356,7 @@ def test_a_call_that_gets_no_response_is_still_recorded(
         patch.object(provider._client, "get", side_effect=error),
         pytest.raises(httpx.TransportError) as raised,
     ):
-        if kind is UpstreamCallKind.SPORT:
-            provider.list_quotes_for_sport("icehockey_nhl")
-        elif kind is UpstreamCallKind.EVENT:
-            provider.list_quotes("abc123", "icehockey_nhl")
-        else:
-            provider.check_quota()
+        _call(provider, kind)
 
     [reading] = recorder.readings
     assert reading.kind is kind
