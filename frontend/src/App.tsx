@@ -330,15 +330,18 @@ export function App() {
               </Pill>
               <Pill>
                 <Bell size={14} />
-                {watches.length} watches
+                {watches.length}
+                <span className="topbar-label"> watches</span>
               </Pill>
               <Button
                 variant="secondary"
                 className="topbar-admin"
+                aria-label="Admin view"
+                title="Admin view"
                 onClick={() => handleOpenAdmin()}
               >
                 <ShieldCheck size={15} />
-                Admin view
+                <span className="topbar-label">Admin view</span>
               </Button>
             </>
           )}

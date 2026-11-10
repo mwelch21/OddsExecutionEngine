@@ -841,6 +841,17 @@ select {
     font-size: 0.85rem;
   }
 
+  /* With the attention pill showing, four items cannot fit at phone width:
+     the watch count and Admin view drop their words and keep their icons. */
+  .topbar-status:has(.attention-pill) .topbar-label {
+    display: none;
+  }
+
+  .topbar-status:has(.attention-pill) .topbar-admin {
+    width: 30px;
+    padding: 0;
+  }
+
   .workspace {
     width: min(100% - 24px, 1380px);
     padding-top: 18px;
@@ -1617,6 +1628,11 @@ select {
 }
 
 /* Component status (#106): four cards, one per component, above the metrics. */
+.status-section {
+  display: grid;
+  gap: 12px;
+}
+
 .status-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
