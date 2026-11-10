@@ -7,17 +7,13 @@ cannot be read never hides the others.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.app.domain.deliveries import DeliveryStatus
-from backend.app.domain.quota import QuotaObservation, QuotaSource
-from backend.app.domain.refresh_records import (
-    RefreshErrorCode,
-    RefreshOutcomeStatus,
-    RefreshScope,
-)
+from backend.app.domain.quota import QuotaObservation, QuotaSource, UpstreamCallOutcome
+from backend.app.domain.refresh_records import RefreshOutcomeStatus, RefreshScope
 from backend.app.domain.system_status import (
     LastSuccessfulRefresh,
     PendingDeliveries,
@@ -89,25 +85,18 @@ class SqlAlchemySystemStatusReadUnitOfWork:
         return int(count)
 
     def newest_provider_answer(self) -> ProviderAnswer | None:
-        # An INTERNAL failure broke on our side and says nothing about the provider,
-        # so it is passed over rather than allowed to hide the last real answer.
+        # The newest upstream call, balance checks included, ordered by when the
+        # call was made rather than when its refresh finished (#121).
         row = (
             self._require_session()
             .execute(
                 select(
-                    refresh_records_table.c.outcome,
-                    refresh_records_table.c.error_code,
-                    refresh_records_table.c.finished_at,
-                )
-                .where(
-                    or_(
-                        refresh_records_table.c.error_code.is_(None),
-                        refresh_records_table.c.error_code != RefreshErrorCode.INTERNAL.value,
-                    )
+                    quota_observations_table.c.call_outcome,
+                    quota_observations_table.c.observed_at,
                 )
                 .order_by(
-                    refresh_records_table.c.finished_at.desc(),
-                    refresh_records_table.c.id.desc(),
+                    quota_observations_table.c.observed_at.desc(),
+                    quota_observations_table.c.id.desc(),
                 )
                 .limit(1)
             )
@@ -117,9 +106,10 @@ class SqlAlchemySystemStatusReadUnitOfWork:
         if row is None:
             return None
         return ProviderAnswer(
-            outcome=RefreshOutcomeStatus(row["outcome"]),
-            error_code=None if row["error_code"] is None else RefreshErrorCode(row["error_code"]),
-            finished_at=_as_utc(row["finished_at"]),
+            outcome=None
+            if row["call_outcome"] is None
+            else UpstreamCallOutcome(row["call_outcome"]),
+            observed_at=_as_utc(row["observed_at"]),
         )
 
     def last_successful_refresh(self) -> LastSuccessfulRefresh | None:

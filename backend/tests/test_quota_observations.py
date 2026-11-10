@@ -12,6 +12,7 @@ from backend.app.domain.quota import (
     OutOfUsageCreditsError,
     QuotaReading,
     UpstreamCallKind,
+    UpstreamCallOutcome,
     linked_observation,
 )
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
@@ -274,3 +275,115 @@ def test_a_malformed_body_still_links_the_billed_call(event_pull: bool) -> None:
 
     assert len(recorder.readings) == 1
     assert linked_observation(raised.value) == 1
+    # A billed call whose body is not usable is recorded as such (#121).
+    assert recorder.readings[0].outcome is UpstreamCallOutcome.INVALID_RESPONSE
+
+
+OUT_OF_CREDITS_BODY = {
+    "message": "Usage quota has been reached",
+    "error_code": "OUT_OF_USAGE_CREDITS",
+}
+
+
+def _call(provider: TheOddsApiProvider, kind: UpstreamCallKind) -> None:
+    """Make the one upstream call of `kind`."""
+    if kind is UpstreamCallKind.SPORT:
+        provider.list_quotes_for_sport("icehockey_nhl")
+    elif kind is UpstreamCallKind.EVENT:
+        provider.list_quotes("abc123", "icehockey_nhl")
+    else:
+        provider.check_quota()
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "outcome"),
+    [
+        (200, [], UpstreamCallOutcome.ANSWERED),
+        (401, OUT_OF_CREDITS_BODY, UpstreamCallOutcome.OUT_OF_CREDITS),
+        (429, OUT_OF_CREDITS_BODY, UpstreamCallOutcome.OUT_OF_CREDITS),
+        (401, {"message": "invalid api key"}, UpstreamCallOutcome.AUTH_FAILURE),
+        (403, {}, UpstreamCallOutcome.AUTH_FAILURE),
+        (422, {}, UpstreamCallOutcome.CLIENT_ERROR),
+        (429, {}, UpstreamCallOutcome.RATE_LIMITED),
+        (404, {}, UpstreamCallOutcome.CLIENT_ERROR),
+        (500, {}, UpstreamCallOutcome.SERVER_ERROR),
+        (503, {}, UpstreamCallOutcome.SERVER_ERROR),
+    ],
+)
+@pytest.mark.parametrize("kind", list(UpstreamCallKind))
+def test_every_call_records_how_it_ended(
+    kind: UpstreamCallKind, status: int, body: Any, outcome: UpstreamCallOutcome
+) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    if kind is UpstreamCallKind.EVENT and status == 200:
+        body = EVENT  # the single-event endpoint answers with one event object
+
+    with patch.object(provider._client, "get", return_value=_response(status, body, HEADERS)):
+        try:
+            _call(provider, kind)
+        except (httpx.HTTPStatusError, OutOfUsageCreditsError):
+            pass
+
+    [reading] = recorder.readings
+    assert reading.kind is kind
+    assert reading.outcome is outcome
+
+
+def test_an_event_the_provider_no_longer_offers_is_a_client_error_not_a_failure() -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with patch.object(provider._client, "get", return_value=_response(404, {}, HEADERS)):
+        quotes, _ = provider.list_quotes("abc123", "icehockey_nhl")
+
+    assert quotes == []
+    assert recorder.readings[0].outcome is UpstreamCallOutcome.CLIENT_ERROR
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.ReadTimeout("timed out"),
+    ],
+)
+@pytest.mark.parametrize("kind", list(UpstreamCallKind))
+def test_a_call_that_gets_no_response_is_still_recorded(
+    kind: UpstreamCallKind, error: httpx.TransportError
+) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+
+    with (
+        patch.object(provider._client, "get", side_effect=error),
+        pytest.raises(httpx.TransportError) as raised,
+    ):
+        _call(provider, kind)
+
+    [reading] = recorder.readings
+    assert reading.kind is kind
+    assert reading.outcome is UpstreamCallOutcome.NETWORK_ERROR
+    # No response, so no headers and nothing assumed spent.
+    assert (reading.credits_remaining, reading.credits_spent) == (None, 0)
+    assert linked_observation(raised.value) == 1
+
+
+@pytest.mark.parametrize("event_pull", [False, True])
+def test_a_body_that_is_not_json_is_an_invalid_response(event_pull: bool) -> None:
+    recorder = RecordingQuota()
+    provider = _provider(recorder)
+    response = httpx.Response(
+        200,
+        content=b"<html>gateway</html>",
+        headers=HEADERS,
+        request=httpx.Request("GET", "https://api.the-odds-api.com/v4/sports"),
+    )
+
+    with patch.object(provider._client, "get", return_value=response), pytest.raises(ValueError):
+        _call(provider, UpstreamCallKind.EVENT if event_pull else UpstreamCallKind.SPORT)
+
+    [reading] = recorder.readings
+    assert reading.outcome is UpstreamCallOutcome.INVALID_RESPONSE
+    # Billed all the same: the headers still say what the call cost.
+    assert reading.credits_spent == 3

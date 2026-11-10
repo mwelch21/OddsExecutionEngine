@@ -28,13 +28,30 @@ class UpstreamCallKind(StrEnum):
     BALANCE_CHECK = "balance_check"
 
 
+class UpstreamCallOutcome(StrEnum):
+    """How an upstream call ended (#121). The odds provider's component status reads
+    the newest one: network error, 5xx, auth failure, rate limiting and a 2xx body
+    that is not usable mean the provider is not available; out of credits and any
+    other 4xx are answers about our request."""
+
+    ANSWERED = "answered"
+    OUT_OF_CREDITS = "out_of_credits"
+    NETWORK_ERROR = "network_error"
+    SERVER_ERROR = "server_error"
+    AUTH_FAILURE = "auth_failure"
+    RATE_LIMITED = "rate_limited"
+    INVALID_RESPONSE = "invalid_response"
+    CLIENT_ERROR = "client_error"
+
+
 class QuotaReading(DomainModel):
     """One upstream call's quota, exactly as the provider reported it.
 
     Header fields are None when the response did not carry them. `estimated_cost`
     is the local `markets x regions` count, used only when the headers are absent.
     `credits_spent` is this call's own cost header (`x-requests-last`).
-    `out_of_credits` is the provider's OUT_OF_USAGE_CREDITS answer.
+    `out_of_credits` is the provider's OUT_OF_USAGE_CREDITS answer. `outcome` is how
+    the call ended; a call that got no response has no headers and spends nothing.
     """
 
     kind: UpstreamCallKind | None = None
@@ -45,13 +62,15 @@ class QuotaReading(DomainModel):
     credits_spent: int | None = Field(default=None, ge=0)
     estimated_cost: int = Field(ge=0)
     out_of_credits: bool = False
+    outcome: UpstreamCallOutcome | None = None
     observed_at: datetime
 
 
 class QuotaObservation(DomainModel):
     """What we record per upstream call. `remaining`/`used` are None until known.
 
-    `kind` and `credits_spent` are None only on rows recorded before they were kept.
+    `kind` and `credits_spent` are None only on rows recorded before they were kept;
+    `outcome` likewise (#121), and a None outcome reads as Unknown, never Healthy.
     """
 
     remaining: int | None
@@ -63,6 +82,7 @@ class QuotaObservation(DomainModel):
     sport_key: str | None = None
     event_id: str | None = None
     credits_spent: int | None = None
+    outcome: UpstreamCallOutcome | None = None
 
 
 class QuotaStatus(DomainModel):

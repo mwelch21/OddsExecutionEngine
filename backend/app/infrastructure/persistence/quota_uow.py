@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.public_events import PublicEvent
-from backend.app.domain.quota import QuotaObservation, QuotaSource, UpstreamCallKind
+from backend.app.domain.quota import (
+    QuotaObservation,
+    QuotaSource,
+    UpstreamCallKind,
+    UpstreamCallOutcome,
+)
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import (
     auto_refresh_settings_table,
@@ -82,6 +87,9 @@ class SqlAlchemyQuotaUnitOfWork:
             sport_key=row["sport_key"],
             event_id=row["event_id"],
             credits_spent=row["credits_spent"],
+            outcome=None
+            if row["call_outcome"] is None
+            else UpstreamCallOutcome(row["call_outcome"]),
         )
 
     def add_observation(self, observation: QuotaObservation) -> int:
@@ -98,6 +106,7 @@ class SqlAlchemyQuotaUnitOfWork:
                 sport_key=observation.sport_key,
                 event_id=observation.event_id,
                 credits_spent=observation.credits_spent,
+                call_outcome=observation.outcome.value if observation.outcome else None,
             )
             .returning(quota_observations_table.c.id)
         )
