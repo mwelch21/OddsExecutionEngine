@@ -32,15 +32,39 @@ api/ --> application/ --> domain/         (pure, zero external imports)
 - `docs/architecture/system-state-data-flow.md` -- current end-to-end architecture, state ownership, bottlenecks, and scale considerations
 - `docs/architecture/stages-5-6-data-flows.md` -- detailed watch/opportunity and live-ingestion flow walkthrough
 
-## Prerequisites
+## Ubuntu 24.04 EC2 development setup
 
-- **Python 3.12+**
-- **[uv](https://docs.astral.sh/uv/)** -- Python package manager
-- **Docker Desktop** -- For PostgreSQL 16
+On `mwelch-dev-server-1`, connect with your existing SSH access as the development user. Git is needed for the initial clone (`sudo apt-get update && sudo apt-get install git` if missing).
 
-Optional:
-- **The Odds API key** -- For live sportsbook data ([free tier: 500 requests/month](https://the-odds-api.com))
-- **Node.js 22+** -- For the React frontend application
+```bash
+git clone https://github.com/mwelch21/OddsExecutionEngine.git
+cd OddsExecutionEngine
+./scripts/bootstrap.sh
+```
+
+Bootstrap checks the Ubuntu x86_64 toolchain, installs missing tools, syncs Python, frontend and Go dependencies, creates a private `.env` from the public example only on first run, and runs diagnostics. Sudo covers Ubuntu packages, starting local Docker if needed, and joining the root-equivalent Docker group. Language tools and agent CLIs install under your own account. Reconnect SSH after first setup to load Docker membership and Ubuntu's default `~/.local/bin` path. For a custom shell profile, add `export PATH="$HOME/.local/bin:$PATH"`.
+
+Authenticate only the tools you use. Start `claude` and follow its sign-in prompt. Run `codex login --device-auth` for headless sign-in when enabled for your account, and `gh auth login` for GitHub issue and PR workflows. The fixture-backed application needs no account. For live quotes, set `QUOTE_PROVIDER=odds_api` and supply your own `ODDS_API_KEY` privately. For notifications, follow the [Web Push runbook](docs/runbooks/web-push.md).
+
+```bash
+just up                       # starts API, PostgreSQL and worker, applies migrations
+(cd frontend && npm run dev)  # Vite, default port 5173
+```
+
+With Web Push configured, use `just dev` for the full reload loop. The API health route is `http://localhost:8000/api/health` by default. After a pull or branch switch, use `just refresh` to rebuild and migrate before testing endpoints.
+
+```bash
+just test-quick               # unit and SQLite coverage, with test DB URL unset
+just check                    # Ruff, mypy, pytest against dedicated odds_execution_test
+just test-notifier            # Go integration tests on the same disposable test DB
+(cd frontend && npm run build)
+```
+
+The DB-backed tests reset tables. Reserve the test database exclusively for tests. Run `./scripts/doctor.sh` for read-only checks. FAIL exits nonzero. WARN includes stopped services before startup and optional push settings. Rerun `./scripts/bootstrap.sh` after pulling dependency changes or to recover from an interrupted install. It retains compatible tools and existing configuration. To upgrade a compatible machine tool, use its original installation method. To extend bootstrap, update the manifest and lockfile for language packages or the shared machine prerequisite list and doctor check for a native tool. See the [dependency inventory](docs/development-dependencies.md).
+
+## Prerequisites for manual setup
+
+Python 3.12.x, uv and Docker Engine with Compose are required for backend development. Native frontend development uses Node 22.20+ on the Compose image's Node 22 line and npm. Native notifier tests require Go 1.26.1 or later.
 
 ## Getting Started
 
@@ -64,7 +88,7 @@ POSTGRES_PASSWORD=app
 POSTGRES_PORT=5433
 ```
 
-> **Port note:** Docker maps the container's internal port 5432 to host port 5433 by default. This avoids conflicts if you have a local PostgreSQL instance running on 5432. If port 5432 is free on your machine, you can change the mapping in `docker-compose.yml` and set `POSTGRES_PORT=5432` here.
+> **Port note:** Docker maps the container's internal port 5432 to host port 5433 by default. This avoids conflicts if you have a local PostgreSQL instance running on 5432. To use another host port, set `POSTGRES_HOST_PORT` in `.env` and use that port for native clients.
 
 To enable live odds data, add:
 
