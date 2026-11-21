@@ -32,128 +32,48 @@ api/ --> application/ --> domain/         (pure, zero external imports)
 - `docs/architecture/system-state-data-flow.md` -- current end-to-end architecture, state ownership, bottlenecks, and scale considerations
 - `docs/architecture/stages-5-6-data-flows.md` -- detailed watch/opportunity and live-ingestion flow walkthrough
 
-## Ubuntu 24.04 EC2 development setup
+## Prerequisites
 
-On `mwelch-dev-server-1`, connect with your existing SSH access as the development user. Git is needed for the initial clone (`sudo apt-get update && sudo apt-get install git` if missing).
+To run OddsCafe in containers, the host needs Git to clone the repo and a running Docker installation with Buildx and the Compose plugin (`docker compose`). Docker Desktop or Docker Engine with those plugins works. The `just` command runner is optional.
 
-```bash
-git clone https://github.com/mwelch21/OddsExecutionEngine.git
-cd OddsExecutionEngine
-./scripts/bootstrap.sh
-```
-
-Bootstrap checks the Ubuntu x86_64 toolchain, installs missing tools, syncs Python, frontend and Go dependencies, creates a private `.env` from the public example only on first run, and runs diagnostics. Sudo covers Ubuntu packages, starting local Docker if needed, and joining the root-equivalent Docker group. Language tools and agent CLIs install under your own account. Reconnect SSH after first setup to load Docker membership and Ubuntu's default `~/.local/bin` path. For a custom shell profile, add `export PATH="$HOME/.local/bin:$PATH"`.
-
-Authenticate only the tools you use. Start `claude` and follow its sign-in prompt. Run `codex login --device-auth` for headless sign-in when enabled for your account, and `gh auth login` for GitHub issue and PR workflows. The fixture-backed application needs no account. For live quotes, set `QUOTE_PROVIDER=odds_api` and supply your own `ODDS_API_KEY` privately. For notifications, follow the [Web Push runbook](docs/runbooks/web-push.md).
-
-```bash
-just up                       # starts API, PostgreSQL and worker, applies migrations
-(cd frontend && npm run dev)  # Vite, default port 5173
-```
-
-With Web Push configured, use `just dev` for the full reload loop. The API health route is `http://localhost:8000/api/health` by default. After a pull or branch switch, use `just refresh` to rebuild and migrate before testing endpoints.
-
-```bash
-just test-quick               # unit and SQLite coverage, with test DB URL unset
-just check                    # Ruff, mypy, pytest against dedicated odds_execution_test
-just test-notifier            # Go integration tests on the same disposable test DB
-(cd frontend && npm run build)
-```
-
-The DB-backed tests reset tables. Reserve the test database exclusively for tests. Run `./scripts/doctor.sh` for read-only checks. FAIL exits nonzero. WARN includes stopped services before startup and optional push settings. Rerun `./scripts/bootstrap.sh` after pulling dependency changes or to recover from an interrupted install. It retains compatible tools and existing configuration. To upgrade a compatible machine tool, use its original installation method. To extend bootstrap, update the manifest and lockfile for language packages or the shared machine prerequisite list and doctor check for a native tool. See the [dependency inventory](docs/development-dependencies.md).
-
-## Prerequisites for manual setup
-
-Python 3.12.x, uv and Docker Engine with Compose are required for backend development. Native frontend development uses Node 22.20+ on the Compose image's Node 22 line and npm. Native notifier tests require Go 1.26.1 or later.
+| Service | What the container supplies | When you need tools on the host |
+|---|---|---|
+| API and auto-refresh worker | Python 3.12, uv, backend packages and test tools | For native debugging, linting or tests, install Python 3.12.x and uv, then run `uv sync --locked --group dev`. |
+| Frontend | Node 22, npm and the React/Vite packages | For native Vite, including `just dev`, install Node 22.20+ on the 22.x line and npm, then run `npm ci` in `frontend/`. |
+| PostgreSQL | PostgreSQL 16 server and the `psql` client | Use `docker compose exec postgres psql -U app -d odds_execution` for a database shell. A host database install is unnecessary. |
+| Web Push notifier | Go 1.26 build stage and a runtime image containing the compiled notifier | For native notifier development or `just test-notifier`, install Go 1.26.1 or later. |
 
 ## Getting Started
 
-### 1. Clone and install dependencies
+Clone the repository and run these commands from its root. Compose defaults support fixture data without credentials or a local `.env` file.
 
 ```bash
 git clone https://github.com/mwelch21/OddsExecutionEngine.git
 cd OddsExecutionEngine
-uv sync --group dev
+
+docker compose up --build -d --wait postgres api
+docker compose exec -T api uv run odds-db-upgrade
+docker compose exec -T api uv run odds-db-seed-demo
+docker compose up --build -d auto-refresh frontend
 ```
 
-### 2. Configure environment
+Open the [frontend](http://localhost:5173), [API health check](http://localhost:8000/api/health) or [development testing dashboard](http://localhost:8000/api/v1/test-ui). Use `docker compose down` to stop the stack and retain its database volume.
 
-Create a `.env` file in the project root:
+### Optional configuration
 
-```env
-POSTGRES_HOST=localhost
-POSTGRES_DB=odds_execution
-POSTGRES_USER=app
-POSTGRES_PASSWORD=app
-POSTGRES_PORT=5433
-```
+For custom ports or provider settings, create a root `.env` from `.env.example` on first setup. Containers reach the database at `postgres:5432`. Native backend commands use `POSTGRES_HOST=localhost` and `POSTGRES_PORT` equal to the published `POSTGRES_HOST_PORT` (default `5433`).
 
-> **Port note:** Docker maps the container's internal port 5432 to host port 5433 by default. This avoids conflicts if you have a local PostgreSQL instance running on 5432. To use another host port, set `POSTGRES_HOST_PORT` in `.env` and use that port for native clients.
+For live quotes, set `QUOTE_PROVIDER=odds_api` and supply `ODDS_API_KEY`. For browser notifications, configure VAPID and then start the notifier with `docker compose up --build -d notifier`. See the [Web Push runbook](docs/runbooks/web-push.md).
 
-To enable live odds data, add:
+### Optional Ubuntu workstation bootstrap
 
-```env
-QUOTE_PROVIDER=odds_api
-ODDS_API_KEY=your_api_key_here
-ODDS_API_REGIONS=us,us2
-ODDS_API_MARKETS=h2h,spreads,totals
-```
+On Ubuntu 24.04 LTS x86_64, run `./scripts/bootstrap.sh` from the clone to install the host development tools and sync all three native environments. Run it as your development user. System package installation and Docker group setup use sudo. If group membership changes, start a new login session.
 
-Without these, the system uses built-in fixture data (NBA Knicks vs Celtics).
-
-### 3. Start PostgreSQL
-
-```bash
-docker compose up -d
-```
-
-### 4. Run database migrations and seed demo data
-
-```bash
-uv run odds-db-upgrade
-uv run odds-db-seed-demo
-```
-
-### 5. Start the API
-
-The API runs inside the Docker container automatically. Access it at:
-
-```
-http://localhost:8000
-```
-
-The frontend runs as a separate Vite app:
-
-```
-http://localhost:5173
-```
-
-To run locally instead (e.g., for debugging):
-
-```bash
-docker compose stop api
-uv run uvicorn backend.app.main:create_app --factory --host 0.0.0.0 --port 8000
-```
-
-### 6. Verify it works
-
-```bash
-# Health check
-curl http://localhost:8000/api/health
-
-# Open the testing dashboard (development mode only)
-open http://localhost:8000/api/v1/test-ui
-
-# Open the frontend application
-open http://localhost:5173
-```
-
-The test UI provides pre-built scenarios for all endpoints -- quote refresh, recommendations, watch intents, opportunities, and live data ingestion.
-The frontend application provides the product-style lines board: sportsbook filtering, best-line mode, fillability checks, and watch creation.
+Rerun bootstrap after dependency changes. It preserves existing `.env` settings. Use `./scripts/doctor.sh` to check workstation prerequisites and service status. Sign in with `claude`, `codex login --device-auth` or `gh auth login` only for the developer tools you use. The [dependency inventory](docs/development-dependencies.md) covers installer maintenance and supported versions.
 
 ## Local Development Loop
 
-With [`just`](https://github.com/casey/just) installed, the loop is two commands:
+For backend reload and native Vite, install `just`, Node.js and npm on the host. These recipes also start the notifier, which needs Web Push configuration for delivery.
 
 ```bash
 just fresh   # first run only: refresh + seed the demo fixtures
@@ -192,41 +112,23 @@ the base compose file are unchanged. Destructive resets stay explicit:
 
 ## Common Commands
 
+Run backend tools inside the running API container:
+
 ```bash
-# Start services
-docker compose up -d
-
-# Rebuild after code changes
-docker compose up -d --build
-
-# Run database migrations
-uv run odds-db-upgrade
-
-# Seed demo data
-uv run odds-db-seed-demo
-
-# Run tests
-uv run pytest
-
-# Run frontend locally
-cd frontend
-npm install
-npm run dev
-
-# Build frontend
-cd frontend
-npm run build
-
-# Lint and type check
-uv run ruff check backend/
-uv run mypy backend/
-
-# Inspect the database
-docker compose exec postgres psql -U app -d odds_execution
-
-# View logs
+docker compose exec -T api uv run pytest
+docker compose exec -T api uv run ruff check .
+docker compose exec -T api uv run mypy backend
 docker compose logs -f api
 ```
+
+For native debugging, sync the Python environment and configure the host database connection as described above, then run:
+
+```bash
+docker compose stop api
+uv run uvicorn backend.app.main:create_app --factory --reload --port 8000
+```
+
+With native tools installed, `just check` runs Ruff, mypy and PostgreSQL-backed pytest. `just test-notifier` runs the Go integration suite. Both use the dedicated `odds_execution_test` database with the default development credentials. Reserve this database for tests because the suite resets its tables. Build the frontend with `npm run build` from `frontend/`. See the [testing guide](docs/testing/README.md).
 
 ## API Endpoints
 
