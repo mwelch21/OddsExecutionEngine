@@ -40,3 +40,8 @@ class Destination(DomainModel):
     @property
     def is_active(self) -> bool:
         return self.disabled_at is None
+
+    @property
+    def can_reactivate(self) -> bool:
+        """A `gone` destination was rejected by its channel; only a resubscribe revives it."""
+        return self.disabled_reason is not DisabledReason.GONE

@@ -14,7 +14,22 @@ warn() {
     stale=1
 }
 
-echo "branch   $(git branch --show-current) @ $(git rev-parse --short HEAD)"
+echo "branch   $(git branch --show-current) @ $(git rev-parse --short HEAD) ($(git log -1 --format=%cd --date=format-local:'%Y-%m-%d %H:%M'))"
+
+# `just refresh` always force-recreates the Auto-Refresh worker, so its start
+# time is the last refresh. Docker reports UTC; show it in local time.
+local_time() {
+    local utc="${1%%.*}"
+    date -d "${utc}Z" '+%Y-%m-%d %H:%M' 2>/dev/null \
+        || date -j -u -f '%Y-%m-%dT%H:%M:%S' "$utc" '+%s' 2>/dev/null \
+            | xargs -I{} date -r {} '+%Y-%m-%d %H:%M'
+}
+worker="$(docker compose ps -q auto-refresh 2>/dev/null)"
+if [[ -n "$worker" ]]; then
+    echo "rebuilt  $(local_time "$(docker inspect -f '{{.State.StartedAt}}' "$worker")") (last just refresh)"
+else
+    echo "rebuilt  unknown (stack not running)"
+fi
 echo
 
 container="$(docker compose ps -q api 2>/dev/null)"
@@ -47,10 +62,27 @@ fi
 alembic=(docker compose exec -T api uv run alembic -c backend/db/alembic.ini)
 current="$("${alembic[@]}" current 2>/dev/null | awk '/^[0-9a-z_]+/{print $1}')"
 head="$("${alembic[@]}" heads 2>/dev/null | awk '/^[0-9a-z_]+/{print $1}')"
+# Revisions are named <yyyymmdd>_<nnnn>, and each file is <revision>_<slug>.py,
+# so a revision reads as "13 of 13: quota observations (2026-11-04)".
+migrations=(backend/db/migrations/versions/[0-9]*_*.py)
+describe() {
+    local rev="$1" file i
+    for i in "${!migrations[@]}"; do
+        file="$(basename "${migrations[$i]}" .py)"
+        if [[ "$file" == "${rev}_"* ]]; then
+            local slug="${file#"${rev}"_}"
+            echo "$((i + 1)) of ${#migrations[@]}: ${slug//_/ } (${rev:0:4}-${rev:4:2}-${rev:6:2})"
+            return
+        fi
+    done
+    echo "$rev"
+}
 if [[ -n "$head" && "$current" == "$head" ]]; then
-    echo "schema   at head ($head)"
+    echo "schema   up to date, $(describe "$head")"
+elif [[ -z "$current" ]]; then
+    warn "schema   no migrations applied; newest is $(describe "$head") -> just migrate"
 else
-    warn "schema   ${current:-none} != head ${head:-unknown} -> just migrate"
+    warn "schema   at $(describe "$current"); newest is $(describe "$head") -> just migrate"
 fi
 
 echo

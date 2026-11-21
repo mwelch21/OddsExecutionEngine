@@ -55,7 +55,7 @@ class EventQueryService:
             self._logger.exception(
                 "events.list.failed",
                 extra={
-                    "path": "/events",
+                    "path": "/api/v1/events",
                     "league": event_filter.league,
                     "sport": event_filter.sport,
                     "page": page,
@@ -68,7 +68,7 @@ class EventQueryService:
         self._logger.info(
             "events.list.completed",
             extra={
-                "path": "/events",
+                "path": "/api/v1/events",
                 "league": event_filter.league,
                 "sport": event_filter.sport,
                 "include_started": event_filter.include_started,
@@ -102,7 +102,7 @@ class EventQueryService:
             self._logger.exception(
                 "events.line_board.failed",
                 extra={
-                    "path": "/events/{event_id}/quotes",
+                    "path": "/api/v1/events/{event_id}/quotes",
                     "event_id": event_id,
                     "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                 },
@@ -120,7 +120,7 @@ class EventQueryService:
         self._logger.info(
             "events.line_board.completed",
             extra={
-                "path": "/events/{event_id}/quotes",
+                "path": "/api/v1/events/{event_id}/quotes",
                 "event_id": event_id,
                 "market_count": len(ranked_markets),
                 "quote_count": sum(len(m.quotes) for m in ranked_markets),

@@ -1,10 +1,10 @@
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from backend.app.application.provider_cache import (
     CachedResponse,
-    ProviderPayload,
+    PayloadT,
     ProviderResponseCache,
 )
 
@@ -21,7 +21,7 @@ class _Entry:
 
     __slots__ = ("payload", "loaded_at", "generation")
 
-    def __init__(self, payload: ProviderPayload, loaded_at: float, generation: int) -> None:
+    def __init__(self, payload: Any, loaded_at: float, generation: int) -> None:
         self.payload = payload
         self.loaded_at = loaded_at
         self.generation = generation
@@ -57,6 +57,7 @@ class InProcessProviderCache(ProviderResponseCache):
         # Monotonic, not wall-clock: ages must not jump if the system clock is
         # adjusted underneath a running process.
         self._clock = clock or time.monotonic
+        # One cache serves one payload shape per key; entries are stored untyped.
         self._entries: dict[str, _Entry] = {}
         self._key_locks: dict[str, threading.Lock] = {}
         self._loads_completed = 0
@@ -66,10 +67,10 @@ class InProcessProviderCache(ProviderResponseCache):
     def fetch(
         self,
         key: str,
-        loader: Callable[[], ProviderPayload],
+        loader: Callable[[], PayloadT],
         *,
         live: bool,
-    ) -> CachedResponse:
+    ) -> CachedResponse[PayloadT]:
         arrived_at = self._clock()
         with self._guard:
             entry_on_arrival = self._entries.get(key)
@@ -94,7 +95,9 @@ class InProcessProviderCache(ProviderResponseCache):
                 self._loads_completed += 1
                 self._entries[key] = _Entry(payload, loaded_at, self._loads_completed)
 
-        return CachedResponse(payload=payload, upstream_contacted=True, age_seconds=0.0)
+        return CachedResponse[PayloadT](
+            payload=payload, upstream_contacted=True, age_seconds=0.0
+        )
 
     def _is_acceptable(self, entry: _Entry, generation_on_arrival: int, live: bool) -> bool:
         if live:
@@ -103,8 +106,8 @@ class InProcessProviderCache(ProviderResponseCache):
             return entry.generation > generation_on_arrival
         return self._within_ttl(entry, self._clock())
 
-    def _serve(self, entry: _Entry, now: float) -> CachedResponse:
-        return CachedResponse(
+    def _serve(self, entry: _Entry, now: float) -> CachedResponse[Any]:
+        return CachedResponse[Any](
             payload=entry.payload,
             upstream_contacted=False,
             age_seconds=max(0.0, now - entry.loaded_at),

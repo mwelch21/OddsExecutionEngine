@@ -37,7 +37,7 @@ class RecommendationService:
         self._logger.info(
             "recommendation.started",
             extra={
-                "path": "/execution/recommendation",
+                "path": "/api/v1/execution/recommendation",
                 "event_id": intent.event_id,
                 "market_type": intent.market_type.value,
                 "selection": intent.selection,

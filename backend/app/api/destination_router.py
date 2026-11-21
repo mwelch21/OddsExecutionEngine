@@ -5,9 +5,11 @@ from backend.app.api.destination_schemas import (
     DestinationResponse,
     RegisterWebPushRequest,
     SendTestResponse,
+    UpdateDestinationRequest,
     VapidPublicKeyResponse,
 )
 from backend.app.application.destination_service import (
+    DestinationGoneError,
     DestinationInactiveError,
     DestinationNotFoundError,
     DestinationService,
@@ -49,6 +51,28 @@ def create_destination_router(
                 DestinationResponse.from_domain(d) for d in service.list_destinations()
             ]
         )
+
+    @router.patch("/destinations/{destination_id}", response_model=DestinationResponse)
+    def update_destination(
+        destination_id: str, request: UpdateDestinationRequest
+    ) -> DestinationResponse:
+        try:
+            destination = service.update_destination(
+                destination_id, label=request.label, reactivate=request.active is True
+            )
+        except DestinationNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except DestinationGoneError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return DestinationResponse.from_domain(destination)
+
+    @router.delete("/destinations/{destination_id}", response_model=DestinationResponse)
+    def remove_destination(destination_id: str) -> DestinationResponse:
+        try:
+            destination = service.remove_destination(destination_id)
+        except DestinationNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return DestinationResponse.from_domain(destination)
 
     @router.post(
         "/destinations/{destination_id}/test",

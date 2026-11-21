@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from backend.app.application.quote_ingestion_service import (
@@ -30,9 +32,12 @@ class RecordingQuoteIngestionProvider:
         self._known_event = known_event
         self.list_quotes_calls: list[tuple[str, str]] = []
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
         self.list_quotes_calls.append((event_id, sport))
-        return list(self._quotes)
+        report = ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
+        return list(self._quotes), report
 
     def list_quotes_for_sport(
         self, sport: str
@@ -41,6 +46,9 @@ class RecordingQuoteIngestionProvider:
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._known_event
+
+    def check_quota(self) -> None:
+        pass
 
     def list_supported_sports(self) -> list[SupportedSport]:
         return [
@@ -62,6 +70,7 @@ class RecordingQuoteIngestionUnitOfWork:
         self._fail_on_persist = fail_on_persist
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
+        self.sport_refreshes: list[str] = []
 
     def __enter__(self) -> "RecordingQuoteIngestionUnitOfWork":
         self._staged_events = []
@@ -92,6 +101,9 @@ class RecordingQuoteIngestionUnitOfWork:
 
     def get_event_sport(self, event_id: str) -> EventSport | None:
         return self._event_sport
+
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
+        self.sport_refreshes.append(sport_key)
 
     def stage_event(self, event: WorkflowEvent) -> None:
         self._staged_events.append(event)

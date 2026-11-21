@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
 from backend.app.application.ports import (
@@ -67,7 +67,7 @@ class WatchIntentService:
         self._logger.info(
             "watch_intent.create.started",
             extra={
-                "path": "/watch-intents",
+                "path": "/api/v1/watch-intents",
                 "event_id": event_id,
                 "market_type": market_type.value,
                 "selection": selection,
@@ -306,6 +306,7 @@ class WatchIntentService:
             uow.stage_public_event(
                 build_opportunity_identified_public_event(
                     opportunity=opp,
+                    valid_for=timedelta(minutes=self._opportunity_ttl_minutes),
                     context=uow.get_opportunity_event_context(opp),
                 )
             )

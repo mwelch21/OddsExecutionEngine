@@ -4,6 +4,8 @@
 // requires the permission prompt to come from a user tap, so `enablePush` must
 // be called straight from a click handler.
 
+import { API_BASE } from "./api";
+
 export type PushSupport = "supported" | "unsupported" | "needs-install";
 
 export type Destination = {
@@ -53,7 +55,7 @@ export async function enablePush(): Promise<Destination> {
     throw new Error("Notifications were not allowed.");
   }
 
-  const keyResponse = await fetch("/push/vapid-public-key");
+  const keyResponse = await fetch(`${API_BASE}/push/vapid-public-key`);
   if (!keyResponse.ok) {
     throw new Error("Push is not configured on the server (VAPID_PUBLIC_KEY).");
   }
@@ -66,7 +68,7 @@ export async function enablePush(): Promise<Destination> {
     applicationServerKey: base64UrlToBytes(publicKey)
   });
 
-  const response = await fetch("/destinations/web-push", {
+  const response = await fetch(`${API_BASE}/destinations/web-push`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...subscription.toJSON(), label: deviceLabel() })
@@ -78,8 +80,8 @@ export async function enablePush(): Promise<Destination> {
 }
 
 export async function listDestinations(): Promise<Destination[]> {
-  const response = await fetch("/destinations");
-  if (!response.ok) throw new Error(`/destinations failed: ${response.status}`);
+  const response = await fetch(`${API_BASE}/destinations`);
+  if (!response.ok) throw new Error(`${API_BASE}/destinations failed: ${response.status}`);
   return ((await response.json()) as { destinations: Destination[] }).destinations;
 }
 
@@ -102,7 +104,7 @@ function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
 }
 
 export async function sendTestNotification(destinationId: string): Promise<void> {
-  const response = await fetch(`/destinations/${encodeURIComponent(destinationId)}/test`, {
+  const response = await fetch(`${API_BASE}/destinations/${encodeURIComponent(destinationId)}/test`, {
     method: "POST"
   });
   if (response.status === 429) {
@@ -110,4 +112,30 @@ export async function sendTestNotification(destinationId: string): Promise<void>
     throw new Error(`Test sent recently. Try again in ${wait}s.`);
   }
   if (!response.ok) throw new Error(`Test failed: ${response.status}`);
+}
+
+/** Rename a destination, re-enable one the operator removed, or both. A gone one is a 409. */
+export async function updateDestination(
+  destinationId: string,
+  change: { label?: string; active?: true }
+): Promise<Destination> {
+  const response = await fetch(`${API_BASE}/destinations/${encodeURIComponent(destinationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(change)
+  });
+  if (response.status === 409) {
+    throw new Error("This device is gone. Enable notifications on it again to resubscribe.");
+  }
+  if (!response.ok) throw new Error(`Updating the device failed: ${response.status}`);
+  return (await response.json()) as Destination;
+}
+
+/** Soft-disable: the destination and its delivery history stay, and it can be re-enabled. */
+export async function removeDestination(destinationId: string): Promise<Destination> {
+  const response = await fetch(`${API_BASE}/destinations/${encodeURIComponent(destinationId)}`, {
+    method: "DELETE"
+  });
+  if (!response.ok) throw new Error(`Removing the device failed: ${response.status}`);
+  return (await response.json()) as Destination;
 }

@@ -39,7 +39,8 @@
         "line",
         "target_price",
         "best",
-        "matching"
+        "matching",
+        "expires_at"
       ],
       "properties": {
         "opportunity_id": { "type": "string", "minLength": 1 },
@@ -77,6 +78,11 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/bookPrice" },
           "description": "Every fillable book, best first."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the opportunity stops being valid (created_at + the opportunity TTL). Past it, drop the event rather than act on it."
         }
       }
     }

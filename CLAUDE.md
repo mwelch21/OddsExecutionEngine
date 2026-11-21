@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`, `quota_observations`, `refresh_records`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -196,45 +196,61 @@ docker compose exec postgres psql -U app -d odds_execution
 
 Verified against `backend/app/main.py` route registration on `main`.
 
+Every route below is served under `/api/v1`; `GET /api/health` is the only unversioned route (ADR-018); it reports `database` (`healthy`/`unhealthy`, from `SELECT 1`) beside `status`. Additive change keeps `v1`; breaking change adds `/api/v2` beside it. The dev proxy forwards `/api/*` unchanged.
+
 Core:
 
-- `POST /execution/recommendation`
+- `POST /api/v1/execution/recommendation`
 
 Ingestion:
 
-- `POST /ingestion/quotes/refresh`
-- `POST /ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
-- `GET /sports` (catalog of sport keys a refresh may name, each with its sport and league)
+- `POST /api/v1/ingestion/quotes/refresh`
+- `POST /api/v1/ingestion/quotes/refresh-sport` (422 if the sport key is not in the catalog)
+- Both refresh routes return 503 `{code: OUT_OF_USAGE_CREDITS}` when the month's credits are spent
+- `GET /api/v1/sports` (catalog of sport keys a refresh may name, each with its sport and league)
 
 Browse:
 
-- `GET /events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
-- `GET /events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
+- `GET /api/v1/events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
+- `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
 
 Monitoring:
 
-- `POST /watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
-- `GET /watch-intents` (optional `event_id` and `status` filters)
-- `GET /watch-intents/{id}`
-- `DELETE /watch-intents/{id}` (409 if the watch already `triggered`)
-- `GET /opportunities` (optional `event_id` filter)
-- `GET /opportunities/{id}`
+- `POST /api/v1/watch-intents` (evaluates immediately; may return `triggered` with the opportunity nested)
+- `GET /api/v1/watch-intents` (optional `event_id` and `status` filters)
+- `GET /api/v1/watch-intents/{id}`
+- `DELETE /api/v1/watch-intents/{id}` (409 if the watch already `triggered`)
+- `GET /api/v1/opportunities` (optional `event_id` filter)
+- `GET /api/v1/opportunities/{id}`
 
 Notifications:
 
-- `GET /push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
-- `POST /destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
-- `GET /destinations` (safe fields and status; channel secrets are never returned)
-- `POST /destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
+- `GET /api/v1/push/vapid-public-key` (503 until `VAPID_PUBLIC_KEY` is set)
+- `POST /api/v1/destinations/web-push` (idempotent on the push endpoint; 201 new, 200 existing)
+- `GET /api/v1/destinations` (safe fields and status; channel secrets are never returned)
+- `POST /api/v1/destinations/{id}/test` (202; queues one test push; 404 unknown, 409 disabled, 429 within 10s of the last test)
+- `PATCH /api/v1/destinations/{id}` (rename and/or `active: true` to re-enable a removed one; 404 unknown, 409 re-enabling a `gone` one)
+- `DELETE /api/v1/destinations/{id}` (soft-disable as `user_removed`; row and deliveries kept; idempotent, a `gone` one stays `gone`; 404 unknown)
+
+Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` hook, a no-op until auth #14; each feature is its own module in `backend/app/api/admin/`):
+
+- `GET /api/v1/admin/auto-refresh` (switch, interval, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, `out_of_credits`, latest `quota` with the floor in force; defaults to off, 5 minutes)
+- `PUT /api/v1/admin/auto-refresh` (full replacement; interval 1-60 else 422; never refreshes itself, the worker's next poll does)
+- `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200; each row's `credits_spent` is read through its linked upstream call, null when it made none)
+- `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
+- `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
+- `GET /api/v1/admin/deliveries` (delivery log, newest first; optional `status`, `event_type`, `destination_id`; paged `page` / `page_size`, default 50, max 200; a short subject and device label only, never the push address, keys or raw payload; `last_error` is an allowlisted summary, never the stored text)
+- `GET /api/v1/admin/component-status` (database, notifier, provider, each `{component, state, observed_at}`; database from `SELECT 1`, notifier from its `notifier-listener` connection in `pg_stat_activity`, provider from the newest upstream call's outcome (balance checks included; a call stored before outcomes were kept reads `unknown`); no verdict, nothing stored; the API row is UI-side)
+- `GET /api/v1/admin/metrics` (last successful refresh; credits remaining, used, floor, `out_of_credits`, `below_floor`; delivery counts by status over the last 24h; pending deliveries count and oldest)
 
 Dev only:
 
-- `GET /test-ui`
+- `GET /api/v1/test-ui`
 
 Planned, not yet implemented:
 
-- `GET /events/{event_id}/markets`
-- `POST /ai/parse-intent`, `POST /ai/explain`, `POST /ai/suggest-actions` (AI layer)
+- `GET /api/v1/events/{event_id}/markets`
+- `POST /api/v1/ai/parse-intent`, `POST /api/v1/ai/explain`, `POST /api/v1/ai/suggest-actions` (AI layer)
 
 ## Upstream Quota Discipline
 
@@ -251,11 +267,16 @@ Non-negotiable. Read before touching ingestion, the provider, or anything that r
   refreshes into one call and reuses responses for incidental repeats, but never answers
   a refresh with data that predates it. See ADR-011.
 - **No sport list is configured.** Sport-wide refresh takes its sport from the request
-  body, validated against `GET /sports`. Per-event refresh is **one** call to the
+  body, validated against `GET /api/v1/sports`. Per-event refresh is **one** call to the
   single-event endpoint, its sport resolved from the stored event; it never scans sport
   feeds (404 unknown event, 422 unresolvable sport). See ADR-012.
-- Reads (`GET /events`, `GET /events/{id}/quotes`) are DB-backed and cost nothing.
-  Only `POST /ingestion/quotes/refresh*` spends.
+- Reads (`GET /api/v1/events`, `GET /api/v1/events/{id}/quotes`) are DB-backed and cost nothing.
+  Only `POST /api/v1/ingestion/quotes/refresh*` spends.
+- **Every upstream call records a quota observation** (`quota_observations`), served or
+  refused, from headers or the local `markets x regions` count. Crossing below the floor
+  writes one `oddsengine.quota.warning.v1`. Out of credits pauses Auto-Refresh (still on);
+  while paused the worker makes a free `GET /v4/sports` balance check at most once per
+  interval, and resumes once it shows credits. That check is the only other upstream call.
 
 `agents.md` is a symlink to this file, so one edit serves both.
 
@@ -266,7 +287,7 @@ See `docs/flows/_index.md` for full flow documentation.
 | Service | Location | Responsibility |
 |---|---|---|
 | EventQueryService | `application/event_query_service.py` | Filtered, paged event browse with per-event quote freshness; one event's ranked line board |
-| QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish |
+| QuoteIngestionService | `application/quote_ingestion_service.py` | Provider fetch -> normalization -> persistence -> event publish; writes one refresh record per refresh |
 | RecommendationService | `application/recommendation_service.py` | Intent persistence -> quote matching -> recommendation -> event publish |
 | WatchIntentService | `application/watch_intent_service.py` | Watch intent persistence -> opportunity evaluation -> validity check -> event publish |
 | NormalizationEngine | `engines/normalization_engine.py` | Filters raw provider quotes into canonical form |
@@ -275,6 +296,17 @@ See `docs/flows/_index.md` for full flow documentation.
 | WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Evaluates watch intents against quotes, produces opportunities |
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
 | DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
+| DeliveryQueryService | `application/delivery_query_service.py` | Delivery log: filtered, paged deliveries with a subject line from `DeliverySubjectEngine` |
+| AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
+| AdminQueryService | `application/admin_query_service.py` | Admin view reads over a read-only UoW: the refresh log, filtered and paged |
+| CreditQueryService | `application/credit_query_service.py` | Credits tab reads: hourly balance history and monthly burn from `CreditHistoryEngine` |
+| SystemStatusQueryService | `application/system_status_query_service.py` | Component status (via `ComponentStatusEngine`) and operational metrics for the Systems tab; DB reads only |
+| ComponentStatusEngine | `engines/component_status_engine.py` | Maps each signal to its component's state; the credits-below-floor attention rule |
+| QuotaService | `application/quota_service.py` | Records each upstream call's quota observation; writes the quota warning on a floor crossing (ADR-016) |
+| QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation (kind, sport, event, credits spent), derived floor, crossing rule, paused state |
+| CreditHistoryEngine | `engines/credit_history_engine.py` | Hourly last-balance buckets, UTC month windows, burn per sport and call kind |
+| AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown: which watched sports are due |
+| auto-refresh worker | `auto_refresh_worker.py` (`odds-auto-refresh`) | Polls every 30s under a Postgres advisory lock; the only automatic refresh path |
 | notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |
 | TheOddsApiProvider | `infrastructure/odds_api_provider.py` | Live sportsbook quote provider (The Odds API) |
 

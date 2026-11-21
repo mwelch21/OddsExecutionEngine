@@ -1,6 +1,7 @@
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -203,5 +204,103 @@ deliveries_table = Table(
     Column("delivered_at", DateTime(timezone=True), nullable=True),
     Column("last_error", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # When the delivery reached delivered, failed, expired or gone; null while pending.
+    Column("ended_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint("event_id", "destination_id", name="uq_deliveries_event_destination"),
+)
+
+# Auto-Refresh (ADR-016). A single row, pinned by `id = 1`, holding the operator's
+# switch exactly as last set, plus the worker's most recent refresh outcome. The row
+# may be absent (a fresh or truncated database): readers treat that as the defaults.
+auto_refresh_settings_table = Table(
+    "auto_refresh_settings",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("enabled", Boolean, nullable=False, server_default="false"),
+    Column("interval_minutes", Integer, nullable=False, server_default="5"),
+    Column("quota_floor", Integer, nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("id = 1", name="ck_auto_refresh_settings_single_row"),
+    CheckConstraint(
+        "interval_minutes BETWEEN 1 AND 60", name="ck_auto_refresh_settings_interval"
+    ),
+)
+
+# When each provider sport key was last pulled sport-wide, manual or automatic. The
+# Auto-Refresh cooldown is derived from it; a per-event refresh does not touch it.
+# One row per upstream call (ADR-016). Ordered by id: rows are written under a lock,
+# so insertion order is observation order.
+quota_observations_table = Table(
+    "quota_observations",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("remaining", Integer, nullable=True),
+    Column("used", Integer, nullable=True),
+    Column("source", String(length=16), nullable=False),
+    Column("out_of_credits", Boolean, nullable=False, server_default="false"),
+    Column("observed_at", DateTime(timezone=True), nullable=False, index=True),
+    # What the call was and what it spent (#104); null on rows from before they were kept.
+    Column("call_kind", String(length=16), nullable=True),
+    Column("sport_key", String(length=64), nullable=True),
+    Column("event_id", String(length=255), nullable=True),
+    Column("credits_spent", Integer, nullable=True),
+    # How the call ended (#121); null on rows from before it was kept, read as Unknown.
+    Column("call_outcome", String(length=16), nullable=True),
+    CheckConstraint("source IN ('headers', 'local')", name="ck_quota_observations_source"),
+    CheckConstraint(
+        "call_kind IS NULL OR call_kind IN ('sport', 'event', 'balance_check')",
+        name="ck_quota_observations_call_kind",
+    ),
+    CheckConstraint(
+        "call_outcome IS NULL OR call_outcome IN ('answered', 'out_of_credits',"
+        " 'network_error', 'server_error', 'auth_failure', 'rate_limited',"
+        " 'invalid_response', 'client_error')",
+        name="ck_quota_observations_call_outcome",
+    ),
+)
+
+sport_refreshes_table = Table(
+    "sport_refreshes",
+    metadata,
+    Column("sport_key", String(length=64), primary_key=True),
+    Column("last_refreshed_at", DateTime(timezone=True), nullable=False),
+)
+
+# The refresh log (#96): one append-only row per refresh, manual or Auto-Refresh,
+# whatever its outcome. Written only by quote ingestion. Ordered by id within a
+# start time, so paging is stable.
+refresh_records_table = Table(
+    "refresh_records",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("scope", String(length=16), nullable=False),
+    Column("sport_key", String(length=64), nullable=False),
+    Column("event_id", String(length=255), nullable=True),
+    Column("trigger", String(length=16), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False, index=True),
+    Column("finished_at", DateTime(timezone=True), nullable=False),
+    Column("outcome", String(length=16), nullable=False),
+    Column("error_code", String(length=32), nullable=True),
+    Column("error", Text, nullable=True),
+    Column("events_refreshed", Integer, nullable=False, server_default="0"),
+    # The upstream call this refresh used; coalesced refreshes share one (#104).
+    Column(
+        "quota_observation_id",
+        Integer,
+        ForeignKey("quota_observations.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    CheckConstraint("scope IN ('sport', 'event')", name="ck_refresh_records_scope"),
+    CheckConstraint("trigger IN ('manual', 'auto')", name="ck_refresh_records_trigger"),
+    CheckConstraint(
+        "outcome IN ('succeeded', 'failed', 'refused')", name="ck_refresh_records_outcome"
+    ),
+    CheckConstraint(
+        "(scope = 'sport') = (event_id IS NULL)", name="ck_refresh_records_event_scope"
+    ),
+    CheckConstraint(
+        "error_code IS NULL OR error_code IN ('UPSTREAM_HTTP', 'UPSTREAM_TIMEOUT', "
+        "'OUT_OF_USAGE_CREDITS', 'INVALID_RESPONSE', 'INTERNAL')",
+        name="ck_refresh_records_error_code",
+    ),
 )

@@ -13,8 +13,20 @@ _Avoid_: User, account, customer, admin (for the person; the operator's controls
 ### Surfaces
 
 **Admin view**:
-The operator-only controls for running the system: Auto-Refresh, provider credits and quota warnings. Seen on desktop while using the app. Stays with the operator when other people arrive.
+The operator-only page for running and monitoring the system: whether it is working, what it costs, and the controls (Auto-Refresh, devices). Desktop-first. Stays with the operator when other people arrive.
 _Avoid_: Settings, dashboard, console
+
+**Component status**:
+Whether one part of the system is reachable right now, read straight from a signal the system already has, never scored or combined. Each component uses words that say only what its signal can prove: available ones are Healthy or Unhealthy, the notifier is Connected or Disconnected. Unknown when the signal can't be read; Disabled when the operator turned the feature off.
+_Avoid_: Health score, system health (as one combined verdict), status (alone: watch and delivery status mean other things)
+
+**Operational metrics**:
+Facts read from stored records and shown as they are: last successful refresh, credits left, recent delivery outcomes, pending deliveries. Never judged against a threshold.
+_Avoid_: Health checks, KPIs
+
+**Home**:
+The lines page inside the User view: events and their line boards, where watches are placed. The page the app opens to.
+_Avoid_: Lines view, dashboard
 
 **User view**:
 What someone placing watches sees: events, line boards, watches, notifications, and the screen a tapped notification opens. Phone-first. Today the operator is also its only user.
@@ -40,6 +52,14 @@ _Avoid_: Alert, ping, message
 
 **Opportunity notification**:
 The notification for one `OpportunityIdentified`: selection, best price and book, target line, fillable. One opportunity yields exactly one, however many books match.
+
+**Refresh**:
+One deliberate request to pull fresh quotes, for one sport or one event, made by the operator (manual) or by Auto-Refresh. Every refresh is recorded with its outcome, whether it succeeded, failed or was refused.
+_Avoid_: Sync, poll, fetch
+
+**Upstream call**:
+One billed request to the odds provider. A refresh uses at most one; refreshes made at the same moment can share one, and a credit-balance check is an upstream call with no refresh behind it. Credits are spent per upstream call, not per refresh.
+_Avoid_: Request (when you mean the billed provider call)
 
 **Quota warning**:
 The notification sent when remaining provider credits fall below a floor. Informs only; it does not switch Auto-Refresh off.

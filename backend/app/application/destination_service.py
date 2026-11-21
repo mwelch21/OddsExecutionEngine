@@ -26,6 +26,13 @@ class DestinationInactiveError(Exception):
         )
 
 
+class DestinationGoneError(Exception):
+    def __init__(self, destination_id: str) -> None:
+        super().__init__(
+            f"Destination {destination_id} is gone; only a fresh subscription can bring it back."
+        )
+
+
 class SendTestRateLimitedError(Exception):
     def __init__(self, retry_after_seconds: int) -> None:
         super().__init__(f"A test was sent recently; retry in {retry_after_seconds}s.")
@@ -76,6 +83,49 @@ class DestinationService:
     def list_destinations(self) -> list[Destination]:
         with self._unit_of_work_factory() as uow:
             return uow.list_destinations()
+
+    def update_destination(
+        self, destination_id: str, label: str | None, reactivate: bool
+    ) -> Destination:
+        """Rename a destination, re-enable one the operator removed, or both."""
+        with self._unit_of_work_factory() as uow:
+            if uow.get_destination(destination_id) is None:
+                raise DestinationNotFoundError(destination_id)
+            destination = uow.update_destination(destination_id, label, reactivate)
+            # Checked on the row as written, not as first read: raising here
+            # also rolls back a rename sent alongside.
+            if reactivate and not destination.can_reactivate:
+                raise DestinationGoneError(destination_id)
+
+        self._logger.info(
+            "destination.updated",
+            extra={
+                "destination_id": destination_id,
+                "renamed": label is not None,
+                "active": destination.is_active,
+            },
+        )
+        return destination
+
+    def remove_destination(self, destination_id: str) -> Destination:
+        """Soft-disable as `user_removed`. The row and its deliveries are kept.
+
+        Idempotent. A destination that is already disabled keeps its reason, so
+        removing a `gone` one does not make it re-enableable.
+        """
+        with self._unit_of_work_factory() as uow:
+            if uow.get_destination(destination_id) is None:
+                raise DestinationNotFoundError(destination_id)
+            destination = uow.disable_destination(destination_id, DisabledReason.USER_REMOVED)
+
+        self._logger.info(
+            "destination.removed",
+            extra={
+                "destination_id": destination_id,
+                "disabled_reason": destination.disabled_reason,
+            },
+        )
+        return destination
 
     def send_test(self, destination_id: str) -> PublicEvent[DestinationTestDataV1]:
         """Queue a test notification for one destination.

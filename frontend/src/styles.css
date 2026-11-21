@@ -17,6 +17,7 @@
   --warn: #fbbf24;
   --danger: #fb7185;
   --radius: 8px;
+  --admin-gap: 16px;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
 }
 
@@ -650,6 +651,56 @@ select {
   flex: 0 0 auto;
 }
 
+.execution-note > div {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Collapsible sections ------------------------------------------------- */
+
+.section-title,
+.section-actions,
+.market-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.execution-note .section-title,
+.market-group-heading {
+  justify-content: space-between;
+}
+
+.section-title {
+  margin-top: 10px;
+}
+
+.section-title h2 {
+  margin: 0;
+}
+
+.execution-note .section-title {
+  margin-top: 0;
+}
+
+.market-group-heading {
+  min-height: 32px;
+}
+
+.collapse-toggle {
+  flex: 0 0 auto;
+  width: 32px;
+  min-height: 32px;
+}
+
+.collapse-toggle svg {
+  transition: transform 140ms ease;
+}
+
+.collapse-toggle.collapsed svg {
+  transform: rotate(-90deg);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -764,6 +815,47 @@ select {
   .panel-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar {
+    gap: 14px;
+    padding: 12px 16px;
+  }
+
+  /* Status pills and the Admin view button share one row on a phone. */
+  .topbar-status {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .topbar-status > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .topbar-admin {
+    min-height: 30px;
+    margin-left: auto;
+    padding: 0 10px;
+    font-size: 0.85rem;
+  }
+
+  /* With the attention pill showing, four items cannot fit at phone width:
+     the watch count and Admin view drop their words and keep their icons. */
+  /* Visually hidden, still read aloud, so the count keeps its meaning. */
+  .topbar-status:has(.attention-pill) .topbar-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .topbar-status:has(.attention-pill) .topbar-admin {
+    width: 30px;
+    padding: 0;
   }
 
   .workspace {
@@ -986,4 +1078,643 @@ select {
 
 .fill-note.good {
   color: var(--good);
+}
+
+.opportunity-banner,
+.opportunity-note {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: var(--radius);
+}
+
+.opportunity-banner {
+  border: 1px solid var(--good);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.opportunity-banner h2 {
+  text-transform: capitalize;
+  margin: 8px 0 4px;
+}
+
+.opportunity-banner p,
+.opportunity-note p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.opportunity-note {
+  align-items: center;
+  border: 1px solid var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.market-row-pinned {
+  margin: 0 -10px;
+  padding: 10px;
+  border: 1px solid var(--good);
+  border-radius: var(--radius);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.market-group .market-row-pinned + .market-row {
+  border-top: none;
+}
+
+/* --- Admin view ----------------------------------------------------------- */
+
+.admin-view {
+  display: grid;
+  gap: var(--admin-gap);
+}
+
+.admin-tabstrip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-tabstrip a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-tabstrip a:hover {
+  color: var(--text);
+}
+
+.admin-tabstrip a.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.admin-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
+}
+
+/* A grid of section cards: a new section is one more card. `min()` keeps a
+   card from overflowing a phone narrower than 320px plus the gutters. */
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
+}
+
+.admin-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.admin-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-panel-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.admin-panel .empty-state {
+  min-height: 120px;
+  text-align: center;
+}
+
+.admin-row,
+.admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-form {
+  gap: 24px;
+}
+
+.admin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.admin-field .target-input {
+  padding: 0 10px;
+}
+
+.admin-field input {
+  width: 96px;
+}
+
+.admin-muted,
+.admin-warn {
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-muted {
+  color: var(--text-muted);
+}
+
+.admin-warn {
+  color: var(--warn);
+}
+
+.admin-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 14px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-switch-thumb {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  transition: background 140ms ease;
+}
+
+.admin-switch-thumb::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition:
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.admin-switch.on .admin-switch-thumb {
+  background: color-mix(in srgb, var(--good) 25%, transparent);
+}
+
+.admin-switch.on .admin-switch-thumb::after {
+  background: var(--good);
+  transform: translateX(16px);
+}
+
+.admin-switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.destination-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.destination-row {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.destination-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.destination-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.destination-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.destination-label-input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 1080px) {
+  .admin-two {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Refresh log (#103): failed and refused rows carry a coloured edge. */
+.refresh-log {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.refresh-log-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.refresh-log-failed {
+  border-left-color: var(--danger);
+}
+
+.refresh-log-refused {
+  border-left-color: var(--warn);
+}
+
+.refresh-log-main,
+.refresh-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.refresh-log-meta {
+  font-size: 12px;
+}
+
+.refresh-log-target {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.refresh-log-error {
+  overflow-wrap: anywhere;
+}
+
+.credit-meter {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.credit-meter-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: visible;
+}
+
+.credit-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--good);
+}
+
+.credit-meter-fill.low {
+  background: var(--warn);
+}
+
+.credit-meter-floor {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  background: var(--danger);
+}
+
+/* --- Delivery log (#105) --------------------------------------------------- */
+
+.delivery-log {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.delivery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+/* Failed, expired and gone ended without arriving; the error is the row's title. */
+.delivery-row-problem {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-muted));
+  cursor: help;
+}
+
+.delivery-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.delivery-row-main strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Read by screen readers; sighted users get the same text on hover. */
+.delivery-row-error {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Credits tab (#104): meter, balance history, burn per sport. */
+.credits-tab {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--admin-gap);
+  align-items: start;
+}
+
+/* The history chart takes the full row under the meter and the burn. */
+.credits-tab > :nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.credit-meter {
+  display: grid;
+  gap: 10px;
+}
+
+.credit-meter-figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.credit-meter-remaining {
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-meter-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.credit-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.credit-meter-fill.low {
+  background: var(--warn);
+}
+
+.credit-meter-floor {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--text);
+}
+
+.credit-history {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.credit-history-plot {
+  position: relative;
+  height: 180px;
+  margin-left: 40px;
+}
+
+.credit-history-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.credit-history-plot line,
+.credit-history-plot path {
+  vector-effect: non-scaling-stroke;
+}
+
+.credit-history-ticks span {
+  position: absolute;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-history-xaxis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 40px;
+  font-size: 0.75rem;
+}
+
+.credit-history-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.credit-history-grid {
+  stroke: var(--border);
+}
+
+.credit-history-floor {
+  stroke: var(--warn);
+  stroke-dasharray: 4 4;
+}
+
+.credit-burn-total {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.credit-burn-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.credit-burn-row {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.credit-burn-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-burn-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.credit-burn-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.credit-burn-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-burn-kinds {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .credits-tab {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Component status (#106): four cards, one per component, above the metrics. */
+.status-section {
+  display: grid;
+  gap: 12px;
+}
+
+.status-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--admin-gap);
+}
+
+.status-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  justify-items: start;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.status-card-problem {
+  border-left: 3px solid var(--warn);
+}
+
+.status-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-card-heading h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--admin-gap);
+  margin: 0;
+}
+
+.metric {
+  display: grid;
+  gap: 4px;
+}
+
+.metric dt {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.metric dd {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.metric strong {
+  font-size: 1.25rem;
+}
+
+.metric-warn {
+  color: var(--warn);
+}
+
+.metric-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attention-pill {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.status-card-heading svg {
+  flex: none;
 }

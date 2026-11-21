@@ -20,7 +20,7 @@ This writes `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` into `.e
 Restart the API afterwards (`just refresh`) and check:
 
 ```bash
-curl -s localhost:8000/push/vapid-public-key
+curl -s localhost:8000/api/v1/push/vapid-public-key
 ```
 
 ### Rotating keys
@@ -45,6 +45,16 @@ Web Push needs HTTPS (desktop `localhost` is exempt; the iPhone is not).
    The Vite dev server proxies the API paths, so one HTTPS origin serves both.
    `tailscale serve reset` turns it off.
 
+4. Set that URL as the notifier's `APP_ORIGIN` in `.env`, so tapped
+   notifications open the app there. HTTPS, no trailing path:
+
+   ```bash
+   APP_ORIGIN=https://<machine>.<tailnet>.ts.net
+   ```
+
+   It is the Mac's name (the machine running Serve), not the iPhone's. The
+   notifier refuses to start without a valid origin.
+
 ## 3. Install on the iPhone and subscribe
 
 Requires **iOS 16.4 or later**. Push only works from the home-screen app, never
@@ -57,7 +67,7 @@ from a Safari tab.
 5. The pill changes to "Notifications on". Confirm the device is stored:
 
    ```bash
-   curl -s localhost:8000/destinations
+   curl -s localhost:8000/api/v1/destinations
    ```
 
 In a Safari tab the app shows "Add to Home Screen to get notifications" instead
@@ -77,7 +87,7 @@ Next to "Notifications on", tap **Send test**. Within a second the device shows
 from the API:
 
 ```bash
-curl -s -X POST localhost:8000/destinations/<id>/test   # 202, then 429 for 10s
+curl -s -X POST localhost:8000/api/v1/destinations/<id>/test   # 202, then 429 for 10s
 ```
 
 Check what happened:
@@ -90,15 +100,41 @@ SELECT status, attempts, last_error, delivered_at FROM deliveries ORDER BY creat
 service's answer in `last_error`. `expired` means the test sat more than 10
 minutes before the notifier saw it (was the notifier down?).
 
-## 5. Desktop
+## 5. Opportunity notifications
+
+Create a watch whose target is already fillable (for example a moneyline at a
+worse price than the current best). It triggers immediately, and every active
+destination shows:
+
+```text
+Knicks @ Celtics
+Knicks +125 @ DraftKings · target +100 · fillable
+```
+
+Tapping it opens `APP_ORIGIN/events/<id>?opportunity=<id>`: the line board with
+that opportunity pinned (ADR-018). On iOS 18.4+ the notification is a
+Declarative Web Push, so the tap opens the Home Screen app even from a cold
+launch. A quota warning opens `APP_ORIGIN/admin/credits`.
+
+An opportunity expires with its validity TTL (`OPPORTUNITY_TTL_MINUTES`); a
+delivery the notifier reaches later is `expired`, not sent.
+
+After a branch switch, rebuild the notifier as well as the API: it is compiled
+into its image (`docker compose up -d --build notifier`).
+
+## 6. Desktop
 
 Open the app (`http://localhost:5173`, or the tailnet URL) in Chrome, Edge,
-Firefox or Safari and tap **Enable notifications**. Each browser is its own
-destination.
+Firefox or Safari and tap **Enable notifications**. Each browser and origin is
+its own destination: enabling on both `localhost` and the tailnet URL means two
+notifications per opportunity on that Mac.
 
 ## Limits in v1
 
 - Notifications arrive only while the Mac is awake, online, and running the stack.
-- Only test notifications are delivered so far. Opportunity notifications come
-  with "Opportunity notifications reach the operator" (#72); retries and
-  handling of dead subscriptions with "Delivery resilience" (#73).
+- 429, 5xx and network errors are retried with exponential backoff (a 10s
+  step doubling to a 15 min cap, equal jitter: the first retry is 5–10s) until the event's max age, then `expired`.
+- A subscription the push service answers 404/410 for is `gone`: the
+  destination is soft-disabled (`disabled_reason = gone`) and its queued
+  deliveries are dropped. Tapping **Enable notifications** on that device again
+  reactivates it. Any other 4xx is `failed` for good, with `last_error` kept.

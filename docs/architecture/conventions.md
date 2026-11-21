@@ -14,6 +14,7 @@
 - API parity: every UI capability has a public API endpoint, and the UI reaches it only through that endpoint. Nothing is UI-only.
 - Events that leave the system (notifications today, webhook or SDK later) are a versioned public contract, not a dump of internal `workflow_events`.
 - The system notifies; it never places bets. Programmatic execution belongs in the consumer's code.
+- Operator-only routes (the Admin view's) mount on `create_admin_router()` under `/api/v1/admin`, so the `require_operator` hook gates them all (ADR-018). Each feature is its own route and schema module in `backend/app/api/admin/`, included into the admin router in `main.py` before the admin router joins `/api/v1`: `include_router` copies routes once.
 
 ## Layering
 
@@ -66,6 +67,10 @@
 - A deliberate refresh always pulls live. Caching may collapse concurrent calls into one, but must never answer a refresh with data that predates it. See ADR-011.
 - Per-event refresh is one call to the single-event endpoint. The sport comes from the stored event (or the provider's in-process knowledge), matched against the provider catalog; an event whose sport cannot be resolved fails loudly, never by scanning sport feeds. See ADR-012.
 - Credit figures are reported only when upstream was actually contacted, and a missing figure is `None`, never `0`.
+- Every upstream call, served or refused, hands its quota to the injected `QuotaRecorder` before the provider raises on the response. A recorder failure is logged and never fails the refresh. A response the cache answered records nothing.
+- Every refresh, manual or Auto-Refresh, sport or event, leaves one `refresh_records` row (#96), written by `QuoteIngestionService` through the injected `RefreshRecorder` in its own transaction after ingestion settles. Failed and refused refreshes are recorded; a request rejected before any pull (unknown sport or event) is not a refresh and is not. A recorder failure is logged and never fails the refresh.
+- `OUT_OF_USAGE_CREDITS` is matched on the body's `error_code`, not the status code, and raised as `OutOfUsageCreditsError` (503 from the refresh routes).
+- While Auto-Refresh is paused for credits, its only upstream call is the free `GET /v4/sports` balance check, at most once per interval and only when a watched sport is due.
 
 ## Decisions log policy
 
@@ -90,8 +95,8 @@
 - Best book is `(-price, sportsbook)`, reusing `RecommendationEngine.rank_quotes`. Determinism is the requirement, not the alphabet: without it the same market state yields different notifications on different runs.
 - Staleness is keyed to the **best book only**: `get_latest_quote_times` looks up `best_sportsbook`. A non-best book moving is irrelevant to the decision. Known gap, accepted: a best book moving down while a listed second book overtakes it reads as stale rather than silently re-ranking the snapshot.
 - Reads return the stored snapshot as-is plus `is_valid` / `invalid_reason`, preserving the distinction between "here is what we found" and "here is what is true now". Never re-check live quotes on read.
-- `POST /watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
-- `DELETE /watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
+- `POST /api/v1/watch-intents` returns the opportunity alongside the watch when creation filled it, since the same transaction already computed it. That nested opportunity carries no `is_valid` flag: it is what was true at commit, and a freshness check there answers a question nobody asked.
+- `DELETE /api/v1/watch-intents/{id}` returns **409** on a `triggered` watch. Cancelling one would erase the record that it fired, which is the property the terminal status exists to preserve.
 - No application-level opportunity deduplication. Terminal watches make it unreachable, and the unique constraint is the real guard — it also covers concurrent double-evaluation, which key checking never did.
 
 ## Quote times: the book's clock and ours are different facts
@@ -103,7 +108,7 @@
 
 ## Event browse reads
 
-- `GET /events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
+- `GET /api/v1/events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
 - Filtering and paging happen in SQL, not after the fact in Python. Dropping rows post-query would report a total the returned page does not add up to, and the page count is the reason this endpoint is page-based rather than cursor-based.
 - Started events are excluded by default, matching the watch paths: a started event can no longer produce an opportunity. `include_started=true` opts back in. An event with no known start time counts as not started.
 - Ordering is `starts_at ASC NULLS LAST`, tie-broken on `external_id`, so paging cannot repeat or skip a row and the order is identical on Postgres and SQLite.
@@ -114,7 +119,7 @@
 
 ## The line board is ranked server-side
 
-- `GET /events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
+- `GET /api/v1/events/{id}/quotes` returns one event's markets, each carrying its books ranked best-first, plus `best_sportsbook` / `best_price` naming the head of that list. The client never re-sorts to find the best book.
 - Ranking calls `RecommendationEngine.rank_quotes` — the same `(-price, sportsbook)` rule, tie-break included, that the recommendation and watch paths apply. A second sort in the client can show a different winner than the book a watch on that market would fire on, and "best" must mean one thing system-wide.
 - Storage does not rank. The read unit of work returns `MarketQuotes` in query order and the application layer applies the engine, keeping the rule in one place instead of half in SQL.
 - A market no book is quoting is returned present and empty, with `best_sportsbook` / `best_price` null. "Nobody is offering this" is an answer the board has to show, and it is never a best book at price zero.

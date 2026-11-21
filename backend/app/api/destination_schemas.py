@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.app.domain.destinations import Channel, Destination, DisabledReason
 
@@ -20,6 +21,19 @@ class RegisterWebPushRequest(BaseModel):
     endpoint: str = Field(min_length=1, pattern=r"^https://")
     keys: WebPushSubscriptionKeys
     label: str = Field(default="Browser", min_length=1, max_length=128)
+
+
+class UpdateDestinationRequest(BaseModel):
+    """Rename, re-enable, or both. Removing is `DELETE`, so `active` only takes `true`."""
+
+    label: str | None = Field(default=None, min_length=1, max_length=128)
+    active: Literal[True] | None = None
+
+    @model_validator(mode="after")
+    def _requires_a_change(self) -> Self:
+        if self.label is None and self.active is None:
+            raise ValueError("Give a label, active: true, or both.")
+        return self
 
 
 class DestinationResponse(BaseModel):

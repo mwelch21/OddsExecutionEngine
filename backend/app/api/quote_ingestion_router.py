@@ -14,6 +14,13 @@ from backend.app.application.quote_ingestion_service import (
     UnresolvableEventSportError,
     UnsupportedSportError,
 )
+from backend.app.domain.quota import OutOfUsageCreditsError
+
+
+def _out_of_credits(err: OutOfUsageCreditsError) -> HTTPException:
+    return HTTPException(
+        status_code=503, detail={"code": "OUT_OF_USAGE_CREDITS", "message": str(err)}
+    )
 
 
 def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
@@ -30,6 +37,8 @@ def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(err)) from err
         except UnresolvableEventSportError as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        except OutOfUsageCreditsError as err:
+            raise _out_of_credits(err) from err
         return QuoteRefreshResponse.from_domain(summary)
 
     @router.get(
@@ -59,6 +68,8 @@ def create_quote_ingestion_router(service: QuoteIngestionService) -> APIRouter:
                     f"Supported: {', '.join(err.supported)}"
                 ),
             ) from err
+        except OutOfUsageCreditsError as err:
+            raise _out_of_credits(err) from err
         return SportRefreshResponse.from_domain(result)
 
     return router

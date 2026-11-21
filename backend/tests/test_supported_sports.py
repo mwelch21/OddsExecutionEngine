@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -29,9 +31,11 @@ class CountingQuoteProvider:
         self.sport_fetches: list[str] = []
         self.event_fetches: list[str] = []
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
         self.event_fetches.append(event_id)
-        return []
+        return [], ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def list_quotes_for_sport(
         self, sport: str
@@ -42,13 +46,38 @@ class CountingQuoteProvider:
     def get_event_info(self, event_id: str) -> None:
         return None
 
+    def check_quota(self) -> None:
+        pass
+
     def list_supported_sports(self) -> list[SupportedSport]:
         return list(self._supported)
 
 
-def _build_service(provider: CountingQuoteProvider) -> QuoteIngestionService:
+class SportStampOnlyUnitOfWork:
+    """Allows only the sport-wide refresh stamp; any quote write fails the test."""
+
+    def __init__(self) -> None:
+        self.stamped: list[str] = []
+
+    def __enter__(self) -> "SportStampOnlyUnitOfWork":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
+        self.stamped.append(sport_key)
+
+    def __getattr__(self, name: str) -> object:
+        pytest.fail(f"unit of work should not be reached: {name}")
+
+
+def _build_service(
+    provider: CountingQuoteProvider, unit_of_work: SportStampOnlyUnitOfWork | None = None
+) -> QuoteIngestionService:
+    stamp_only = unit_of_work or SportStampOnlyUnitOfWork()
     return QuoteIngestionService(
-        unit_of_work_factory=lambda: pytest.fail("unit of work should not be reached"),
+        unit_of_work_factory=lambda: stamp_only,  # type: ignore[arg-type,return-value]
         quote_provider=provider,
         normalization_engine=NormalizationEngine(),
         workflow_event_publisher=InMemoryWorkflowEventPublisher(),
@@ -94,12 +123,15 @@ def test_catalog_covers_every_mapped_sport() -> None:
 
 def test_unsupported_sport_is_rejected_before_any_upstream_call() -> None:
     provider = CountingQuoteProvider(_supported())
-    service = _build_service(provider)
+    unit_of_work = SportStampOnlyUnitOfWork()
+    service = _build_service(provider, unit_of_work)
 
     with pytest.raises(UnsupportedSportError) as excinfo:
         service.refresh_sport("americanfootbal_nfl")
 
     assert provider.sport_fetches == []
+    # A rejected sport was never pulled, so its cooldown must not restart.
+    assert unit_of_work.stamped == []
     assert "americanfootball_nfl" in excinfo.value.supported
 
 
@@ -116,7 +148,7 @@ def test_supported_sport_outside_the_configured_list_still_refreshes() -> None:
 
 def test_sports_endpoint_lists_the_catalog(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        response = client.get("/sports")
+        response = client.get("/api/v1/sports")
 
     assert response.status_code == 200
     sports = response.json()["sports"]
@@ -126,9 +158,9 @@ def test_sports_endpoint_lists_the_catalog(sqlite_database_url: str) -> None:
 
 def test_refresh_sport_rejects_an_unknown_key_with_422(sqlite_database_url: str) -> None:
     with TestClient(_build_test_app(sqlite_database_url)) as client:
-        supported = [entry["key"] for entry in client.get("/sports").json()["sports"]]
+        supported = [entry["key"] for entry in client.get("/api/v1/sports").json()["sports"]]
         response = client.post(
-            "/ingestion/quotes/refresh-sport",
+            "/api/v1/ingestion/quotes/refresh-sport",
             json={"sport": "not_a_real_sport"},
         )
 

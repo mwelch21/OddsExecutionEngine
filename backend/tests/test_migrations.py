@@ -272,3 +272,58 @@ def test_postgres_quote_time_split_migration_moves_the_pull_time_to_ingested_at(
 
     with session_factory.create_session() as session:
         _assert_quote_times_were_split(session, pulled_at)
+
+
+def _reset_postgres(database_url: str) -> DatabaseSessionFactory:
+    session_factory = DatabaseSessionFactory(database_url)
+    with session_factory.engine.begin() as connection:
+        for table_name in reversed(inspect(session_factory.engine).get_table_names()):
+            connection.exec_driver_sql(f"DROP TABLE IF EXISTS {table_name} CASCADE")
+    return session_factory
+
+
+def _assert_call_outcome_migration(
+    database_url: str, session_factory: DatabaseSessionFactory
+) -> None:
+    config = _build_alembic_config(database_url)
+    command.upgrade(config, "20261108_0016")
+    with session_factory.create_session() as session:
+        session.execute(
+            text(
+                "INSERT INTO quota_observations (remaining, used, source, out_of_credits,"
+                " observed_at, call_kind) VALUES (400, 100, 'headers', false, :at, 'sport')"
+            ),
+            {"at": datetime(2026, 11, 8, 12, 0, tzinfo=UTC)},
+        )
+        session.commit()
+
+    command.upgrade(config, "20261109_0017")
+
+    with session_factory.create_session() as session:
+        # How a call stored before this revision ended was never kept: it stays null.
+        assert session.execute(text("SELECT call_outcome FROM quota_observations")).all() == [
+            (None,)
+        ]
+        with pytest.raises(IntegrityError):
+            session.execute(text("UPDATE quota_observations SET call_outcome = 'fine'"))
+        session.rollback()
+
+    command.downgrade(config, "20261108_0016")
+    columns = {
+        column["name"]
+        for column in inspect(session_factory.engine).get_columns("quota_observations")
+    }
+    assert "call_outcome" not in columns
+    command.upgrade(config, "head")
+
+
+def test_call_outcome_migration_keeps_stored_calls_unknown(sqlite_database_url: str) -> None:
+    _assert_call_outcome_migration(sqlite_database_url, DatabaseSessionFactory(sqlite_database_url))
+
+
+def test_postgres_call_outcome_migration_keeps_stored_calls_unknown() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    _assert_call_outcome_migration(database_url, _reset_postgres(database_url))

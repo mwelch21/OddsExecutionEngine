@@ -44,6 +44,7 @@ from backend.tests.db_helpers import prepare_test_database
 
 CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts" / "events"
 NOTIFY_CHANNEL = "public_events"
+TTL = timedelta(minutes=720)
 
 
 def _validator(event_type: str) -> Draft202012Validator:
@@ -103,7 +104,7 @@ def opportunity() -> Opportunity:
 
 def test_built_event_with_unknown_context_still_validates(opportunity: Opportunity) -> None:
     event = build_opportunity_identified_public_event(
-        opportunity=opportunity,
+        opportunity=opportunity, valid_for=TTL,
         context=OpportunityEventContext(),
     )
 
@@ -112,6 +113,34 @@ def test_built_event_with_unknown_context_still_validates(opportunity: Opportuni
     _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
     assert payload["data"]["best"]["quoted_at"] is None
     assert payload["data"]["event"]["home"] is None
+
+
+def test_event_expires_when_the_opportunity_stops_being_valid(
+    opportunity: Opportunity,
+) -> None:
+    # The notifier must not send an opportunity the validity engine would reject,
+    # so the event carries the same created_at + TTL boundary.
+    created_at = datetime(2026, 10, 18, 15, 30, tzinfo=UTC)
+    event = build_opportunity_identified_public_event(
+        opportunity=opportunity.model_copy(update={"created_at": created_at}),
+        valid_for=timedelta(minutes=90),
+        context=OpportunityEventContext(),
+    )
+
+    payload = event.to_cloudevent()
+
+    _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
+    assert payload["data"]["expires_at"] == "2026-10-18T17:00:00+00:00"
+
+
+def test_event_without_a_stored_creation_time_expires_from_its_own_time(
+    opportunity: Opportunity,
+) -> None:
+    event = build_opportunity_identified_public_event(
+        opportunity=opportunity, valid_for=timedelta(minutes=90), context=OpportunityEventContext()
+    )
+
+    assert event.data.expires_at == event.time + timedelta(minutes=90)
 
 
 @pytest.mark.parametrize(
@@ -127,7 +156,7 @@ def test_typed_payload_preserves_wire_shape_and_timestamps(
     timestamp: datetime,
 ) -> None:
     event = build_opportunity_identified_public_event(
-        opportunity=opportunity,
+        opportunity=opportunity, valid_for=TTL,
         context=OpportunityEventContext(
             sport="basketball",
             league="NBA",
@@ -160,6 +189,7 @@ def test_typed_payload_preserves_wire_shape_and_timestamps(
         "target_price": -110,
         "best": {"sportsbook": "FanDuel", "price": -105, "quoted_at": expected_time},
         "matching": [{"sportsbook": "FanDuel", "price": -105}],
+        "expires_at": payload["data"]["expires_at"],
     }
     _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
     restored = PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload)
@@ -184,7 +214,7 @@ def test_typed_payload_rejects_invalid_contract_data(
     value: Any,
 ) -> None:
     event = build_opportunity_identified_public_event(
-        opportunity=opportunity,
+        opportunity=opportunity, valid_for=TTL,
         context=OpportunityEventContext(),
     )
     payload = event.to_cloudevent()
@@ -200,7 +230,7 @@ def test_payload_serializes_fully_when_held_as_the_generic_bound(
     # Staging ports hold PublicEvent[DomainModel]. Serialization must follow the
     # payload's runtime type, or an event re-wrapped at the bound would dump `{}`.
     typed = build_opportunity_identified_public_event(
-        opportunity=opportunity, context=OpportunityEventContext()
+        opportunity=opportunity, valid_for=TTL, context=OpportunityEventContext()
     )
     rewrapped = PublicEvent[DomainModel](**typed.model_dump(exclude={"data"}), data=typed.data)
 
@@ -211,7 +241,7 @@ def test_bare_public_event_is_rejected_with_a_clear_message(
     opportunity: Opportunity,
 ) -> None:
     payload = build_opportunity_identified_public_event(
-        opportunity=opportunity, context=OpportunityEventContext()
+        opportunity=opportunity, valid_for=TTL, context=OpportunityEventContext()
     ).to_cloudevent()
 
     with pytest.raises(TypeError, match="must be parametrized"):

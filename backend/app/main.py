@@ -3,61 +3,87 @@ from collections.abc import Awaitable, Callable
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 
+from backend.app.api.admin import create_admin_router
+from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.component_status_router import create_component_status_router
+from backend.app.api.admin.credit_burn_router import create_credit_burn_router
+from backend.app.api.admin.deliveries_router import create_deliveries_router
+from backend.app.api.admin.metrics_router import create_metrics_router
+from backend.app.api.admin.quota_history_router import create_quota_history_router
+from backend.app.api.admin.refreshes_router import create_refreshes_router
 from backend.app.api.destination_router import create_destination_router
 from backend.app.api.event_router import create_event_router
 from backend.app.api.opportunity_router import create_opportunity_router
 from backend.app.api.quote_ingestion_router import create_quote_ingestion_router
 from backend.app.api.recommendation_router import create_recommendation_router
 from backend.app.api.watch_intent_router import create_watch_intent_router
+from backend.app.application.admin_query_service import AdminQueryService
+from backend.app.application.credit_query_service import CreditQueryService
+from backend.app.application.delivery_query_service import DeliveryQueryService
 from backend.app.application.destination_service import DestinationService
 from backend.app.application.event_query_service import EventQueryService
-from backend.app.application.ports import QuoteIngestionProvider
-from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.recommendation_service import RecommendationService
-from backend.app.application.watch_intent_service import WatchIntentService
+from backend.app.application.system_status_query_service import SystemStatusQueryService
+from backend.app.composition import (
+    build_auto_refresh_service,
+    build_quota_service,
+    build_quote_ingestion_service,
+    build_watch_intent_service,
+)
 from backend.app.config import Settings, get_settings
-from backend.app.engines.normalization_engine import NormalizationEngine
-from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
+from backend.app.engines.component_status_engine import ComponentStatusEngine
+from backend.app.engines.credit_history_engine import CreditHistoryEngine
+from backend.app.engines.delivery_error_engine import DeliveryErrorEngine
+from backend.app.engines.delivery_subject_engine import DeliverySubjectEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
+from backend.app.engines.quota_engine import QuotaEngine
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
 from backend.app.engines.recommendation_engine import RecommendationEngine
-from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
-from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.observability.logging import configure_logging
 from backend.app.infrastructure.observability.request_context import (
     reset_request_id,
     set_request_id,
 )
-from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
+from backend.app.infrastructure.persistence.admin_read_uow import (
+    SqlAlchemyAdminReadUnitOfWork,
+)
+from backend.app.infrastructure.persistence.credit_read_uow import SqlAlchemyCreditReadUnitOfWork
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.delivery_read_uow import (
+    SqlAlchemyDeliveryReadUnitOfWork,
+)
 from backend.app.infrastructure.persistence.destination_uow import (
     SqlAlchemyDestinationUnitOfWork,
 )
 from backend.app.infrastructure.persistence.event_read_uow import (
     SqlAlchemyEventReadUnitOfWork,
 )
-from backend.app.infrastructure.persistence.quote_ingestion_uow import (
-    SqlAlchemyQuoteIngestionUnitOfWork,
-)
 from backend.app.infrastructure.persistence.recommendation_uow import (
     SqlAlchemyRecommendationUnitOfWork,
 )
-from backend.app.infrastructure.persistence.watch_intent_uow import (
-    SqlAlchemyWatchIntentUnitOfWork,
+from backend.app.infrastructure.persistence.system_status_read_uow import (
+    SqlAlchemySystemStatusReadUnitOfWork,
 )
 from backend.app.infrastructure.publishers.logging_publisher import (
     LoggingWorkflowEventPublisher,
 )
-from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings)
     session_factory = DatabaseSessionFactory(app_settings.database_url)
-    app = FastAPI(title=app_settings.app_name)
+    # ADR-018: the docs and schema live under the versioned path too, so the
+    # /api proxy reaches them.
+    app = FastAPI(
+        title=app_settings.app_name,
+        docs_url="/api/v1/docs",
+        redoc_url="/api/v1/redoc",
+        openapi_url="/api/v1/openapi.json",
+        swagger_ui_oauth2_redirect_url="/api/v1/docs/oauth2-redirect",
+    )
     app.state.session_factory = session_factory
     app_logger = logging.getLogger(__name__)
     workflow_event_publisher = LoggingWorkflowEventPublisher()
@@ -69,15 +95,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         quote_matching_engine=QuoteMatchingEngine(),
         recommendation_engine=recommendation_engine,
     )
-    watch_intent_service = WatchIntentService(
-        unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
-        workflow_event_publisher=workflow_event_publisher,
-        watch_evaluation_engine=WatchEvaluationEngine(
-            price_comparison_service,
-            recommendation_engine,
-        ),
-        opportunity_validity_engine=OpportunityValidityEngine(),
-        opportunity_ttl_minutes=app_settings.opportunity_ttl_minutes,
+    watch_intent_service = build_watch_intent_service(
+        app_settings,
+        session_factory,
+        workflow_event_publisher,
+        price_comparison_service,
+        recommendation_engine,
     )
     event_query_service = EventQueryService(
         unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
@@ -86,28 +109,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     destination_service = DestinationService(
         unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
     )
-    quote_provider: QuoteIngestionProvider
-    if app_settings.quote_provider == "odds_api":
-        quote_provider = TheOddsApiProvider(
-            api_key=app_settings.odds_api_key,
-            regions=[r.strip() for r in app_settings.odds_api_regions.split(",")],
-            markets=[m.strip() for m in app_settings.odds_api_markets.split(",")],
-            # One cache per provider, living as long as the process. A deliberate
-            # refresh still pulls live; this only collapses simultaneous pulls and
-            # repeats of incidental reads such as listing a sport's events.
-            response_cache=InProcessProviderCache(
-                ttl_seconds=app_settings.provider_cache_ttl_seconds,
-            ),
-        )
-    else:
-        quote_provider = InMemoryQuoteProvider()
-
-    quote_ingestion_service = QuoteIngestionService(
-        unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(session_factory),
-        quote_provider=quote_provider,
-        normalization_engine=NormalizationEngine(),
-        workflow_event_publisher=workflow_event_publisher,
-        watch_intent_service=watch_intent_service,
+    delivery_query_service = DeliveryQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyDeliveryReadUnitOfWork(session_factory),
+        subject_engine=DeliverySubjectEngine(),
+        error_engine=DeliveryErrorEngine(),
+    )
+    quota_service = build_quota_service(session_factory)
+    quote_ingestion_service = build_quote_ingestion_service(
+        app_settings,
+        session_factory,
+        workflow_event_publisher,
+        watch_intent_service,
+        quota_service,
+    )
+    auto_refresh_service = build_auto_refresh_service(
+        session_factory, quote_ingestion_service, quota_service
+    )
+    admin_query_service = AdminQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyAdminReadUnitOfWork(session_factory),
+    )
+    credit_query_service = CreditQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyCreditReadUnitOfWork(session_factory),
+        history_engine=CreditHistoryEngine(),
+    )
+    system_status_query_service = SystemStatusQueryService(
+        unit_of_work_factory=lambda: SqlAlchemySystemStatusReadUnitOfWork(session_factory),
+        component_status_engine=ComponentStatusEngine(),
+        quota_engine=QuotaEngine(),
     )
 
     @app.middleware("http")
@@ -152,26 +180,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reset_request_id(context_token)
         return response
 
-    @app.get("/health", tags=["system"])
+    # ADR-018: one versioned path for the whole contract. Health is an ops probe,
+    # not contract, so it sits under /api but outside the version.
+    @app.get("/api/health", tags=["system"])
     def healthcheck() -> dict[str, str]:
+        # `status` says the API answered; the database is reported beside it (#106).
         return {
             "status": "ok",
             "environment": app_settings.app_env,
+            "database": "healthy"
+            if system_status_query_service.database_reachable()
+            else "unhealthy",
         }
 
-    app.include_router(create_recommendation_router(recommendation_service))
-    app.include_router(create_quote_ingestion_router(quote_ingestion_service))
-    app.include_router(create_watch_intent_router(watch_intent_service))
-    app.include_router(create_opportunity_router(watch_intent_service))
-    app.include_router(create_event_router(event_query_service))
-    app.include_router(
+    api_v1 = APIRouter(prefix="/api/v1")
+    api_v1.include_router(create_recommendation_router(recommendation_service))
+    api_v1.include_router(create_quote_ingestion_router(quote_ingestion_service))
+    api_v1.include_router(create_watch_intent_router(watch_intent_service))
+    api_v1.include_router(create_opportunity_router(watch_intent_service))
+    api_v1.include_router(create_event_router(event_query_service))
+    api_v1.include_router(
         create_destination_router(destination_service, app_settings.vapid_public_key)
     )
+
+    # Admin view routes: one include per feature, all behind the operator hook.
+    # Add features before `admin` joins api_v1: include_router copies routes once.
+    admin = create_admin_router()
+    admin.include_router(create_auto_refresh_router(auto_refresh_service))
+    admin.include_router(create_refreshes_router(admin_query_service))
+    admin.include_router(create_deliveries_router(delivery_query_service))
+    admin.include_router(create_quota_history_router(credit_query_service))
+    admin.include_router(create_credit_burn_router(credit_query_service))
+    admin.include_router(create_component_status_router(system_status_query_service))
+    admin.include_router(create_metrics_router(system_status_query_service))
+    api_v1.include_router(admin)
 
     if app_settings.app_env == "development":
         from backend.app.api.test_ui_router import create_test_ui_router
 
-        app.include_router(create_test_ui_router())
+        api_v1.include_router(create_test_ui_router())
+
+    app.include_router(api_v1)
 
     return app
 

@@ -18,8 +18,11 @@ class InMemoryQuoteProvider:
         self._quotes = quotes or build_fixture_quotes()
         self._events = _build_fixture_events()
 
-    def list_quotes(self, event_id: str, sport: str) -> list[Quote]:
-        return [quote for quote in self._quotes if quote.event_id == event_id]
+    def list_quotes(
+        self, event_id: str, sport: str
+    ) -> tuple[list[Quote], ProviderFetchReport]:
+        quotes = [quote for quote in self._quotes if quote.event_id == event_id]
+        return quotes, ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
 
     def list_quotes_for_sport(
         self, sport: str
@@ -35,6 +38,9 @@ class InMemoryQuoteProvider:
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)
+
+    def check_quota(self) -> None:
+        """Fixtures have no upstream, so there is no balance to check."""
 
     def list_supported_sports(self) -> list[SupportedSport]:
         """Whatever the fixtures cover.

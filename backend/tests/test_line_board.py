@@ -195,7 +195,7 @@ def _build_app(database_url: str, *, drop_existing: bool = False) -> FastAPI:
 
 
 def _board(client: TestClient, event_id: str = EVENT_ID) -> JsonDict:
-    response = client.get(f"/events/{event_id}/quotes")
+    response = client.get(f"/api/v1/events/{event_id}/quotes")
     assert response.status_code == 200, response.text
     payload: JsonDict = response.json()
     return payload
@@ -328,7 +328,7 @@ def test_a_market_no_book_is_quoting_is_present_and_empty(
 
 def test_unknown_event_is_a_404(sqlite_database_url: str) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
-        response = client.get("/events/no-such-event/quotes")
+        response = client.get("/api/v1/events/no-such-event/quotes")
 
     assert response.status_code == 404
 
@@ -337,7 +337,7 @@ def test_board_is_not_paginated(sqlite_database_url: str) -> None:
     with TestClient(_build_app(sqlite_database_url)) as client:
         board = _board(client)
         paged = client.get(
-            f"/events/{EVENT_ID}/quotes", params={"page": 2, "page_size": 1}
+            f"/api/v1/events/{EVENT_ID}/quotes", params={"page": 2, "page_size": 1}
         )
 
     assert not {"page", "page_size", "total_pages"} & board.keys()
@@ -363,7 +363,7 @@ def test_postgres_board_ranks_markets_and_breaks_a_tie() -> None:
 
     with TestClient(_build_app(database_url, drop_existing=True)) as client:
         board = _board(client)
-        missing = client.get("/events/no-such-event/quotes")
+        missing = client.get("/api/v1/events/no-such-event/quotes")
 
     assert [(m["market_type"], m["selection"]) for m in board["markets"]] == [
         ("moneyline", "bills"),

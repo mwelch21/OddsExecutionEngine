@@ -58,6 +58,7 @@ build-backend = "hatchling.build"
 [project.scripts]
 odds-db-upgrade = "backend.app.infrastructure.persistence.commands:odds_db_upgrade_main"
 odds-db-seed-demo = "backend.app.infrastructure.persistence.commands:odds_db_seed_demo_main"
+odds-auto-refresh = "backend.app.auto_refresh_worker:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]
