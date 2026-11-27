@@ -2,7 +2,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
+from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.ports import (
+    BookFilterResolver,
     WatchIntentUnitOfWork,
     WatchIntentUnitOfWorkFactory,
     WorkflowEventPublisher,
@@ -77,6 +79,7 @@ class WatchIntentService:
         event_status_engine: EventStatusEngine | None = None,
         watch_window_policy: WatchWindowPolicy | None = None,
         watch_expirer: WatchExpirer | None = None,
+        book_filter_resolver: BookFilterResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
@@ -86,6 +89,9 @@ class WatchIntentService:
         self._event_status_engine = event_status_engine or EventStatusEngine()
         self._watch_window_policy = watch_window_policy or WatchWindowPolicy()
         self._watch_expirer = watch_expirer or WatchExpirer()
+        # The allowed books (#136), resolved at each evaluation: a changed filter
+        # applies from the next one, and nothing is re-evaluated on the change.
+        self._book_filter_resolver = book_filter_resolver or AllBooksResolver()
 
     def create_watch_intent(
         self,
@@ -165,6 +171,7 @@ class WatchIntentService:
                         watch_intents=[intent],
                         quotes=quotes,
                         market_id_lookup=market_id_lookup,
+                        book_filter=self._book_filter_resolver.resolve(),
                     )
 
                 inserted_opportunities, retired = self._fill(uow, new_opportunities)
@@ -452,6 +459,7 @@ class WatchIntentService:
                         watch_intents=armed,
                         quotes=quotes,
                         market_id_lookup=uow.get_market_id_lookup(event_id),
+                        book_filter=self._book_filter_resolver.resolve(),
                     )
                     inserted_opportunities, _ = self._fill(uow, new_opportunities)
 

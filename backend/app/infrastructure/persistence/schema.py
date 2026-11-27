@@ -267,6 +267,19 @@ auto_refresh_settings_table = Table(
     ),
 )
 
+# The allowed-books filter (#136): sportsbook names quotes must come from to be
+# shown, ranked or evaluated. Empty means all books. One global row for now; it
+# gains a user key when the setting moves per user after auth (#14). `text[]` on
+# Postgres, JSON on SQLite (local smoke only).
+book_filter_settings_table = Table(
+    "book_filter_settings",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("sportsbooks", postgresql.ARRAY(Text).with_variant(JSON, "sqlite"), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("id = 1", name="ck_book_filter_settings_single_row"),
+)
+
 # When each provider sport key was last pulled sport-wide, manual or automatic. The
 # Auto-Refresh cooldown is derived from it; a per-event refresh does not touch it.
 # One row per upstream call (ADR-016). Ordered by id: rows are written under a lock,

@@ -12,6 +12,7 @@ from sqlalchemy import RowMapping, Select, case, false, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from backend.app.domain.book_filter import ALL_BOOKS, BookFilter
 from backend.app.domain.models import (
     EventFilter,
     EventListStatus,
@@ -71,6 +72,7 @@ class SqlAlchemyEventReadUnitOfWork:
         now: datetime,
         limit: int,
         offset: int,
+        book_filter: BookFilter = ALL_BOOKS,
     ) -> list[EventSummary]:
         session = self._require_session()
         query = (
@@ -88,9 +90,11 @@ class SqlAlchemyEventReadUnitOfWork:
         rows = (
             session.execute(_apply_filter(query, event_filter, now)).mappings().all()
         )
-        return self._summaries(session, list(rows))
+        return self._summaries(session, list(rows), book_filter)
 
-    def get_event(self, event_id: str) -> EventSummary | None:
+    def get_event(
+        self, event_id: str, book_filter: BookFilter = ALL_BOOKS
+    ) -> EventSummary | None:
         """One event by its external id, carrying the same header the list shows.
 
         No status filter: the browse list hides ended events, but asking for one
@@ -104,7 +108,7 @@ class SqlAlchemyEventReadUnitOfWork:
             .mappings()
             .all()
         )
-        summaries = self._summaries(session, list(rows))
+        summaries = self._summaries(session, list(rows), book_filter)
         return summaries[0] if summaries else None
 
     def list_market_quotes(self, event_id: str) -> list[MarketQuotes]:
@@ -178,14 +182,14 @@ class SqlAlchemyEventReadUnitOfWork:
         return list(markets.values())
 
     def _summaries(
-        self, session: Session, rows: list[RowMapping]
+        self, session: Session, rows: list[RowMapping], book_filter: BookFilter
     ) -> list[EventSummary]:
         if not rows:
             return []
 
         row_ids = [str(row["id"]) for row in rows]
         participants = self._participants_by_event(session, row_ids)
-        freshness = self._freshness_by_event(session, row_ids)
+        freshness = self._freshness_by_event(session, row_ids, book_filter)
 
         return [
             EventSummary(
@@ -228,7 +232,7 @@ class SqlAlchemyEventReadUnitOfWork:
         return grouped
 
     def _freshness_by_event(
-        self, session: Session, event_row_ids: list[str]
+        self, session: Session, event_row_ids: list[str], book_filter: BookFilter
     ) -> dict[str, EventQuoteFreshness]:
         """One aggregate per event over its latest quotes.
 
@@ -241,6 +245,9 @@ class SqlAlchemyEventReadUnitOfWork:
         quoting both sides of three markets is six rows and still one book, so
         counting rows would report six unknown-age "books" for a single silent
         provider.
+
+        Only books `book_filter` admits are counted (#136); an event quoted only
+        by other books has no row and reads as unquoted.
         """
         book_count: ColumnElement[int] = func.count(
             market_quotes_latest_table.c.sportsbook.distinct()
@@ -253,32 +260,33 @@ class SqlAlchemyEventReadUnitOfWork:
                 )
             ).distinct()
         )
-        rows = (
-            session.execute(
-                select(
-                    markets_table.c.event_id,
-                    func.count().label("quote_count"),
-                    func.max(market_quotes_latest_table.c.ingested_at).label(
-                        "last_ingested_at"
-                    ),
-                    func.min(market_quotes_latest_table.c.quoted_at).label(
-                        "oldest_line_quoted_at"
-                    ),
-                    book_count.label("book_count"),
-                    unknown_line_age.label("books_with_unknown_line_age"),
-                )
-                .select_from(
-                    market_quotes_latest_table.join(
-                        markets_table,
-                        market_quotes_latest_table.c.market_id == markets_table.c.id,
-                    )
-                )
-                .where(markets_table.c.event_id.in_(event_row_ids))
-                .group_by(markets_table.c.event_id)
+        query = (
+            select(
+                markets_table.c.event_id,
+                func.count().label("quote_count"),
+                func.max(market_quotes_latest_table.c.ingested_at).label(
+                    "last_ingested_at"
+                ),
+                func.min(market_quotes_latest_table.c.quoted_at).label(
+                    "oldest_line_quoted_at"
+                ),
+                book_count.label("book_count"),
+                unknown_line_age.label("books_with_unknown_line_age"),
             )
-            .mappings()
-            .all()
+            .select_from(
+                market_quotes_latest_table.join(
+                    markets_table,
+                    market_quotes_latest_table.c.market_id == markets_table.c.id,
+                )
+            )
+            .where(markets_table.c.event_id.in_(event_row_ids))
+            .group_by(markets_table.c.event_id)
         )
+        if not book_filter.allows_all:
+            query = query.where(
+                market_quotes_latest_table.c.sportsbook.in_(book_filter.sportsbooks)
+            )
+        rows = session.execute(query).mappings().all()
         return {str(row["event_id"]): _row_to_freshness(row) for row in rows}
 
     def _require_session(self) -> Session:

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
+from backend.app.domain.book_filter import ALL_BOOKS, BookFilter
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventLifecycle,
@@ -215,6 +216,7 @@ class StubWatchEvaluationEngine(WatchEvaluationEngine):
         watch_intents: list[WatchIntent],
         quotes: list[Quote],
         market_id_lookup: dict[tuple[str, str, str, float | None], str],
+        book_filter: BookFilter = ALL_BOOKS,
     ) -> list[Opportunity]:
         return list(self._opportunities)
 

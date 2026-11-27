@@ -10,6 +10,7 @@ from backend.app.infrastructure.persistence.database import DatabaseSessionFacto
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
     auto_refresh_settings_table,
+    book_filter_settings_table,
     deliveries_table,
     destinations_table,
     event_participants_table,
@@ -50,6 +51,7 @@ def seed_demo_quotes(session_factory: DatabaseSessionFactory) -> None:
 def truncate_application_tables(session_factory: DatabaseSessionFactory) -> None:
     with session_factory.create_session() as session:
         for table in (
+            book_filter_settings_table,
             auto_refresh_settings_table,
             sport_refreshes_table,
             refresh_records_table,

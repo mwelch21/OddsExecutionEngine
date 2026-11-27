@@ -6,6 +6,7 @@ without the HTTP hop (ADR-016).
 """
 
 from backend.app.application.auto_refresh_service import AutoRefreshService
+from backend.app.application.book_filter_service import BookFilterService
 from backend.app.application.ports import (
     QuotaRecorder,
     QuoteIngestionProvider,
@@ -30,6 +31,9 @@ from backend.app.infrastructure.persistence.auto_refresh_uow import (
     PostgresAdvisoryCycleLock,
     SqlAlchemyAutoRefreshUnitOfWork,
 )
+from backend.app.infrastructure.persistence.book_filter_uow import (
+    SqlAlchemyBookFilterUnitOfWork,
+)
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
@@ -47,6 +51,15 @@ def build_quota_service(session_factory: DatabaseSessionFactory) -> QuotaService
     return QuotaService(
         unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(session_factory),
         quota_engine=QuotaEngine(),
+    )
+
+
+def build_book_filter_service(session_factory: DatabaseSessionFactory) -> BookFilterService:
+    """The allowed-books setting and its resolver (#136). The API and the worker
+    both build it here, so a watch evaluated after a refresh uses the same books
+    as one evaluated on creation."""
+    return BookFilterService(
+        unit_of_work_factory=lambda: SqlAlchemyBookFilterUnitOfWork(session_factory),
     )
 
 
@@ -87,6 +100,7 @@ def build_watch_intent_service(
         opportunity_validity_engine=OpportunityValidityEngine(),
         event_status_engine=EventStatusEngine(),
         opportunity_ttl_minutes=settings.opportunity_ttl_minutes,
+        book_filter_resolver=build_book_filter_service(session_factory),
     )
 
 

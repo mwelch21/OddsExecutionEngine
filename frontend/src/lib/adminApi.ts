@@ -85,6 +85,30 @@ export function onSportFocusSaved(listener: (sportFocus: string[]) => void) {
   return () => window.removeEventListener(SPORT_FOCUS_SAVED_EVENT, handle);
 }
 
+/** Allowed books (#136). Empty `sportsbooks` = all books. */
+export type BookFilter = {
+  /** Sportsbook names quotes must come from, sorted. */
+  sportsbooks: string[];
+  /** Distinct books in stored quotes, sorted: the picker's options. A DB read. */
+  available_sportsbooks: string[];
+};
+
+/** Free: a DB read, never an upstream call. */
+export async function getBookFilter() {
+  return request<BookFilter>(`${ADMIN}/book-filter`);
+}
+
+/**
+ * A full replacement. Saves only: nothing is re-evaluated and no refresh runs.
+ * A book no stored quote has, and the filter did not hold, is refused (422).
+ */
+export async function putBookFilter(sportsbooks: string[]) {
+  return request<BookFilter>(`${ADMIN}/book-filter`, {
+    method: "PUT",
+    body: JSON.stringify({ sportsbooks })
+  });
+}
+
 export type RefreshTrigger = "manual" | "auto";
 export type RefreshOutcome = "succeeded" | "failed" | "refused";
 /** Why a refresh did not succeed: a closed set. `error` carries the detail. */
