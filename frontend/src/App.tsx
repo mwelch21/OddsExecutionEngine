@@ -74,9 +74,15 @@ export function App() {
   // The stored sport focus (#132), and whether the operator cleared it in this view.
   // Null until the one read on mount settles, so the list does not flash every
   // sport first. Clearing here changes only this view, never the stored focus.
-  const [sportFocus, setSportFocus] = useState<{ stored: string[]; cleared: boolean } | null>(
-    null
-  );
+  // `unavailable`: the read failed, so every sport shows, and the view says so.
+  const [sportFocus, setSportFocus] = useState<{
+    stored: string[];
+    cleared: boolean;
+    unavailable?: boolean;
+  } | null>(null);
+  // The latest focus, for the saved-focus listener to compare against.
+  const sportFocusRef = useRef(sportFocus);
+  sportFocusRef.current = sportFocus;
   // Each events read takes a number; only the newest one may write the page, so a
   // slow, superseded response never overwrites a newer one.
   const eventsRequest = useRef(0);
@@ -130,19 +136,20 @@ export function App() {
     let saved = false;
     const unsubscribe = onSportFocusSaved((stored) => {
       saved = true;
-      setSportFocus((current) =>
-        // An interval or switch save repeats the same focus: keep the state, no reload.
-        current && current.stored.join(",") === stored.join(",")
-          ? current
-          : { stored, cleared: current?.cleared ?? false }
-      );
+      const current = sportFocusRef.current;
+      // An interval or switch save repeats the same focus: keep the state, no reload.
+      if (current && !current.unavailable && current.stored.join(",") === stored.join(",")) return;
+      setSportFocus({ stored, cleared: current?.cleared ?? false });
+      // A new filter: page 2 of the old one may not exist under it.
+      setPage(1);
     });
     getAutoRefresh()
       .then((response) => {
         if (!cancelled && !saved) setSportFocus({ stored: response.sport_focus, cleared: false });
       })
       .catch(() => {
-        if (!cancelled && !saved) setSportFocus({ stored: [], cleared: false });
+        // Fall back to every sport, but not silently: the chip says the focus is unknown.
+        if (!cancelled && !saved) setSportFocus({ stored: [], cleared: false, unavailable: true });
       });
     return () => {
       cancelled = true;
@@ -177,6 +184,11 @@ export function App() {
   useEffect(() => {
     void loadEvents();
   }, [loadEvents]);
+
+  // The loader for the filter on screen now. Code that awaits first (a refresh)
+  // reads it after the await, so a filter changed meanwhile is the one reloaded.
+  const loadEventsRef = useRef(loadEvents);
+  loadEventsRef.current = loadEvents;
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -294,7 +306,7 @@ export function App() {
       const result = await refreshSport(refreshSportKey).finally(invalidateSystemStatus);
       setMessage(`Refreshed ${result.events_refreshed} events for ${result.sport}`);
       setCooldown(REFRESH_COOLDOWN_SECONDS);
-      await loadEvents();
+      await loadEventsRef.current();
       if (selectedEventId) await loadBoard(selectedEventId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Refresh failed");
@@ -459,6 +471,7 @@ export function App() {
                 status={eventStatus}
                 sportFocus={sportFocus?.stored ?? []}
                 focusApplied={focusApplied}
+                focusUnavailable={sportFocus?.unavailable ?? false}
                 refreshSport={refreshSportKey}
                 loading={loadState === "loading"}
                 refreshing={refreshing}
