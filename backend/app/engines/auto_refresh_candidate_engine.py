@@ -1,7 +1,7 @@
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
-from backend.app.domain.auto_refresh import CandidateSport, WatchedEvent
+from backend.app.domain.auto_refresh import CandidateSport, SportFocusResult, WatchedEvent
 from backend.app.domain.models import EventStatus, WatchWindow
 
 
@@ -52,6 +52,23 @@ class AutoRefreshCandidateEngine:
                 live_by_sport.items(), key=lambda entry: (entry[0][0], entry[0][1] or "")
             )
         ]
+
+    def focus(
+        self, candidate_keys: Iterable[str], sport_focus: Collection[str]
+    ) -> SportFocusResult:
+        """Narrow candidate sport keys to the operator's focus (#132).
+
+        An empty focus keeps every candidate. A non-empty one keeps only the
+        candidates it names and reports the rest as excluded. A focused sport
+        with no qualifying watch is never added: the focus only narrows.
+        """
+        candidates = sorted(set(candidate_keys))
+        if not sport_focus:
+            return SportFocusResult(kept=candidates)
+        return SportFocusResult(
+            kept=[key for key in candidates if key in sport_focus],
+            excluded=[key for key in candidates if key not in sport_focus],
+        )
 
 
 def _has_started(starts_at: datetime | None, now: datetime) -> bool:

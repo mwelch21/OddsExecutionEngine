@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import func
 
 metadata = MetaData()
@@ -251,6 +252,10 @@ auto_refresh_settings_table = Table(
     # The cooldown of a sport with a candidate watch on a live event (#128).
     Column("live_interval_minutes", Integer, nullable=False, server_default="5"),
     Column("quota_floor", Integer, nullable=True),
+    # The sport focus (#132): catalog sport keys, sorted and de-duplicated; empty
+    # means no focus. `text[]` on Postgres, JSON on SQLite (local smoke only); the
+    # migration sets the empty default per dialect.
+    Column("sport_focus", postgresql.ARRAY(Text).with_variant(JSON, "sqlite"), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("id = 1", name="ck_auto_refresh_settings_single_row"),
     CheckConstraint(

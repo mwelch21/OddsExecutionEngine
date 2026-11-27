@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, RefreshCcw } from "lucide-react";
 import type { EventListStatus, EventPage, SupportedSport } from "../lib/api";
 import { formatStart, matchupLabel, summarizeFreshness } from "../lib/format";
+import { focusLabel } from "./admin/controls/SportFocusPicker";
 import { LiveBadge } from "./LiveBadge";
 import { Button, CollapseToggle, EmptyState, Pill, useCollapsed } from "./primitives";
 
@@ -15,6 +16,10 @@ type Props = {
   sports: SupportedSport[];
   league: string | null;
   status: EventListStatus;
+  /** The stored sport focus (#132); empty when none is set. */
+  sportFocus: string[];
+  /** Whether this view filters to it. Clearing never changes the stored focus. */
+  focusApplied: boolean;
   refreshSport: string;
   loading: boolean;
   refreshing: boolean;
@@ -22,6 +27,8 @@ type Props = {
   cooldown: number;
   onLeagueChange: (league: string | null) => void;
   onStatusChange: (status: EventListStatus) => void;
+  onClearFocus: () => void;
+  onApplyFocus: () => void;
   onRefreshSportChange: (sport: string) => void;
   onRefresh: () => void;
   onPageChange: (page: number) => void;
@@ -33,12 +40,16 @@ export function EventList({
   sports,
   league,
   status,
+  sportFocus,
+  focusApplied,
   refreshSport,
   loading,
   refreshing,
   cooldown,
   onLeagueChange,
   onStatusChange,
+  onClearFocus,
+  onApplyFocus,
   onRefreshSportChange,
   onRefresh,
   onPageChange,
@@ -133,6 +144,25 @@ export function EventList({
                 </button>
               ))}
             </div>
+            {sportFocus.length > 0 && (
+              <span className="focus-chip">
+                {focusApplied ? (
+                  <>
+                    Focus: <strong>{focusLabel(sportFocus, sports)}</strong>
+                    <Button variant="ghost" onClick={onClearFocus}>
+                      Show all sports
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    All sports
+                    <Button variant="ghost" onClick={onApplyFocus}>
+                      Focus on {focusLabel(sportFocus, sports)}
+                    </Button>
+                  </>
+                )}
+              </span>
+            )}
             {page && (
               <span className="result-count">
                 {page.total_events} event{page.total_events === 1 ? "" : "s"}

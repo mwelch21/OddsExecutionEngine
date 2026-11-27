@@ -1842,3 +1842,53 @@ select {
   grid-template-columns: minmax(0, 1fr) auto;
   opacity: 0.75;
 }
+
+/* Sport focus (#132): a checkbox row that commits on Save, like the sliders. */
+.admin-focus {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.admin-focus-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-focus-options {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.admin-focus-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.admin-focus-option input {
+  accent-color: var(--accent);
+}
+
+.focus-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.focus-chip strong {
+  color: var(--text);
+}

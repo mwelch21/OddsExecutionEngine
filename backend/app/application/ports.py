@@ -96,6 +96,13 @@ class QuoteIngestionProvider(Protocol):
         ...
 
 
+class SportCatalog(Protocol):
+    """The sport keys a refresh may name, each with its stored sport and league
+    (`GET /api/v1/sports`). Local: reading it never calls the provider."""
+
+    def list_supported_sports(self) -> list[SupportedSport]: ...
+
+
 class QuotaRecorder(Protocol):
     """Receives the quota of every upstream call, served or refused (ADR-016).
 

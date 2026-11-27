@@ -502,11 +502,16 @@ class EventFilter(DomainModel):
 
     League and sport narrow independently and combine. `status` picks upcoming,
     live, or both (the default); ended events are never listed (#38).
+
+    `sport_leagues` is a set of stored (sport, league) pairs an event must be in,
+    resolved from catalog sport keys (#132). None means no such filter; empty
+    matches nothing, as a key outside the catalog does. It combines with the rest.
     """
 
     league: str | None = None
     sport: str | None = None
     status: EventListStatus = EventListStatus.ALL
+    sport_leagues: tuple[tuple[str, str | None], ...] | None = None
 
 
 class EventPage(DomainModel):

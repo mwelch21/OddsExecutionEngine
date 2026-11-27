@@ -17,8 +17,11 @@ class AutoRefreshSettingsRequest(BaseModel):
     """A full replacement of the settings.
 
     An omitted `quota_floor` means "derive it"; an omitted `live_interval_minutes`
-    means the default, 5. A client that omits a field resets it, as any full
-    replacement does.
+    means the default, 5; an omitted `sport_focus` means empty, no focus. A client
+    that omits a field resets it, as any full replacement does.
+
+    `sport_focus` holds catalog sport keys (`GET /api/v1/sports`); a key outside
+    the catalog is a 422. Duplicates collapse and the stored order is sorted.
     """
 
     enabled: bool
@@ -27,6 +30,7 @@ class AutoRefreshSettingsRequest(BaseModel):
         default=DEFAULT_INTERVAL_MINUTES, ge=MIN_INTERVAL_MINUTES, le=MAX_INTERVAL_MINUTES
     )
     quota_floor: int | None = Field(default=None, ge=0)
+    sport_focus: list[str] = Field(default_factory=list)
 
     def to_domain(self) -> AutoRefreshSettings:
         return AutoRefreshSettings(
@@ -34,6 +38,7 @@ class AutoRefreshSettingsRequest(BaseModel):
             interval_minutes=self.interval_minutes,
             live_interval_minutes=self.live_interval_minutes,
             quota_floor=self.quota_floor,
+            sport_focus=tuple(self.sport_focus),
         )
 
 
@@ -63,6 +68,13 @@ class AutoRefreshResponse(BaseModel):
     # Sports with a candidate watch on a live event (#128).
     live_interval_minutes: int
     quota_floor: int | None
+    # Catalog sport keys Auto-Refresh is narrowed to, sorted; empty = no focus (#132).
+    sport_focus: list[str]
+    # Catalog keys with a qualifying watch now, before the focus; read from stored
+    # watches, never the provider.
+    watched_sports: list[str]
+    # Of those, the ones the focus drops: they have watches but are not refreshed.
+    excluded_sports: list[str]
     last_outcome: AutoRefreshOutcomeResponse | None
     # Out of credits: still on, but nothing paid is pulled until credits return.
     paused: bool
@@ -81,6 +93,9 @@ class AutoRefreshResponse(BaseModel):
             interval_minutes=status.settings.interval_minutes,
             live_interval_minutes=status.settings.live_interval_minutes,
             quota_floor=status.settings.quota_floor,
+            sport_focus=list(status.settings.sport_focus),
+            watched_sports=status.watched_sports,
+            excluded_sports=status.excluded_sports,
             last_outcome=None
             if outcome is None
             else AutoRefreshOutcomeResponse(

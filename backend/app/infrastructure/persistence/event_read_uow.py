@@ -8,7 +8,7 @@ were dropped after the fact would report a total the rows do not add up to, and
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from sqlalchemy import RowMapping, Select, case, func, select
+from sqlalchemy import RowMapping, Select, case, false, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -312,7 +312,29 @@ def _apply_filter(
         query = query.where(events_table.c.league == event_filter.league)
     if event_filter.sport is not None:
         query = query.where(events_table.c.sport == event_filter.sport)
+    if event_filter.sport_leagues is not None:
+        query = query.where(_sport_league_condition(event_filter.sport_leagues))
     return query.where(_status_condition(event_filter.status, now))
+
+
+def _sport_league_condition(
+    pairs: tuple[tuple[str, str | None], ...],
+) -> ColumnElement[bool]:
+    """In any of the (sport, league) pairs; a None league matches a stored null.
+    No pairs matches nothing."""
+    if not pairs:
+        return false()
+    return or_(
+        *(
+            (events_table.c.sport == sport)
+            & (
+                events_table.c.league.is_(None)
+                if league is None
+                else events_table.c.league == league
+            )
+            for sport, league in pairs
+        )
+    )
 
 
 def _status_condition(status: EventListStatus, now: datetime) -> ColumnElement[bool]:

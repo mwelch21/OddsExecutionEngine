@@ -6,6 +6,14 @@ from backend.app.domain.models import EventFilter, EventListStatus
 
 LEAGUE_QUERY = Query(default=None, description="Exact league code, e.g. NFL.")
 SPORT_QUERY = Query(default=None, description="Exact sport key, e.g. americanfootball.")
+SPORT_KEY_QUERY = Query(
+    default=None,
+    description=(
+        "Catalog sport key from GET /api/v1/sports, e.g. basketball_nba. Repeat for "
+        "several; an event in any of them matches. A key outside the catalog matches "
+        "nothing. Combines with sport and league."
+    ),
+)
 STATUS_QUERY = Query(
     default=None,
     description=(
@@ -29,6 +37,7 @@ def create_event_router(service: EventQueryService) -> APIRouter:
     def list_events(
         league: str | None = LEAGUE_QUERY,
         sport: str | None = SPORT_QUERY,
+        sport_key: list[str] | None = SPORT_KEY_QUERY,
         status: EventListStatus | None = STATUS_QUERY,
         include_started: bool | None = INCLUDE_STARTED_QUERY,
         page: int = PAGE_QUERY,
@@ -43,6 +52,7 @@ def create_event_router(service: EventQueryService) -> APIRouter:
                 ),
                 page=page,
                 page_size=page_size,
+                sport_keys=sport_key,
             )
         )
 

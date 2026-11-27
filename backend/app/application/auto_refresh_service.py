@@ -16,6 +16,8 @@ from backend.app.domain.auto_refresh import (
     AutoRefreshStatus,
     CandidateSport,
     RefreshOutcomeStatus,
+    UnknownSportKeysError,
+    WatchedEvent,
 )
 from backend.app.domain.quota import OutOfUsageCreditsError
 from backend.app.domain.refresh_records import RefreshResult, RefreshTrigger
@@ -52,30 +54,60 @@ class AutoRefreshService:
         self._clock = clock
 
     def get_status(self) -> AutoRefreshStatus:
+        now = self._clock()
         with self._unit_of_work_factory() as uow:
             settings = uow.get_settings()
             last_outcome = uow.get_last_outcome()
-        return AutoRefreshStatus(
-            settings=settings,
-            last_outcome=last_outcome,
-            quota=self._quota_service.status(),
-        )
+            watched = uow.list_watched_events(now)
+        return self._status(settings, last_outcome, watched, now)
 
     def update_settings(self, settings: AutoRefreshSettings) -> AutoRefreshStatus:
+        """Replace the settings. Raises `UnknownSportKeysError`, and saves
+        nothing, when the sport focus names a key outside the catalog."""
+        self._assert_focus_in_catalog(settings.sport_focus)
+        now = self._clock()
         with self._unit_of_work_factory() as uow:
             saved = uow.save_settings(settings)
             last_outcome = uow.get_last_outcome()
+            watched = uow.list_watched_events(now)
         self._logger.info(
             "auto_refresh.settings_updated",
             extra={
                 "enabled": saved.enabled,
                 "interval_minutes": saved.interval_minutes,
                 "live_interval_minutes": saved.live_interval_minutes,
+                "sport_focus": list(saved.sport_focus),
             },
         )
+        return self._status(saved, last_outcome, watched, now)
+
+    def _status(
+        self,
+        settings: AutoRefreshSettings,
+        last_outcome: AutoRefreshOutcome | None,
+        watched: list[WatchedEvent],
+        now: datetime,
+    ) -> AutoRefreshStatus:
+        # Stored watches and the local catalog only: no provider call.
+        candidate_keys = self._sport_keys_for(self._candidate_engine.candidates(watched, now))
+        focused = self._candidate_engine.focus(candidate_keys, settings.sport_focus)
         return AutoRefreshStatus(
-            settings=saved, last_outcome=last_outcome, quota=self._quota_service.status()
+            settings=settings,
+            watched_sports=sorted(candidate_keys),
+            excluded_sports=focused.excluded,
+            last_outcome=last_outcome,
+            quota=self._quota_service.status(),
         )
+
+    def _assert_focus_in_catalog(self, sport_focus: tuple[str, ...]) -> None:
+        if not sport_focus:
+            return
+        supported = sorted(
+            entry.key for entry in self._quote_ingestion_service.list_supported_sports()
+        )
+        unknown = [key for key in sport_focus if key not in supported]
+        if unknown:
+            raise UnknownSportKeysError(unknown, supported)
 
     def run_cycle(self) -> AutoRefreshCycleReport:
         """One poll: refresh every candidate sport whose cooldown has elapsed.
@@ -99,8 +131,11 @@ class AutoRefreshService:
             refresh_times = uow.get_sport_refresh_times()
 
         live_by_key = self._sport_keys_for(self._candidate_engine.candidates(watched, now))
-        candidates = set(live_by_key)
-        live = {key for key, is_live in live_by_key.items() if is_live}
+        # The focus only narrows (#132): a sport outside it is dropped even with
+        # qualifying watches; an empty focus keeps every candidate.
+        focused = self._candidate_engine.focus(live_by_key, settings.sport_focus)
+        candidates = set(focused.kept)
+        live = {key for key in candidates if live_by_key[key]}
         due = self._cadence_engine.due_sports(
             candidates,
             live,
@@ -114,6 +149,7 @@ class AutoRefreshService:
             enabled=True,
             candidate_sports=sorted(candidates),
             live_sports=sorted(live),
+            excluded_sports=focused.excluded,
         )
         if due and self._paused(settings.interval_minutes, now):
             return report.model_copy(update={"paused": True})

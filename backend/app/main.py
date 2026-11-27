@@ -102,10 +102,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         price_comparison_service,
         recommendation_engine,
     )
-    event_query_service = EventQueryService(
-        unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
-        recommendation_engine=recommendation_engine,
-    )
     destination_service = DestinationService(
         unit_of_work_factory=lambda: SqlAlchemyDestinationUnitOfWork(session_factory),
     )
@@ -121,6 +117,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workflow_event_publisher,
         watch_intent_service,
         quota_service,
+    )
+    event_query_service = EventQueryService(
+        unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
+        recommendation_engine=recommendation_engine,
+        sport_catalog=quote_ingestion_service,
     )
     auto_refresh_service = build_auto_refresh_service(
         session_factory, quote_ingestion_service, quota_service

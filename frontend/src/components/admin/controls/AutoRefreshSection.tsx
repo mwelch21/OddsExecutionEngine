@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { getAutoRefresh, putAutoRefresh, type AutoRefresh, type AutoRefreshSettings } from "../../../lib/adminApi";
+import { listSports, type SupportedSport } from "../../../lib/api";
 import { invalidateSystemStatus } from "../systems/systemStatus";
 import { ageLabel } from "../../../lib/format";
 import { AdminPanel } from "../AdminPanel";
 import { IntervalSlider } from "./IntervalSlider";
+import { focusLabel, SportFocusPicker } from "./SportFocusPicker";
 
 const MIN_INTERVAL = 1;
 const MAX_INTERVAL = 60;
@@ -13,14 +15,17 @@ const MAX_INTERVAL = 60;
  *
  * Upcoming paces sports whose watches are all pre-game; Live paces any sport with
  * a watch on a game in play (#128). Both are the operator's: nothing speeds up
- * or slows down by itself.
+ * or slows down by itself. The sport focus narrows which watched sports refresh
+ * (#132); it never adds one.
  *
  * It drives `GET/PUT /api/v1/admin/auto-refresh` only. Nothing here refreshes or
  * polls: the worker does, and only while the switch is on and a watch needs fresh
- * lines. The status is read once, when the tab opens.
+ * lines. The status and the sport catalog are read once, when the tab opens.
  */
 export function AutoRefreshSection() {
   const [status, setStatus] = useState<AutoRefresh | null>(null);
+  const [sports, setSports] = useState<SupportedSport[]>([]);
+  const [sportsError, setSportsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Saves run one at a time, each on the settings the last one returned, so an
@@ -38,6 +43,18 @@ export function AutoRefreshSection() {
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "Unavailable");
+      });
+    // The local catalog: free, no upstream call.
+    listSports()
+      .then((response) => {
+        if (!cancelled) setSports(response.sports);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setSportsError(
+            `Sport catalog unavailable: ${reason instanceof Error ? reason.message : "unknown error"}`
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -61,6 +78,7 @@ export function AutoRefreshSection() {
           interval_minutes: current.interval_minutes,
           live_interval_minutes: current.live_interval_minutes,
           quota_floor: current.quota_floor,
+          sport_focus: current.sport_focus,
           ...(typeof change === "function" ? change(current) : change)
         });
         latest.current = next;
@@ -137,6 +155,17 @@ export function AutoRefreshSection() {
         />
       </div>
       <p className="admin-muted">Drag, then press Enter or Save. Nothing changes until you do.</p>
+
+      <SportFocusPicker
+        sports={sports}
+        value={status?.sport_focus ?? null}
+        catalogError={sportsError}
+        disabled={!loaded}
+        onCommit={(value) => save({ sport_focus: value })}
+      />
+      <p className={status && status.excluded_sports.length > 0 ? "admin-warn" : "admin-muted"}>
+        {focusNote(status, sports)}
+      </p>
 
       <div className="admin-form">
         <NumberField
@@ -264,6 +293,18 @@ function NumberField({
 
 function toText(value: number | null) {
   return value == null ? "" : String(value);
+}
+
+/** What the focus does now: which watched sports it keeps out of Auto-Refresh. */
+function focusNote(status: AutoRefresh | null, sports: SupportedSport[]) {
+  if (!status) return "";
+  if (status.sport_focus.length === 0) {
+    return "No focus: every sport with a qualifying watch refreshes. Manual refresh is never limited.";
+  }
+  if (status.excluded_sports.length === 0) {
+    return "Only the checked sports refresh. No watched sport is left out now. Manual refresh is never limited.";
+  }
+  return `Not refreshed despite watches: ${focusLabel(status.excluded_sports, sports)}. Manual refresh is never limited.`;
 }
 
 function outcomeLabel(outcome: AutoRefresh["last_outcome"]) {

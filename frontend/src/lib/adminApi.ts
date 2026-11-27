@@ -33,6 +33,12 @@ export type AutoRefresh = {
   live_interval_minutes: number;
   /** The operator's warn-below floor; `null` means derive it (10% of the plan). */
   quota_floor: number | null;
+  /** Catalog sport keys Auto-Refresh is narrowed to, sorted; empty = no focus (#132). */
+  sport_focus: string[];
+  /** Catalog keys with a watch that can fire now, before the focus. Read from the DB. */
+  watched_sports: string[];
+  /** Of those, the ones the focus drops: they have watches but are not refreshed. */
+  excluded_sports: string[];
   last_outcome: AutoRefreshOutcome | null;
   /** Out of credits: still on, but nothing paid is pulled until credits return. */
   paused: boolean;
@@ -43,9 +49,10 @@ export type AutoRefresh = {
 
 export type AutoRefreshSettings = Pick<
   AutoRefresh,
-  "enabled" | "interval_minutes" | "live_interval_minutes" | "quota_floor"
+  "enabled" | "interval_minutes" | "live_interval_minutes" | "quota_floor" | "sport_focus"
 >;
 
+/** Free: settings and DB-backed candidates, never an upstream call. */
 export async function getAutoRefresh() {
   return request<AutoRefresh>(`${ADMIN}/auto-refresh`);
 }
@@ -55,10 +62,27 @@ export async function getAutoRefresh() {
  * Auto-Refresh worker's next poll does, and only for sports with a watch to serve.
  */
 export async function putAutoRefresh(settings: AutoRefreshSettings) {
-  return request<AutoRefresh>(`${ADMIN}/auto-refresh`, {
+  const saved = await request<AutoRefresh>(`${ADMIN}/auto-refresh`, {
     method: "PUT",
     body: JSON.stringify(settings)
   });
+  // The events view filters by the stored focus; tell it the focus the server kept.
+  window.dispatchEvent(
+    new CustomEvent<string[]>(SPORT_FOCUS_SAVED_EVENT, { detail: saved.sport_focus })
+  );
+  return saved;
+}
+
+const SPORT_FOCUS_SAVED_EVENT = "oddsengine:sport-focus-saved";
+
+/**
+ * Calls `listener` with the stored sport focus after each accepted PUT (#132).
+ * In-page only: no request, no timer. Returns the unsubscribe.
+ */
+export function onSportFocusSaved(listener: (sportFocus: string[]) => void) {
+  const handle = (event: Event) => listener((event as CustomEvent<string[]>).detail);
+  window.addEventListener(SPORT_FOCUS_SAVED_EVENT, handle);
+  return () => window.removeEventListener(SPORT_FOCUS_SAVED_EVENT, handle);
 }
 
 export type RefreshTrigger = "manual" | "auto";
