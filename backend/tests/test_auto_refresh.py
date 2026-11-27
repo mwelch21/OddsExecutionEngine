@@ -645,7 +645,7 @@ def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: st
         "live_interval_minutes": 5,
         "quota_floor": None,
         "sport_focus": [],
-        "candidate_sports": [],
+        "watched_sports": [],
         "excluded_sports": [],
         "last_outcome": None,
         "paused": False,
@@ -919,7 +919,7 @@ def test_status_reports_candidates_the_focus_excludes_without_calling_the_provid
 
     status = harness.service.get_status()
 
-    assert status.candidate_sports == [FIXTURE_SPORT_KEY]
+    assert status.watched_sports == [FIXTURE_SPORT_KEY]
     assert status.excluded_sports == [FIXTURE_SPORT_KEY]
     assert harness.provider.sport_fetches == []
     assert harness.provider.balance_checks == 0

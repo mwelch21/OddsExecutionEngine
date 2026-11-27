@@ -13,10 +13,13 @@ import { Button } from "../../primitives";
 export function SportFocusPicker({
   sports,
   value,
+  catalogError,
   disabled,
   onCommit
 }: {
   sports: SupportedSport[];
+  /** Why the catalog read failed, if it did. */
+  catalogError: string | null;
   /** The stored focus; `null` while loading. */
   value: string[] | null;
   disabled: boolean;
@@ -34,6 +37,11 @@ export function SportFocusPicker({
   }, [value]);
 
   const changed = held != null && !sameKeys(draft, held);
+  // A stored key that left the catalog still shows, so it can be unchecked;
+  // otherwise every later save would resend it and be refused.
+  const stale = [...new Set([...(held ?? []), ...draft])].filter(
+    (key) => !sports.some((sport) => sport.key === key)
+  );
 
   function toggle(key: string) {
     dirty.current = true;
@@ -74,7 +82,15 @@ export function SportFocusPicker({
               {sportLabel(sport.key, sports)}
             </label>
           ))}
-          {sports.length === 0 && <span className="admin-muted">No sports in the catalog.</span>}
+          {stale.map((key) => (
+            <label key={key} className="admin-focus-option">
+              <input type="checkbox" checked={draft.includes(key)} onChange={() => toggle(key)} />
+              {sports.length > 0 ? `${key} (not in catalog)` : key}
+            </label>
+          ))}
+          {sports.length === 0 && (
+            <span className="admin-muted">{catalogError ?? "No sports in the catalog."}</span>
+          )}
         </div>
         <Button
           type="button"

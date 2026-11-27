@@ -72,7 +72,7 @@ class AutoRefreshResponse(BaseModel):
     sport_focus: list[str]
     # Catalog keys with a qualifying watch now, before the focus; read from stored
     # watches, never the provider.
-    candidate_sports: list[str]
+    watched_sports: list[str]
     # Of those, the ones the focus drops: they have watches but are not refreshed.
     excluded_sports: list[str]
     last_outcome: AutoRefreshOutcomeResponse | None
@@ -94,7 +94,7 @@ class AutoRefreshResponse(BaseModel):
             live_interval_minutes=status.settings.live_interval_minutes,
             quota_floor=status.settings.quota_floor,
             sport_focus=list(status.settings.sport_focus),
-            candidate_sports=status.candidate_sports,
+            watched_sports=status.watched_sports,
             excluded_sports=status.excluded_sports,
             last_outcome=None
             if outcome is None

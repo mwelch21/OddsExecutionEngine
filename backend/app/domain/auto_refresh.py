@@ -122,12 +122,12 @@ class AutoRefreshOutcome(DomainModel):
 
 
 class AutoRefreshStatus(DomainModel):
-    """`candidate_sports` are the catalog keys with a qualifying watch now, before
+    """`watched_sports` are the catalog keys with a qualifying watch now, before
     the focus; `excluded_sports` are those the focus drops. Both are read from
     stored watches and the local catalog, never from the provider."""
 
     settings: AutoRefreshSettings
-    candidate_sports: list[str] = []
+    watched_sports: list[str] = []
     excluded_sports: list[str] = []
     last_outcome: AutoRefreshOutcome | None = None
     quota: QuotaStatus | None = None

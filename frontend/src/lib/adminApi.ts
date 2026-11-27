@@ -36,7 +36,7 @@ export type AutoRefresh = {
   /** Catalog sport keys Auto-Refresh is narrowed to, sorted; empty = no focus (#132). */
   sport_focus: string[];
   /** Catalog keys with a watch that can fire now, before the focus. Read from the DB. */
-  candidate_sports: string[];
+  watched_sports: string[];
   /** Of those, the ones the focus drops: they have watches but are not refreshed. */
   excluded_sports: string[];
   last_outcome: AutoRefreshOutcome | null;

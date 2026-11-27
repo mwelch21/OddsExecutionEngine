@@ -25,6 +25,7 @@ const MAX_INTERVAL = 60;
 export function AutoRefreshSection() {
   const [status, setStatus] = useState<AutoRefresh | null>(null);
   const [sports, setSports] = useState<SupportedSport[]>([]);
+  const [sportsError, setSportsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Saves run one at a time, each on the settings the last one returned, so an
@@ -49,7 +50,11 @@ export function AutoRefreshSection() {
         if (!cancelled) setSports(response.sports);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Unavailable");
+        if (!cancelled) {
+          setSportsError(
+            `Sport catalog unavailable: ${reason instanceof Error ? reason.message : "unknown error"}`
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -154,6 +159,7 @@ export function AutoRefreshSection() {
       <SportFocusPicker
         sports={sports}
         value={status?.sport_focus ?? null}
+        catalogError={sportsError}
         disabled={!loaded}
         onCommit={(value) => save({ sport_focus: value })}
       />

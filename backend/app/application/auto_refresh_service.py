@@ -93,7 +93,7 @@ class AutoRefreshService:
         focused = self._candidate_engine.focus(candidate_keys, settings.sport_focus)
         return AutoRefreshStatus(
             settings=settings,
-            candidate_sports=sorted(candidate_keys),
+            watched_sports=sorted(candidate_keys),
             excluded_sports=focused.excluded,
             last_outcome=last_outcome,
             quota=self._quota_service.status(),
