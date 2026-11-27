@@ -15,6 +15,8 @@ from backend.app.domain.events import (
     build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
+    EventLifecycle,
+    EventStatus,
     MarketType,
     Opportunity,
     OpportunityWithValidity,
@@ -23,6 +25,7 @@ from backend.app.domain.models import (
     WatchStatus,
 )
 from backend.app.domain.public_events import build_opportunity_identified_public_event
+from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
 
@@ -45,12 +48,14 @@ class WatchIntentService:
         watch_evaluation_engine: WatchEvaluationEngine,
         opportunity_validity_engine: OpportunityValidityEngine,
         opportunity_ttl_minutes: int,
+        event_status_engine: EventStatusEngine | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
         self._watch_evaluation_engine = watch_evaluation_engine
         self._opportunity_validity_engine = opportunity_validity_engine
         self._opportunity_ttl_minutes = opportunity_ttl_minutes
+        self._event_status_engine = event_status_engine or EventStatusEngine()
 
     def create_watch_intent(
         self,
@@ -95,8 +100,20 @@ class WatchIntentService:
                 # Immediate evaluation against current quotes. A watch created with a
                 # TTL already in the past can never fill, so it is not evaluated.
                 new_opportunities: list[Opportunity] = []
-                if not intent.is_expired_at(datetime.now(UTC)):
-                    quotes = uow.list_quotes(event_id)
+                now = datetime.now(UTC)
+                if not intent.is_expired_at(now):
+                    fillable = self._event_status_engine.fillable_quotes(
+                        uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
+                    )
+                    quotes = fillable.quotes
+                    if fillable.skipped_reason is not None:
+                        self._logger.info(
+                            "watch_intent.create.evaluation_skipped",
+                            extra={
+                                "event_id": event_id,
+                                "reason": fillable.skipped_reason.value,
+                            },
+                        )
                     market_id_lookup = uow.get_market_id_lookup(event_id)
                     new_opportunities = self._watch_evaluation_engine.evaluate(
                         watch_intents=[intent],
@@ -196,7 +213,7 @@ class WatchIntentService:
         """List watches, defaulting to those that can still produce an opportunity.
 
         Without a status filter this means stored-active, TTL not passed, and on an
-        event that has not started.
+        event that has not ended (#38).
         """
         now = datetime.now(UTC)
 
@@ -220,8 +237,8 @@ class WatchIntentService:
             if wanted is not WatchStatus.ACTIVE or not intents:
                 return _sorted_by_creation(intents, now)
 
-            starts_at_map = {
-                event: uow.get_event_starts_at(event)
+            lifecycles = {
+                event: uow.get_event_lifecycle(event)
                 for event in {intent.event_id for intent in intents}
             }
 
@@ -229,7 +246,7 @@ class WatchIntentService:
             [
                 intent
                 for intent in intents
-                if not _event_has_started(starts_at_map.get(intent.event_id), now)
+                if _not_ended(lifecycles.get(intent.event_id))
             ],
             now,
         )
@@ -325,15 +342,16 @@ class WatchIntentService:
         try:
             with self._unit_of_work_factory() as uow:
                 now = datetime.now(UTC)
-                starts_at = uow.get_event_starts_at(event_id)
-                if starts_at is not None:
-                    sa = starts_at if starts_at.tzinfo else starts_at.replace(tzinfo=UTC)
-                    if sa <= now:
-                        self._logger.info(
-                            "watch_evaluation.skipped_event_started",
-                            extra={"event_id": event_id},
-                        )
-                        return []
+                # Live events evaluate on their live lines; ended ones produce
+                # nothing (#38). Checked before any quote is read.
+                lifecycle = uow.get_event_lifecycle(event_id)
+                skipped = self._event_status_engine.skip_reason(lifecycle, now)
+                if skipped is not None:
+                    self._logger.info(
+                        "watch_evaluation.skipped",
+                        extra={"event_id": event_id, "reason": skipped.value},
+                    )
+                    return []
 
                 intents = uow.list_active_watch_intents(event_id)
 
@@ -349,7 +367,14 @@ class WatchIntentService:
                     )
 
                 live = [intent for intent in intents if not intent.is_expired_at(now)]
-                quotes = uow.list_quotes(event_id) if live else []
+                # Quotes are read only when an unexpired watch could use them.
+                quotes = (
+                    self._event_status_engine.fillable_quotes(
+                        lifecycle, uow.list_quotes(event_id), now
+                    ).quotes
+                    if live
+                    else []
+                )
                 evaluated: list[Opportunity] = []
 
                 if live and quotes:
@@ -389,12 +414,10 @@ class WatchIntentService:
         return inserted_opportunities
 
 
-def _event_has_started(starts_at: datetime | None, now: datetime) -> bool:
-    if starts_at is None:
-        return False
-
-    aware = starts_at if starts_at.tzinfo else starts_at.replace(tzinfo=UTC)
-    return aware <= now
+def _not_ended(lifecycle: EventLifecycle | None) -> bool:
+    # A watch on a started event nobody has observed since kickoff stays listed:
+    # the next refresh may find it live, and then it can fill.
+    return lifecycle is None or lifecycle.status is not EventStatus.ENDED
 
 
 def _sorted_by_creation(intents: list[WatchIntent], now: datetime) -> list[WatchIntent]:

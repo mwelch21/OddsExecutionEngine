@@ -2,13 +2,21 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.api.event_schemas import EventListResponse, LineBoardResponse
 from backend.app.application.event_query_service import EventQueryService
-from backend.app.domain.models import EventFilter
+from backend.app.domain.models import EventFilter, EventListStatus
 
 LEAGUE_QUERY = Query(default=None, description="Exact league code, e.g. NFL.")
 SPORT_QUERY = Query(default=None, description="Exact sport key, e.g. americanfootball.")
+STATUS_QUERY = Query(
+    default=None,
+    description=(
+        "upcoming, live, or all (upcoming plus live; the default). "
+        "Ended events are never listed."
+    ),
+)
 INCLUDE_STARTED_QUERY = Query(
-    default=False,
-    description="Include events already under way. They can no longer be filled.",
+    default=None,
+    deprecated=True,
+    description="Deprecated: use status. true reads as status=all, false as status=upcoming.",
 )
 PAGE_QUERY = Query(default=1, ge=1)
 PAGE_SIZE_QUERY = Query(default=25, ge=1, le=100)
@@ -21,7 +29,8 @@ def create_event_router(service: EventQueryService) -> APIRouter:
     def list_events(
         league: str | None = LEAGUE_QUERY,
         sport: str | None = SPORT_QUERY,
-        include_started: bool = INCLUDE_STARTED_QUERY,
+        status: EventListStatus | None = STATUS_QUERY,
+        include_started: bool | None = INCLUDE_STARTED_QUERY,
         page: int = PAGE_QUERY,
         page_size: int = PAGE_SIZE_QUERY,
     ) -> EventListResponse:
@@ -30,7 +39,7 @@ def create_event_router(service: EventQueryService) -> APIRouter:
                 EventFilter(
                     league=league,
                     sport=sport,
-                    include_started=include_started,
+                    status=EventListStatus.resolve(status, include_started),
                 ),
                 page=page,
                 page_size=page_size,
@@ -45,3 +54,4 @@ def create_event_router(service: EventQueryService) -> APIRouter:
         return LineBoardResponse.from_domain(board)
 
     return router
+

@@ -8,7 +8,7 @@ itself about — including on which clock its age comes from.
 from sqlalchemy import RowMapping, select
 from sqlalchemy.orm import Session
 
-from backend.app.domain.models import MarketType, Quote
+from backend.app.domain.models import LinePhase, MarketType, Quote
 from backend.app.infrastructure.persistence.schema import (
     events_table,
     market_quotes_latest_table,
@@ -27,6 +27,7 @@ def list_latest_quotes(session: Session, event_id: str) -> list[Quote]:
             markets_table.c.line,
             market_quotes_latest_table.c.quoted_at,
             market_quotes_latest_table.c.ingested_at,
+            market_quotes_latest_table.c.phase,
         )
         .select_from(
             market_quotes_latest_table.join(
@@ -49,4 +50,5 @@ def _row_to_quote(row: RowMapping) -> Quote:
         line=row["line"],
         quoted_at=row["quoted_at"],
         ingested_at=row["ingested_at"],
+        phase=LinePhase(row["phase"]),
     )

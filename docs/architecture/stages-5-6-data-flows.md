@@ -61,7 +61,10 @@ SqlAlchemyQuoteIngestionUnitOfWork (single transaction):
   |-- _ensure_event(external_event_id, metadata)
   |     SELECT events WHERE external_id = ?
   |     If exists:
-  |       UPDATE events SET sport, league, starts_at, provider
+  |       UPDATE events SET sport, league, starts_at, provider, status
+  |         status: offered + not started = upcoming, offered + started = live,
+  |         per-event 404 = ended; a sport pull ends started events it no
+  |         longer offers (ADR-019)
   |       DELETE event_participants WHERE event_id = ?
   |       INSERT event_participants (per participant in metadata)
   |     If not exists:
@@ -78,8 +81,9 @@ SqlAlchemyQuoteIngestionUnitOfWork (single transaction):
   |     |     Returns: (market_id, market_created: bool)
   |     |
   |     |-- DELETE market_quotes_latest WHERE market_id AND sportsbook
-  |     |-- INSERT market_quotes_latest (market_id, sportsbook, price, ingested_at, quoted_at)
-  |     |-- INSERT market_quotes_history (id, market_id, sportsbook, price, ingested_at, quoted_at)
+  |     |-- INSERT market_quotes_latest (market_id, sportsbook, price, ingested_at, quoted_at, phase)
+  |     |-- INSERT market_quotes_history (id, market_id, sportsbook, price, ingested_at, quoted_at, phase)
+  |     |   phase = live if the event was observed live in this pull, else pre_game
   |         ingested_at = this pull; quoted_at = the book's own last_update
   |         (NULL when the provider exposes none, i.e. unknown age)
   |     |
@@ -99,7 +103,11 @@ WorkflowEventPublisher.publish(committed_events)
   v
 WatchIntentService.evaluate_for_event(event_id)    [POST-COMMIT HOOK]
   |
-  |-- Check event.starts_at — skip if event already started
+  |-- EventStatusEngine.fillable_quotes(events.status, latest quotes)  [PURE ENGINE]
+  |     ended    -> skip, log watch_evaluation.skipped reason=event_ended
+  |     upcoming past its start -> skip, reason=event_status_unobserved
+  |     live     -> live-phase quotes only (ADR-019)
+  |     upcoming -> every quote
   |-- SELECT watch_intents WHERE event_external_id AND status='active'
   |-- SELECT market_quotes_latest + markets for this event
   |-- Get existing opportunity keys for deduplication

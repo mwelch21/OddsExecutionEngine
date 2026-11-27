@@ -71,7 +71,7 @@ class EventQueryService:
                 "path": "/api/v1/events",
                 "league": event_filter.league,
                 "sport": event_filter.sport,
-                "include_started": event_filter.include_started,
+                "status": event_filter.status.value,
                 "page": page,
                 "page_size": page_size,
                 "total_events": total_events,

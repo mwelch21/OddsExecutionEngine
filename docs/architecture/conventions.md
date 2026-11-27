@@ -110,12 +110,22 @@
 
 - `GET /api/v1/events` is a pure read path: `EventQueryService` takes a read-only unit of work that never stages or publishes events, and reads never write projected state.
 - Filtering and paging happen in SQL, not after the fact in Python. Dropping rows post-query would report a total the returned page does not add up to, and the page count is the reason this endpoint is page-based rather than cursor-based.
-- Started events are excluded by default, matching the watch paths: a started event can no longer produce an opportunity. `include_started=true` opts back in. An event with no known start time counts as not started.
+- `status` picks `upcoming`, `live`, or `all` (upcoming plus live, the default). Ended events are never listed. `include_started` is a deprecated alias: `true` reads as `all`, `false` as `upcoming`; an explicit `status` wins (ADR-019).
+- The filter reads observed status, not the clock alone. `upcoming` also needs a start ahead (or none known); an event stored `upcoming` whose start has passed was not observed since kickoff and is on no list until a refresh settles it.
 - Ordering is `starts_at ASC NULLS LAST`, tie-broken on `external_id`, so paging cannot repeat or skip a row and the order is identical on Postgres and SQLite.
 - Per-event freshness reports both clocks and never derives one from the other: `last_ingested_at` is `MAX(ingested_at)` (our pull), `oldest_line_quoted_at` is `MIN(quoted_at)` over the books that report one (the worst line age a reader is actually looking at).
 - Absence is reported as absence. An event with no quotes has `quote_count == 0` and null times — never age zero. Books with no line-movement time are counted in `books_with_unknown_line_age` rather than folded into the reported oldest, so that number can never be read as covering every book.
 - Book counts are `COUNT(DISTINCT sportsbook)`, never row counts. `market_quotes_latest` is keyed `(market_id, sportsbook)`, so one book quoting both sides of three markets is six rows and one book. `quote_count` counts quotes; `book_count` counts books and is the denominator that makes `books_with_unknown_line_age` legible.
 - Known gap, accepted: ingestion replaces only the `(market_id, sportsbook)` rows present in a pull, so a line a book has stopped offering keeps its latest row and can drag `oldest_line_quoted_at` older than any live market. Pruning retired rows is its own ticket — it changes what the recommendation and watch paths read too.
+
+## Event status and line phase (ADR-019)
+
+- Started events can fill. The old rule, "a started event can no longer produce an opportunity", is reversed: it held for pre-game lines only.
+- `events.status` is written at ingest from feed presence and nothing else: offered and not started is `upcoming`, offered and started is `live`, started and no longer offered (absent from a sport pull, or a per-event 404) is `ended`. Never infer it from `starts_at` alone. The observed start time is written with it.
+- Every status write carries its observation time (`events.status_observed_at`, when the provider response arrived) and is skipped when the stored one is newer. A skipped write's quotes reach history, never latest. Never write status without it.
+- Every stored quote carries `phase`, stamped at ingest from the event status: `live` when pulled while the event was live, else `pre_game`. Phase is not a clock; `quoted_at` and `ingested_at` keep their meaning across kickoff.
+- `EventStatusEngine` owns these rules, including what a watch may fill on: nothing on an ended event (logged as `watch_evaluation.skipped`, `reason=event_ended`), nothing on an event stored `upcoming` past its start (`reason=event_status_unobserved`), live lines only on a live event, pre-game lines only on an upcoming one.
+- Status costs no credits. Do not add a `/scores` call for it (#127).
 
 ## The line board is ranked server-side
 
@@ -124,5 +134,6 @@
 - Storage does not rank. The read unit of work returns `MarketQuotes` in query order and the application layer applies the engine, keeping the rule in one place instead of half in SQL.
 - A market no book is quoting is returned present and empty, with `best_sportsbook` / `best_price` null. "Nobody is offering this" is an answer the board has to show, and it is never a best book at price zero.
 - Each quote reports both clocks (`quoted_at`, `ingested_at`) and `line_age_known`, so a board can show that one book has not moved in days while the rest are current. Same rule as the browse list: the fallback to ingest time stays a read-time derivation and is never presented as line movement.
-- No pagination, and no started-event filter. A single event's board is bounded and renders as one screen; the browse list hides started events because they cannot be filled, but asking for one board by id is a different question.
+- No pagination, and no status filter. A single event's board is bounded and renders as one screen; the browse list hides ended events, but asking for one board by id is a different question.
+- Each quote carries `phase` (`pre_game` or `live`). A live board can hold a pre-game row a book left behind at kickoff; `phase` is what tells it apart, and only live rows can fill.
 - Known gap, accepted, inherited from the browse list: ingestion never prunes the latest row for a line a book has stopped offering, so a retired row can still be ranked and named `best_sportsbook`. Its `quoted_at` is what exposes it — a best book whose line has not moved in days is the tell. Pruning is its own ticket.

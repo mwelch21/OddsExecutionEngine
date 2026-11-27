@@ -99,11 +99,23 @@ export type EventQuoteFreshness = {
   books_with_unknown_line_age: number;
 };
 
+/**
+ * As last observed from the provider: `live` while offered after its start,
+ * `ended` once a pull no longer offers it. Never inferred from `starts_at`.
+ */
+export type EventStatus = "upcoming" | "live" | "ended";
+
+/** Which events the list shows. `all` is upcoming plus live; ended never lists. */
+export type EventListStatus = "upcoming" | "live" | "all";
+
+/** Whether a line was pulled pre-game or while the event was live. */
+export type LinePhase = "pre_game" | "live";
+
 export type EventSummary = {
   id: string;
   sport: string | null;
   league: string | null;
-  status: string;
+  status: EventStatus;
   starts_at: string | null;
   participants: EventParticipant[];
   quotes: EventQuoteFreshness;
@@ -123,6 +135,7 @@ export type LineBoardQuote = {
   quoted_at: string | null;
   ingested_at: string | null;
   line_age_known: boolean;
+  phase: LinePhase;
 };
 
 export type LineBoardMarket = {
@@ -147,7 +160,7 @@ export type SportRefreshResult = {
 export type EventQuery = {
   league?: string | null;
   sport?: string | null;
-  includeStarted?: boolean;
+  status?: EventListStatus;
   page?: number;
   pageSize?: number;
 };
@@ -157,7 +170,7 @@ export async function listEvents(query: EventQuery = {}) {
   const params = new URLSearchParams();
   if (query.league) params.set("league", query.league);
   if (query.sport) params.set("sport", query.sport);
-  if (query.includeStarted) params.set("include_started", "true");
+  if (query.status) params.set("status", query.status);
   params.set("page", String(query.page ?? 1));
   params.set("page_size", String(query.pageSize ?? 25));
   return request<EventPage>(`/events?${params.toString()}`);

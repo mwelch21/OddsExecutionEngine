@@ -68,6 +68,17 @@ class SportStampOnlyUnitOfWork:
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         self.stamped.append(sport_key)
 
+    def list_event_starts(
+        self, sport: str, league: str | None
+    ) -> dict[str, datetime | None]:
+        # Status bookkeeping, not a quote write: nothing stored, so nothing to end.
+        return {}
+
+    def set_event_status(
+        self, event_ids: list[str], status: object, observed_at: datetime
+    ) -> None:
+        assert event_ids == []
+
     def __getattr__(self, name: str) -> object:
         pytest.fail(f"unit of work should not be reached: {name}")
 

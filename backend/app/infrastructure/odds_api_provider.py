@@ -99,6 +99,17 @@ def _call_outcome(response: httpx.Response) -> UpstreamCallOutcome:
     return UpstreamCallOutcome.SERVER_ERROR
 
 
+def _is_absent_event_body(response: httpx.Response) -> bool:
+    """A successful single-event answer that names no event: `[]` or `null`."""
+    if not response.is_success:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return body is None or body == []
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if _is_out_of_credits(response):
         raise OutOfUsageCreditsError()
@@ -189,7 +200,8 @@ class TheOddsApiProvider:
             # The call was billed before its body proved unusable.
             link_observation(error, report.observation_id)
             raise
-        return quotes, report
+        # A 404 comes back as no events: upstream no longer offers it (#38).
+        return quotes, report.model_copy(update={"event_offered": bool(raw_events)})
 
     def list_events_for_sport(self, sport: str) -> list[EventInfo]:
         """Fetch all upcoming events for a sport. Returns event metadata."""
@@ -246,7 +258,7 @@ class TheOddsApiProvider:
     def _fetch_cached(
         self,
         key: str,
-        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota, int | None]],
+        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota, int | None, datetime]],
         *,
         live: bool,
     ) -> tuple[ProviderPayload, ProviderFetchReport]:
@@ -259,27 +271,31 @@ class TheOddsApiProvider:
 
         The observation id is stored beside the payload instead: it names the call
         the data came from, so callers coalesced onto that call all link to it.
+        So is `answered_at`, stamped by the fetch the moment the HTTP response
+        arrived, before validation or quota recording; it orders status writes
+        (#38), and a reused response keeps the time of the call that produced it.
         """
         quota: UpstreamQuota | None = None
 
-        def load() -> tuple[ProviderPayload, int | None]:
+        def load() -> tuple[ProviderPayload, int | None, datetime]:
             nonlocal quota
-            payload, quota, observation_id = fetch()
-            return payload, observation_id
+            payload, quota, observation_id, answered_at = fetch()
+            return payload, observation_id, answered_at
 
         cached = self._response_cache.fetch(key, load, live=live)
-        payload, observation_id = cached.payload
+        payload, observation_id, answered_at = cached.payload
         report = ProviderFetchReport(
             upstream_contacted=cached.upstream_contacted,
             data_age_seconds=cached.age_seconds,
             quota=quota if cached.upstream_contacted else None,
             observation_id=observation_id,
+            answered_at=answered_at,
         )
         return payload, report
 
     def _fetch_sport_odds(
         self, sport: str
-    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None, datetime]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", UpstreamCallKind.SPORT, sport)
         answered_at = datetime.now(UTC)
@@ -293,16 +309,17 @@ class TheOddsApiProvider:
         )
         _raise_unusable(unusable, observation_id)
         body = _checked_json(response, observation_id)
-        return cast(list[dict[str, Any]], body), quota, observation_id
+        return cast(list[dict[str, Any]], body), quota, observation_id, answered_at
 
     def _fetch_event_odds(
         self, sport: str, event_id: str
-    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None, datetime]:
         """GET /v4/sports/{sport}/events/{eventId}/odds from The Odds API.
 
         Costs [markets returned] x [regions], independent of how many events the
-        sport has. A 404 means upstream no longer offers the event (finished or
-        pulled), which is an empty answer rather than a failure.
+        sport has. A 404, or a 200 whose body is `[]` or `null`, means upstream no
+        longer offers the event (finished or pulled): an empty answer rather than a
+        failure (#38). An event object with no bookmakers is still offered.
         """
         response = self._get(
             f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds",
@@ -311,7 +328,7 @@ class TheOddsApiProvider:
             event_id=event_id,
         )
         answered_at = datetime.now(UTC)
-        not_offered = response.status_code == 404
+        not_offered = response.status_code == 404 or _is_absent_event_body(response)
         unusable = None if not_offered else self._unusable_body(response, sport, single=True)
         quota, observation_id = self._read_quota(
             response,
@@ -327,9 +344,9 @@ class TheOddsApiProvider:
                 "odds_api.event_not_offered",
                 extra={"sport": sport, "event_id": event_id},
             )
-            return [], quota, observation_id
+            return [], quota, observation_id, answered_at
         body = _checked_json(response, observation_id)
-        return [cast(dict[str, Any], body)], quota, observation_id
+        return [cast(dict[str, Any], body)], quota, observation_id, answered_at
 
     def check_quota(self) -> None:
         """GET /v4/sports: free, and it still carries the quota headers.

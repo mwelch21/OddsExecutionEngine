@@ -10,6 +10,7 @@ import {
   sameMarket,
   summarizeFreshness
 } from "../lib/format";
+import { LinePhaseBadge, LiveBadge } from "./LiveBadge";
 import { Button, CollapseToggle, EmptyState, Pill, useCollapsed } from "./primitives";
 
 type Props = {
@@ -64,7 +65,7 @@ export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }:
           </Button>
           <p>
             {board.event.league ?? board.event.sport ?? "Unknown league"} ·{" "}
-            {formatStart(board.event.starts_at)}
+            {formatStart(board.event.starts_at)} <LiveBadge status={board.event.status} />
           </p>
         </div>
         <div className="board-freshness">
@@ -91,6 +92,7 @@ export function LineBoard({ board, loading, onBack, onOpenWatch, pinnedMarket }:
               expandPin={expandPin}
               onPinHandled={markPinHandled}
               onOpenWatch={onOpenWatch}
+              eventLive={board.event.status === "live"}
             />
           ))}
         </div>
@@ -105,7 +107,8 @@ function MarketGroup({
   pinnedMarket,
   expandPin,
   onPinHandled,
-  onOpenWatch
+  onOpenWatch,
+  eventLive
 }: {
   marketType: string;
   markets: LineBoardMarket[];
@@ -114,6 +117,8 @@ function MarketGroup({
   expandPin: boolean;
   onPinHandled: () => void;
   onOpenWatch: (market: LineBoardMarket) => void;
+  /** On a live board each quote says whether it is a live or a left-over pre-game line. */
+  eventLive: boolean;
 }) {
   const [collapsed, toggle, expand] = useCollapsed(`market.${marketType}`);
   const heading = marketTypeHeading(marketType);
@@ -142,6 +147,7 @@ function MarketGroup({
             market={market}
             pinned={isPinned(market)}
             onOpenWatch={onOpenWatch}
+            eventLive={eventLive}
           />
         ))}
     </article>
@@ -151,11 +157,13 @@ function MarketGroup({
 function MarketRow({
   market,
   pinned,
-  onOpenWatch
+  onOpenWatch,
+  eventLive
 }: {
   market: LineBoardMarket;
   pinned: boolean;
   onOpenWatch: (market: LineBoardMarket) => void;
+  eventLive: boolean;
 }) {
   const lineText = formatLine(market);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -190,6 +198,7 @@ function MarketRow({
               </span>
               <strong>{formatAmerican(quote.price)}</strong>
               <small>{quote.line_age_known ? age : "line age unknown"}</small>
+              {eventLive && <LinePhaseBadge phase={quote.phase} />}
             </div>
           );
         })}

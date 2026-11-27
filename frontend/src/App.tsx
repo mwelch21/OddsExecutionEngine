@@ -11,6 +11,7 @@ import {
   listWatches,
   NotFoundError,
   refreshSport,
+  type EventListStatus,
   type EventPage,
   type LineBoard as LineBoardData,
   type LineBoardMarket,
@@ -58,7 +59,8 @@ export function App() {
   const [sports, setSports] = useState<SupportedSport[]>([]);
   const [refreshSportKey, setRefreshSportKey] = useState("");
   const [league, setLeague] = useState<string | null>(null);
-  const [includeStarted, setIncludeStarted] = useState(false);
+  // All is upcoming plus live; ended events never list (#38).
+  const [eventStatus, setEventStatus] = useState<EventListStatus>("all");
   const [page, setPage] = useState(1);
   const [eventPage, setEventPage] = useState<EventPage | null>(null);
 
@@ -102,7 +104,7 @@ export function App() {
   const loadEvents = useCallback(async () => {
     setLoadState("loading");
     try {
-      const response = await listEvents({ league, includeStarted, page });
+      const response = await listEvents({ league, status: eventStatus, page });
       setEventPage(response);
       setLoadState("ready");
       setMessage(`${response.total_events} events stored`);
@@ -110,7 +112,7 @@ export function App() {
       setLoadState("error");
       setMessage(error instanceof Error ? error.message : "Unable to load events");
     }
-  }, [league, includeStarted, page]);
+  }, [league, eventStatus, page]);
 
   // Navigation only. Nothing here contacts the provider, and there is no timer.
   useEffect(() => {
@@ -390,7 +392,7 @@ export function App() {
                 page={eventPage}
                 sports={sports}
                 league={league}
-                includeStarted={includeStarted}
+                status={eventStatus}
                 refreshSport={refreshSportKey}
                 loading={loadState === "loading"}
                 refreshing={refreshing}
@@ -399,8 +401,8 @@ export function App() {
                   setLeague(value);
                   setPage(1);
                 }}
-                onIncludeStartedChange={(value) => {
-                  setIncludeStarted(value);
+                onStatusChange={(value) => {
+                  setEventStatus(value);
                   setPage(1);
                 }}
                 onRefreshSportChange={setRefreshSportKey}

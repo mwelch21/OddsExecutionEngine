@@ -11,7 +11,10 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventFilter,
     EventInfo,
+    EventLifecycle,
+    EventObservation,
     EventSport,
+    EventStatus,
     EventSummary,
     ExecutionRecommendation,
     MarketQuotes,
@@ -149,9 +152,30 @@ class QuoteIngestionUnitOfWork(Protocol):
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
-    ) -> QuoteRefreshPersistenceResult: ...
+        observation: EventObservation | None = None,
+    ) -> QuoteRefreshPersistenceResult:
+        """Store the quotes with the phase each carries, and the observation.
+
+        The observation is skipped when the stored one is newer.
+        """
+        ...
 
     def get_event_sport(self, event_id: str) -> EventSport | None: ...
+
+    def get_event_starts_at(self, event_id: str) -> datetime | None: ...
+
+    def list_event_starts(
+        self, sport: str, league: str | None
+    ) -> dict[str, datetime | None]:
+        """Start time of each stored event of one sport, by external id. Ended ones
+        are included, so a newer absence still advances their observation time."""
+        ...
+
+    def set_event_status(
+        self, event_ids: list[str], status: EventStatus, observed_at: datetime
+    ) -> None:
+        """Skips each event whose stored observation is newer than `observed_at`."""
+        ...
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None: ...
 
@@ -259,7 +283,9 @@ class WatchIntentUnitOfWork(Protocol):
         self, opportunities: list[Opportunity]
     ) -> list[tuple[Opportunity, datetime | None]]: ...
 
-    def get_event_starts_at(self, event_external_id: str) -> datetime | None: ...
+    def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """Observed status and start time; None when the event was never stored."""
+        ...
 
     def get_opportunity_event_context(
         self, opportunity: Opportunity

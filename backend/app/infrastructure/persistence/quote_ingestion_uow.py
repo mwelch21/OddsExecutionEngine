@@ -1,15 +1,19 @@
 import logging
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import Row, RowMapping, delete, insert, select, update
+from sqlalchemy import CursorResult, Row, RowMapping, delete, insert, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from backend.app.application.ports import QuoteIngestionUnitOfWork
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventObservation,
     EventSport,
+    EventStatus,
+    LinePhase,
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
@@ -78,33 +82,44 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
+        observation: EventObservation | None = None,
     ) -> QuoteRefreshPersistenceResult:
         session = self._require_session()
         ingested_at = datetime.now(UTC)
         event_row_id = self._ensure_event(event_id, event_metadata)
+        # A stale observation's quotes go to history only: latest must not be
+        # overwritten by a response older than the one it already holds (#38).
+        write_latest = observation is None or self._write_observation(
+            event_row_id, observation
+        )
         persisted_quotes: list[PersistedQuote] = []
         created_market_count = 0
+        latest_count = 0
 
         for quote in quotes:
+            phase = quote.phase or LinePhase.PRE_GAME
             market_id, market_created = self._ensure_market(event_row_id, quote)
             if market_created:
                 created_market_count += 1
 
-            session.execute(
-                delete(market_quotes_latest_table).where(
-                    market_quotes_latest_table.c.market_id == market_id,
-                    market_quotes_latest_table.c.sportsbook == quote.sportsbook,
+            if write_latest:
+                session.execute(
+                    delete(market_quotes_latest_table).where(
+                        market_quotes_latest_table.c.market_id == market_id,
+                        market_quotes_latest_table.c.sportsbook == quote.sportsbook,
+                    )
                 )
-            )
-            session.execute(
-                insert(market_quotes_latest_table).values(
-                    market_id=market_id,
-                    sportsbook=quote.sportsbook,
-                    price=quote.price,
-                    ingested_at=ingested_at,
-                    quoted_at=quote.quoted_at,
+                session.execute(
+                    insert(market_quotes_latest_table).values(
+                        market_id=market_id,
+                        sportsbook=quote.sportsbook,
+                        price=quote.price,
+                        ingested_at=ingested_at,
+                        quoted_at=quote.quoted_at,
+                        phase=phase.value,
+                    )
                 )
-            )
+                latest_count += 1
             session.execute(
                 insert(market_quotes_history_table).values(
                     id=str(uuid4()),
@@ -113,11 +128,14 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                     price=quote.price,
                     ingested_at=ingested_at,
                     quoted_at=quote.quoted_at,
+                    phase=phase.value,
                 )
             )
             persisted_quotes.append(
                 PersistedQuote(
-                    quote=quote.model_copy(update={"ingested_at": ingested_at}),
+                    quote=quote.model_copy(
+                        update={"ingested_at": ingested_at, "phase": phase}
+                    ),
                     market_id=market_id,
                     market_created=market_created,
                 )
@@ -127,7 +145,7 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
             event_id=event_id,
             persisted_quotes=persisted_quotes,
             created_market_count=created_market_count,
-            updated_latest_count=len(persisted_quotes),
+            updated_latest_count=latest_count,
             appended_history_count=len(persisted_quotes),
         )
 
@@ -158,6 +176,65 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         if row is None:
             return None
         return EventSport(sport=row["sport"], league=row["league"])
+
+    def get_event_starts_at(self, event_id: str) -> datetime | None:
+        value = (
+            self._require_session()
+            .execute(select(events_table.c.starts_at).where(events_table.c.external_id == event_id))
+            .scalar_one_or_none()
+        )
+        return _as_utc(value)
+
+    def list_event_starts(
+        self, sport: str, league: str | None
+    ) -> dict[str, datetime | None]:
+        rows = self._require_session().execute(
+            select(events_table.c.external_id, events_table.c.starts_at).where(
+                events_table.c.sport == sport,
+                events_table.c.league.is_(None)
+                if league is None
+                else events_table.c.league == league,
+            )
+        )
+        return {str(row.external_id): _as_utc(row.starts_at) for row in rows}
+
+    def set_event_status(
+        self, event_ids: list[str], status: EventStatus, observed_at: datetime
+    ) -> None:
+        if not event_ids:
+            return
+        self._require_session().execute(
+            update(events_table)
+            .where(events_table.c.external_id.in_(event_ids), _not_newer_than(observed_at))
+            .values(status=status.value, status_observed_at=observed_at)
+        )
+
+    def _write_observation(self, event_row_id: str, observation: EventObservation) -> bool:
+        """Write the observation unless the stored one is newer. True when written."""
+        values: dict[str, object] = {
+            "status": observation.status.value,
+            "status_observed_at": observation.observed_at,
+        }
+        if observation.starts_at is not None:
+            values["starts_at"] = observation.starts_at
+        result = cast(
+            CursorResult[Any],
+            self._require_session().execute(
+                update(events_table)
+                .where(
+                    events_table.c.id == event_row_id,
+                    _not_newer_than(observation.observed_at),
+                )
+                .values(**values)
+            ),
+        )
+        if result.rowcount == 0:
+            self._logger.info(
+                "quote_ingestion_uow.stale_observation_skipped",
+                extra={"event_row_id": event_row_id, "status": observation.status.value},
+            )
+            return False
+        return True
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         """Stamp a sport-wide pull; the Auto-Refresh cooldown runs from here."""
@@ -280,6 +357,20 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                 for event in self._staged_events
             ],
         )
+
+
+def _not_newer_than(observed_at: datetime) -> ColumnElement[bool]:
+    """The stored observation is absent or no newer than this one."""
+    return events_table.c.status_observed_at.is_(None) | (
+        events_table.c.status_observed_at <= observed_at
+    )
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; every time this system stores is UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _row_value(row: Row[tuple[object]] | RowMapping | tuple[str], key: str) -> str:

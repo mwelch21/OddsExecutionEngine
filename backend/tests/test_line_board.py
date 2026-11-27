@@ -311,6 +311,9 @@ def test_each_quote_reports_the_books_clock_and_ours_separately(
     assert unknown["quoted_at"] is None
     assert unknown["line_age_known"] is False
     _assert_same_instant(unknown["ingested_at"], PULLED_AT)
+    # Stored before kickoff: every line on an upcoming board is pre-game (#38).
+    assert {q["phase"] for q in quotes.values()} == {"pre_game"}
+    assert board["event"]["status"] == "upcoming"
 
 
 def test_a_market_no_book_is_quoting_is_present_and_empty(

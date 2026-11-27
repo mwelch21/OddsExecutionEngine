@@ -211,7 +211,7 @@ Ingestion:
 
 Browse:
 
-- `GET /api/v1/events` (optional `league`, `sport`, `include_started` filters; page-based `page` / `page_size`)
+- `GET /api/v1/events` (optional `league`, `sport` and `status` = `upcoming` | `live` | `all` filters, default `all` = upcoming plus live, ended never listed; `include_started` is a deprecated alias, `true` = `all`, `false` = `upcoming`; page-based `page` / `page_size`)
 - `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
 
 Monitoring:

@@ -25,9 +25,14 @@ events_table = Table(
     Column("starts_at", DateTime(timezone=True), nullable=True),
     Column("sport", String(length=64), nullable=True),
     Column("league", String(length=64), nullable=True),
+    # Observed from feed presence at ingest (#38): upcoming, live, or ended.
     Column("status", String(length=16), nullable=False, server_default="upcoming"),
+    # When the provider data behind `status` was current. A status write older
+    # than this is skipped, so late-landing pulls cannot undo a newer one.
+    Column("status_observed_at", DateTime(timezone=True), nullable=True),
     Column("provider", String(length=32), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("status IN ('upcoming', 'live', 'ended')", name="ck_events_status"),
 )
 
 event_participants_table = Table(
@@ -70,6 +75,10 @@ market_quotes_latest_table = Table(
     # The book's own line-movement time. NULL means the provider does not expose one,
     # which reads as unknown age — never as freshly moved.
     Column("quoted_at", DateTime(timezone=True), nullable=True),
+    # Pulled pre-game or while the event was live (#38). Not a clock: both times
+    # above keep their meaning across kickoff.
+    Column("phase", String(length=16), nullable=False, server_default="pre_game"),
+    CheckConstraint("phase IN ('pre_game', 'live')", name="ck_market_quotes_latest_phase"),
 )
 
 market_quotes_history_table = Table(
@@ -81,6 +90,8 @@ market_quotes_history_table = Table(
     Column("price", Integer, nullable=False),
     Column("ingested_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("quoted_at", DateTime(timezone=True), nullable=True),
+    Column("phase", String(length=16), nullable=False, server_default="pre_game"),
+    CheckConstraint("phase IN ('pre_game', 'live')", name="ck_market_quotes_history_phase"),
 )
 
 order_intents_table = Table(

@@ -1,20 +1,27 @@
 import { ChevronLeft, ChevronRight, RefreshCcw } from "lucide-react";
-import type { EventPage, SupportedSport } from "../lib/api";
+import type { EventListStatus, EventPage, SupportedSport } from "../lib/api";
 import { formatStart, matchupLabel, summarizeFreshness } from "../lib/format";
+import { LiveBadge } from "./LiveBadge";
 import { Button, CollapseToggle, EmptyState, Pill, useCollapsed } from "./primitives";
+
+const STATUS_OPTIONS: { value: EventListStatus; label: string }[] = [
+  { value: "upcoming", label: "Upcoming" },
+  { value: "live", label: "Live" },
+  { value: "all", label: "All" }
+];
 
 type Props = {
   page: EventPage | null;
   sports: SupportedSport[];
   league: string | null;
-  includeStarted: boolean;
+  status: EventListStatus;
   refreshSport: string;
   loading: boolean;
   refreshing: boolean;
   /** Seconds left on the client-side refresh cooldown; 0 when ready. */
   cooldown: number;
   onLeagueChange: (league: string | null) => void;
-  onIncludeStartedChange: (includeStarted: boolean) => void;
+  onStatusChange: (status: EventListStatus) => void;
   onRefreshSportChange: (sport: string) => void;
   onRefresh: () => void;
   onPageChange: (page: number) => void;
@@ -25,13 +32,13 @@ export function EventList({
   page,
   sports,
   league,
-  includeStarted,
+  status,
   refreshSport,
   loading,
   refreshing,
   cooldown,
   onLeagueChange,
-  onIncludeStartedChange,
+  onStatusChange,
   onRefreshSportChange,
   onRefresh,
   onPageChange,
@@ -110,14 +117,22 @@ export function EventList({
                 ))}
               </select>
             </label>
-            <label className="checkbox-shell">
-              <input
-                type="checkbox"
-                checked={includeStarted}
-                onChange={(event) => onIncludeStartedChange(event.target.checked)}
-              />
-              Include started
-            </label>
+            <div className="segmented" role="radiogroup" aria-label="Event status">
+              {STATUS_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={status === option.value}
+                  className={
+                    status === option.value ? "segmented-option active" : "segmented-option"
+                  }
+                  onClick={() => onStatusChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             {page && (
               <span className="result-count">
                 {page.total_events} event{page.total_events === 1 ? "" : "s"}
@@ -146,6 +161,7 @@ export function EventList({
                   <div className="event-card-main">
                     <span className="league">
                       {event.league ?? event.sport ?? "Unknown league"}
+                      <LiveBadge status={event.status} />
                     </span>
                     <strong>{matchupLabel(event)}</strong>
                     <small>{formatStart(event.starts_at)}</small>

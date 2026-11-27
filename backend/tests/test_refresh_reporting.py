@@ -56,7 +56,7 @@ class TestQuotaParsing:
         }
 
         with patch.object(provider._client, "get", return_value=_response(headers)):
-            _, quota, _ = provider._fetch_sport_odds(SPORT)
+            _, quota, _, _ = provider._fetch_sport_odds(SPORT)
 
         assert quota.credits_spent == 3
         assert quota.credits_remaining == 487
@@ -66,7 +66,7 @@ class TestQuotaParsing:
         provider = _provider()
 
         with patch.object(provider._client, "get", return_value=_response({})):
-            _, quota, _ = provider._fetch_sport_odds(SPORT)
+            _, quota, _, _ = provider._fetch_sport_odds(SPORT)
 
         assert quota.credits_spent is None
         assert quota.credits_remaining is None
@@ -76,7 +76,7 @@ class TestQuotaParsing:
         headers = {"x-requests-last": "?", "x-requests-remaining": ""}
 
         with patch.object(provider._client, "get", return_value=_response(headers)):
-            _, quota, _ = provider._fetch_sport_odds(SPORT)
+            _, quota, _, _ = provider._fetch_sport_odds(SPORT)
 
         assert quota.credits_spent is None
         assert quota.credits_remaining is None
