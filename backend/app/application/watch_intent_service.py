@@ -343,14 +343,13 @@ class WatchIntentService:
             with self._unit_of_work_factory() as uow:
                 now = datetime.now(UTC)
                 # Live events evaluate on their live lines; ended ones produce
-                # nothing (#38).
-                fillable = self._event_status_engine.fillable_quotes(
-                    uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
-                )
-                if fillable.skipped_reason is not None:
+                # nothing (#38). Checked before any quote is read.
+                lifecycle = uow.get_event_lifecycle(event_id)
+                skipped = self._event_status_engine.skip_reason(lifecycle, now)
+                if skipped is not None:
                     self._logger.info(
                         "watch_evaluation.skipped",
-                        extra={"event_id": event_id, "reason": fillable.skipped_reason.value},
+                        extra={"event_id": event_id, "reason": skipped.value},
                     )
                     return []
 
@@ -368,7 +367,14 @@ class WatchIntentService:
                     )
 
                 live = [intent for intent in intents if not intent.is_expired_at(now)]
-                quotes = fillable.quotes if live else []
+                # Quotes are read only when an unexpired watch could use them.
+                quotes = (
+                    self._event_status_engine.fillable_quotes(
+                        lifecycle, uow.list_quotes(event_id), now
+                    ).quotes
+                    if live
+                    else []
+                )
                 evaluated: list[Opportunity] = []
 
                 if live and quotes:

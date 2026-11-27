@@ -7,6 +7,11 @@ A check constraint holds it to those three values. Stored events keep the value
 they have: whether an old started event is live or ended was never observed, so
 nothing is guessed. The next pull of its sport settles it.
 
+`events.status_observed_at` is when the provider data behind `status` was
+current. Status writes older than it are skipped, so a slow sport-wide pull
+cannot overwrite a newer per-event observation. Null on stored events: their
+status was never observed.
+
 `market_quotes_latest.phase` and `market_quotes_history.phase` say whether each
 line was pulled pre-game or while the event was live. Existing rows are
 backfilled from the facts they already hold: a line pulled at or after its
@@ -27,6 +32,9 @@ QUOTE_TABLES = ("market_quotes_latest", "market_quotes_history")
 
 def upgrade() -> None:
     with op.batch_alter_table("events") as batch_op:
+        batch_op.add_column(
+            sa.Column("status_observed_at", sa.DateTime(timezone=True), nullable=True)
+        )
         batch_op.create_check_constraint(
             "ck_events_status", "status IN ('upcoming', 'live', 'ended')"
         )
@@ -55,3 +63,4 @@ def downgrade() -> None:
             batch_op.drop_column("phase")
     with op.batch_alter_table("events") as batch_op:
         batch_op.drop_constraint("ck_events_status", type_="check")
+        batch_op.drop_column("status_observed_at")

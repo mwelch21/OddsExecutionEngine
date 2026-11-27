@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from uuid import uuid4
 
@@ -17,6 +17,7 @@ from backend.app.domain.events import (
     build_quotes_refreshed_event,
 )
 from backend.app.domain.models import (
+    EventObservation,
     EventSport,
     EventStatus,
     ProviderFetchReport,
@@ -116,8 +117,10 @@ class QuoteIngestionService:
         try:
             quotes, fetch_report = self._quote_provider.list_quotes(event_id, sport_key)
             try:
-                status = self._observe_event_refresh(event_id, quotes, fetch_report)
-                summary = self._ingest_event(event_id, quotes, persisted, status=status)
+                observation = self._observe_event_refresh(event_id, quotes, fetch_report)
+                summary = self._ingest_event(
+                    event_id, quotes, persisted, observation=observation
+                )
             except Exception as error:
                 link_observation(error, fetch_report.observation_id)
                 raise
@@ -150,7 +153,7 @@ class QuoteIngestionService:
         provider_quotes: list[Quote],
         persisted: list[str],
         event_metadata: dict[str, object] | None = None,
-        status: EventStatus | None = None,
+        observation: EventObservation | None = None,
     ) -> QuoteRefreshSummary:
         """Ingest one event's quotes. `persisted` gains the event id once its quotes
         commit, so the refresh record counts it even if publishing then fails."""
@@ -171,15 +174,15 @@ class QuoteIngestionService:
                 event_id,
                 provider_quotes,
             )
-            if status is not None:
-                phase = self._event_status_engine.line_phase(status)
+            if observation is not None:
+                phase = self._event_status_engine.line_phase(observation.status)
                 normalized_quotes = [
                     quote.model_copy(update={"phase": phase}) for quote in normalized_quotes
                 ]
 
             with self._unit_of_work_factory() as unit_of_work:
                 persistence_result = unit_of_work.persist_quotes(
-                    event_id, normalized_quotes, event_metadata, status
+                    event_id, normalized_quotes, event_metadata, observation
                 )
 
                 for persisted_quote in persistence_result.persisted_quotes:
@@ -308,7 +311,7 @@ class QuoteIngestionService:
         started_at: float,
     ) -> SportRefreshResult:
         summaries: list[QuoteRefreshSummary] = []
-        now = self._clock()
+        now = self._observed_at(fetch_report)
 
         for event_id, quotes in all_quotes.items():
             event_info = self._quote_provider.get_event_info(event_id)
@@ -318,11 +321,15 @@ class QuoteIngestionService:
                 if event_info is not None
                 else self._stored_starts_at(event_id)
             )
-            # Offered in this pull, so live once started (#38).
-            status = self._event_status_engine.observe_offered(starts_at, now)
+            # Offered in this pull, so live once started (#38). The start time
+            # travels with the status so a moved kickoff is stored with it.
+            observation = EventObservation(
+                status=self._event_status_engine.observe_offered(starts_at, now),
+                observed_at=now,
+                starts_at=event_info.commence_time if event_info is not None else None,
+            )
             if event_info is not None:
                 metadata = {
-                    "starts_at": event_info.commence_time,
                     "sport": event_info.sport,
                     "league": event_info.league,
                     "provider": type(self._quote_provider).__name__,
@@ -338,7 +345,7 @@ class QuoteIngestionService:
                 }
 
             summary = self._ingest_event(
-                event_id, quotes, persisted, event_metadata=metadata, status=status
+                event_id, quotes, persisted, event_metadata=metadata, observation=observation
             )
             summaries.append(summary)
 
@@ -371,23 +378,29 @@ class QuoteIngestionService:
 
     def _observe_event_refresh(
         self, event_id: str, quotes: list[Quote], fetch_report: ProviderFetchReport
-    ) -> EventStatus:
-        """A per-event refresh's status: ended on a 404 or empty answer (#38)."""
+    ) -> EventObservation:
+        """A per-event refresh's observation: ended on a 404 or empty answer (#38)."""
         offered = (
             fetch_report.event_offered
             if fetch_report.event_offered is not None
             else bool(quotes)
         )
         known = self._quote_provider.get_event_info(event_id) if offered else None
+        observed_start = known.commence_time if known is not None else None
         starts_at = (
-            known.commence_time if known is not None else self._stored_starts_at(event_id)
+            observed_start if observed_start is not None else self._stored_starts_at(event_id)
         )
+        observed_at = self._observed_at(fetch_report)
         status = self._event_status_engine.observe_event_refresh(
-            offered=offered, starts_at=starts_at, now=self._clock()
+            offered=offered, starts_at=starts_at, now=observed_at
         )
         if status is EventStatus.ENDED:
             self._logger.info("quote_ingestion.event_ended", extra={"event_id": event_id})
-        return status
+        return EventObservation(status=status, observed_at=observed_at, starts_at=observed_start)
+
+    def _observed_at(self, fetch_report: ProviderFetchReport) -> datetime:
+        """When the answer's data was current: a reused response is as old as it is."""
+        return self._clock() - timedelta(seconds=fetch_report.data_age_seconds)
 
     def _stored_starts_at(self, event_id: str) -> datetime | None:
         with self._unit_of_work_factory() as unit_of_work:
@@ -413,7 +426,7 @@ class QuoteIngestionService:
             and self._event_status_engine.observe_absent_from_sport_pull(starts_at, now)
             is EventStatus.ENDED
         )
-        unit_of_work.set_event_status(ended, EventStatus.ENDED)
+        unit_of_work.set_event_status(ended, EventStatus.ENDED, now)
         if ended:
             self._logger.info(
                 "sport_refresh.events_ended",

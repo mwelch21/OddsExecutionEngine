@@ -365,6 +365,7 @@ def _assert_event_status_line_phase_migration(
             assert phases == {"DraftKings": "pre_game", "FanDuel": "live"}, table
         # Whether the stored event is live or ended was never observed: unchanged.
         assert session.execute(text("SELECT status FROM events")).scalar_one() == "upcoming"
+        assert session.execute(text("SELECT status_observed_at FROM events")).scalar_one() is None
         with pytest.raises(IntegrityError):
             session.execute(text("UPDATE events SET status = 'halftime'"))
         session.rollback()
@@ -376,6 +377,8 @@ def _assert_event_status_line_phase_migration(
     for table in ("market_quotes_latest", "market_quotes_history"):
         columns = {c["name"] for c in inspect(session_factory.engine).get_columns(table)}
         assert "phase" not in columns, table
+    event_columns = {c["name"] for c in inspect(session_factory.engine).get_columns("events")}
+    assert "status_observed_at" not in event_columns
     command.upgrade(config, "head")
 
 

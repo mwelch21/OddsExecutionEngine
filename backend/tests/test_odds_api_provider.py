@@ -1,7 +1,9 @@
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from backend.app.domain.models import MarketType, Quote, UpstreamQuota
@@ -408,3 +410,48 @@ def _only(quotes: list[Quote], sportsbook: str, market_type: MarketType) -> Quot
     ]
     assert len(matches) == 1
     return matches[0]
+
+
+class TestSingleEventAbsence:
+    """A per-event 200 that names no event is absent; an event with no books is not (#38).
+
+    Runs the real adapter over a stubbed HTTP client, so nothing reaches upstream.
+    """
+
+    @staticmethod
+    def _provider_answering(body: object) -> tuple[TheOddsApiProvider, list[httpx.Request]]:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            # `content`, not `json=`: httpx reads `json=None` as no body at all.
+            return httpx.Response(
+                200,
+                content=json.dumps(body).encode(),
+                headers={"content-type": "application/json", "x-requests-last": "3"},
+            )
+
+        provider = _create_provider()
+        provider._client = httpx.Client(transport=httpx.MockTransport(handler))
+        return provider, seen
+
+    @pytest.mark.parametrize("body", [[], None])
+    def test_an_empty_or_null_body_is_an_absent_event(self, body: object) -> None:
+        provider, seen = self._provider_answering(body)
+
+        quotes, report = provider.list_quotes("gone", SPORT_KEY)
+
+        assert quotes == []
+        assert report.event_offered is False
+        assert len(seen) == 1
+        assert seen[0].url.path.endswith("/events/gone/odds")
+
+    def test_an_event_with_no_bookmakers_is_still_offered(self) -> None:
+        event = {**SAMPLE_API_RESPONSE[0], "bookmakers": []}
+        provider, seen = self._provider_answering(event)
+
+        quotes, report = provider.list_quotes(str(event["id"]), SPORT_KEY)
+
+        assert quotes == []
+        assert report.event_offered is True
+        assert len(seen) == 1

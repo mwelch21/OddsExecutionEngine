@@ -10,6 +10,7 @@ from backend.app.application.quote_ingestion_service import (
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventInfo,
+    EventObservation,
     EventSport,
     EventStatus,
     MarketType,
@@ -95,7 +96,7 @@ class RecordingQuoteIngestionUnitOfWork:
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
-        status: EventStatus | None = None,
+        observation: EventObservation | None = None,
     ) -> QuoteRefreshPersistenceResult:
         if self._fail_on_persist:
             raise RuntimeError("quote persistence failed")
@@ -112,7 +113,9 @@ class RecordingQuoteIngestionUnitOfWork:
     ) -> dict[str, datetime | None]:
         return {}
 
-    def set_event_status(self, event_ids: list[str], status: EventStatus) -> None:
+    def set_event_status(
+        self, event_ids: list[str], status: EventStatus, observed_at: datetime
+    ) -> None:
         pass
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:

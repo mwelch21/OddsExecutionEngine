@@ -27,6 +27,9 @@ events_table = Table(
     Column("league", String(length=64), nullable=True),
     # Observed from feed presence at ingest (#38): upcoming, live, or ended.
     Column("status", String(length=16), nullable=False, server_default="upcoming"),
+    # When the provider data behind `status` was current. A status write older
+    # than this is skipped, so late-landing pulls cannot undo a newer one.
+    Column("status_observed_at", DateTime(timezone=True), nullable=True),
     Column("provider", String(length=32), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("status IN ('upcoming', 'live', 'ended')", name="ck_events_status"),

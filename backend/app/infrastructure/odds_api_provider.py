@@ -99,6 +99,17 @@ def _call_outcome(response: httpx.Response) -> UpstreamCallOutcome:
     return UpstreamCallOutcome.SERVER_ERROR
 
 
+def _is_absent_event_body(response: httpx.Response) -> bool:
+    """A successful single-event answer that names no event: `[]` or `null`."""
+    if not response.is_success:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return body is None or body == []
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if _is_out_of_credits(response):
         raise OutOfUsageCreditsError()
@@ -302,8 +313,9 @@ class TheOddsApiProvider:
         """GET /v4/sports/{sport}/events/{eventId}/odds from The Odds API.
 
         Costs [markets returned] x [regions], independent of how many events the
-        sport has. A 404 means upstream no longer offers the event (finished or
-        pulled), which is an empty answer rather than a failure.
+        sport has. A 404, or a 200 whose body is `[]` or `null`, means upstream no
+        longer offers the event (finished or pulled): an empty answer rather than a
+        failure (#38). An event object with no bookmakers is still offered.
         """
         response = self._get(
             f"{ODDS_API_BASE}/{sport}/events/{event_id}/odds",
@@ -312,7 +324,7 @@ class TheOddsApiProvider:
             event_id=event_id,
         )
         answered_at = datetime.now(UTC)
-        not_offered = response.status_code == 404
+        not_offered = response.status_code == 404 or _is_absent_event_body(response)
         unusable = None if not_offered else self._unusable_body(response, sport, single=True)
         quota, observation_id = self._read_quota(
             response,

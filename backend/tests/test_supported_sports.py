@@ -74,7 +74,9 @@ class SportStampOnlyUnitOfWork:
         # Status bookkeeping, not a quote write: nothing stored, so nothing to end.
         return {}
 
-    def set_event_status(self, event_ids: list[str], status: object) -> None:
+    def set_event_status(
+        self, event_ids: list[str], status: object, observed_at: datetime
+    ) -> None:
         assert event_ids == []
 
     def __getattr__(self, name: str) -> object:

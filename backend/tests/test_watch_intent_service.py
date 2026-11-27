@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
@@ -47,6 +47,7 @@ class RecordingWatchIntentUnitOfWork:
         self.created_batches: list[list[Opportunity]] = []
 
         self.expired_ids: list[str] = []
+        self.quote_reads = 0
         self.triggered_ids: list[str] = []
 
     def __enter__(self) -> "RecordingWatchIntentUnitOfWork":
@@ -138,6 +139,7 @@ class RecordingWatchIntentUnitOfWork:
         return list(self._active_intents)
 
     def list_quotes(self, event_id: str) -> list[Quote]:
+        self.quote_reads += 1
         return [
             Quote(
                 event_id="event-1",
@@ -389,3 +391,47 @@ def _make_opportunity(
         best_price=125,
         matching_quotes=[MatchingQuote(sportsbook=best_sportsbook, price=125)],
     )
+
+
+def _evaluate_counting_quote_reads(
+    event_status: EventStatus | None, intent: WatchIntent
+) -> RecordingWatchIntentUnitOfWork:
+    uow = RecordingWatchIntentUnitOfWork(
+        created_intent=intent, active_intents=[intent], event_status=event_status
+    )
+    WatchIntentService(
+        unit_of_work_factory=lambda: uow,
+        workflow_event_publisher=InMemoryWorkflowEventPublisher(),
+        watch_evaluation_engine=StubWatchEvaluationEngine([]),
+        opportunity_validity_engine=OpportunityValidityEngine(),
+        opportunity_ttl_minutes=5,
+    ).evaluate_for_event("event-1")
+    return uow
+
+
+def _watch(expires_at: datetime | None = None) -> WatchIntent:
+    return WatchIntent(
+        id="wi-1",
+        event_id="event-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+        expires_at=expires_at,
+    )
+
+
+def test_evaluation_reads_no_quotes_for_an_ended_event() -> None:
+    uow = _evaluate_counting_quote_reads(EventStatus.ENDED, _watch())
+    assert uow.quote_reads == 0
+
+
+def test_evaluation_reads_no_quotes_when_no_watch_is_still_armed() -> None:
+    expired = _watch(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    uow = _evaluate_counting_quote_reads(EventStatus.LIVE, expired)
+    assert uow.quote_reads == 0
+    assert uow.expired_ids == ["wi-1"]
+
+
+def test_evaluation_reads_quotes_once_an_armed_watch_can_use_them() -> None:
+    uow = _evaluate_counting_quote_reads(EventStatus.LIVE, _watch())
+    assert uow.quote_reads == 1

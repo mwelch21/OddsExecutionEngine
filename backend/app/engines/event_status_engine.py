@@ -50,6 +50,21 @@ class EventStatusEngine:
         """The phase of a line pulled while the event had this status."""
         return LinePhase.LIVE if status is EventStatus.LIVE else LinePhase.PRE_GAME
 
+    def skip_reason(
+        self, lifecycle: EventLifecycle | None, now: datetime
+    ) -> FillableSkipReason | None:
+        """Why nothing on this event can fill, or None when its quotes may.
+
+        Needs no quotes, so a caller can rule an event out before reading any.
+        """
+        if lifecycle is None:
+            return None
+        if lifecycle.status is EventStatus.ENDED:
+            return FillableSkipReason.EVENT_ENDED
+        if lifecycle.status is EventStatus.UPCOMING and _has_started(lifecycle.starts_at, now):
+            return FillableSkipReason.EVENT_STATUS_UNOBSERVED
+        return None
+
     def fillable_quotes(
         self, lifecycle: EventLifecycle | None, quotes: list[Quote], now: datetime
     ) -> FillableQuotes:
@@ -60,16 +75,10 @@ class EventStatusEngine:
         its start: none, because nothing has observed it since kickoff. Upcoming,
         or an event never stored: every quote.
         """
-        if lifecycle is None:
-            return FillableQuotes(quotes=quotes)
-        status = lifecycle.status
-        if status is EventStatus.ENDED:
-            return FillableQuotes(quotes=[], skipped_reason=FillableSkipReason.EVENT_ENDED)
-        if status is EventStatus.UPCOMING and _has_started(lifecycle.starts_at, now):
-            return FillableQuotes(
-                quotes=[], skipped_reason=FillableSkipReason.EVENT_STATUS_UNOBSERVED
-            )
-        if status is EventStatus.LIVE:
+        skipped = self.skip_reason(lifecycle, now)
+        if skipped is not None:
+            return FillableQuotes(quotes=[], skipped_reason=skipped)
+        if lifecycle is not None and lifecycle.status is EventStatus.LIVE:
             return FillableQuotes(
                 quotes=[quote for quote in quotes if quote.phase is LinePhase.LIVE]
             )

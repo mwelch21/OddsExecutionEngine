@@ -121,7 +121,8 @@
 ## Event status and line phase (ADR-019)
 
 - Started events can fill. The old rule, "a started event can no longer produce an opportunity", is reversed: it held for pre-game lines only.
-- `events.status` is written at ingest from feed presence and nothing else: offered and not started is `upcoming`, offered and started is `live`, started and no longer offered (absent from a sport pull, or a per-event 404) is `ended`. Never infer it from `starts_at` alone.
+- `events.status` is written at ingest from feed presence and nothing else: offered and not started is `upcoming`, offered and started is `live`, started and no longer offered (absent from a sport pull, or a per-event 404) is `ended`. Never infer it from `starts_at` alone. The observed start time is written with it.
+- Every status write carries its observation time (`events.status_observed_at`) and is skipped when the stored one is newer. Never write status without it.
 - Every stored quote carries `phase`, stamped at ingest from the event status: `live` when pulled while the event was live, else `pre_game`. Phase is not a clock; `quoted_at` and `ingested_at` keep their meaning across kickoff.
 - `EventStatusEngine` owns these rules, including what a watch may fill on: nothing on an ended event (logged as `watch_evaluation.skipped`, `reason=event_ended`), nothing on an event stored `upcoming` past its start (`reason=event_status_unobserved`), live lines only on a live event, every line on an upcoming one.
 - Status costs no credits. Do not add a `/scores` call for it (#127).

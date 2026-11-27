@@ -12,6 +12,7 @@ from backend.app.domain.models import (
     EventFilter,
     EventInfo,
     EventLifecycle,
+    EventObservation,
     EventSport,
     EventStatus,
     EventSummary,
@@ -151,9 +152,12 @@ class QuoteIngestionUnitOfWork(Protocol):
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
-        status: EventStatus | None = None,
+        observation: EventObservation | None = None,
     ) -> QuoteRefreshPersistenceResult:
-        """Store the quotes with the phase each carries, and the observed status."""
+        """Store the quotes with the phase each carries, and the observation.
+
+        The observation is skipped when the stored one is newer.
+        """
         ...
 
     def get_event_sport(self, event_id: str) -> EventSport | None: ...
@@ -166,7 +170,11 @@ class QuoteIngestionUnitOfWork(Protocol):
         """Start time of each stored, not-ended event of one sport, by external id."""
         ...
 
-    def set_event_status(self, event_ids: list[str], status: EventStatus) -> None: ...
+    def set_event_status(
+        self, event_ids: list[str], status: EventStatus, observed_at: datetime
+    ) -> None:
+        """Skips each event whose stored observation is newer than `observed_at`."""
+        ...
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None: ...
 

@@ -14,7 +14,9 @@ from sqlalchemy import select, update
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.models import (
+    EventFilter,
     EventInfo,
+    EventListStatus,
     EventParticipant,
     EventStatus,
     LinePhase,
@@ -118,6 +120,8 @@ class Harness:
     def __init__(self, session_factory: DatabaseSessionFactory) -> None:
         self.session_factory = session_factory
         self.provider = ControlledFeedProvider()
+        # Ingestion's clock: when each provider answer is taken to be current.
+        self.now = NOW
         comparison = PriceComparisonService()
         recommendation = RecommendationEngine(comparison)
         self.watches = WatchIntentService(
@@ -133,6 +137,7 @@ class Harness:
             normalization_engine=NormalizationEngine(),
             workflow_event_publisher=InMemoryWorkflowEventPublisher(),
             watch_intent_service=self.watches,
+            clock=lambda: self.now,
         )
 
     def status(self, event_id: str) -> EventStatus:
@@ -141,6 +146,13 @@ class Harness:
                 select(events_table.c.status).where(events_table.c.external_id == event_id)
             ).scalar_one()
         return EventStatus(value)
+
+    def starts_at(self, event_id: str) -> datetime:
+        with self.session_factory.create_session() as session:
+            value: datetime = session.execute(
+                select(events_table.c.starts_at).where(events_table.c.external_id == event_id)
+            ).scalar_one()
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
     def board_phases(self, event_id: str) -> dict[str, LinePhase | None]:
         with SqlAlchemyEventReadUnitOfWork(self.session_factory) as uow:
@@ -325,3 +337,70 @@ def test_a_started_event_not_observed_since_kickoff_fills_on_nothing(
     # +150 is a pre-game price that may be gone; nothing fills until a pull says.
     assert created.opportunity is None
     assert harness.status(event_id) is EventStatus.UPCOMING
+
+
+@pytest.mark.parametrize("path", ["event", "sport"])
+def test_a_moved_kickoff_is_stored_with_the_status_it_decides(
+    harness: Harness, path: str
+) -> None:
+    event_id = "postponed"
+    harness.provider.offer(
+        event_id, NOW - timedelta(minutes=10), [_quote(event_id, "FanDuel", 130, None)]
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    assert harness.status(event_id) is EventStatus.LIVE
+
+    # Postponed: the provider now offers it two hours out.
+    later = NOW + timedelta(hours=2)
+    harness.provider.offer(event_id, later, [_quote(event_id, "FanDuel", 125, None)])
+    if path == "event":
+        harness.ingestion.refresh_quotes(event_id)
+    else:
+        harness.ingestion.refresh_sport(SPORT_KEY)
+
+    assert harness.status(event_id) is EventStatus.UPCOMING
+    assert harness.starts_at(event_id) == later
+    with SqlAlchemyEventReadUnitOfWork(harness.session_factory) as uow:
+        listed = uow.list_events(
+            EventFilter(status=EventListStatus.UPCOMING), NOW, limit=10, offset=0
+        )
+    assert [event.id for event in listed] == [event_id]
+
+
+def test_an_older_sport_pull_landing_late_cannot_end_a_newer_live_observation(
+    harness: Harness,
+) -> None:
+    event_id = "late-write"
+    harness.provider.offer(
+        event_id, NOW - timedelta(minutes=30), [_quote(event_id, "FanDuel", 130, None)]
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    harness.now = NOW + timedelta(minutes=5)
+    harness.ingestion.refresh_quotes(event_id)  # newer: still live
+
+    # A sport pull whose answer predates that refresh, and no longer lists it.
+    harness.now = NOW + timedelta(minutes=2)
+    harness.provider.withdraw(event_id)
+    harness.ingestion.refresh_sport(SPORT_KEY)
+
+    assert harness.status(event_id) is EventStatus.LIVE
+
+
+def test_an_older_event_answer_landing_late_cannot_overwrite_status_or_start(
+    harness: Harness,
+) -> None:
+    event_id = "late-event"
+    starts = NOW - timedelta(minutes=30)
+    harness.provider.offer(event_id, starts, [_quote(event_id, "FanDuel", 130, None)])
+    harness.now = NOW + timedelta(minutes=5)
+    harness.ingestion.refresh_sport(SPORT_KEY)
+
+    # An older answer that still had the game an hour out.
+    harness.now = NOW
+    harness.provider.offer(
+        event_id, NOW + timedelta(hours=1), [_quote(event_id, "FanDuel", 120, None)]
+    )
+    harness.ingestion.refresh_quotes(event_id)
+
+    assert harness.status(event_id) is EventStatus.LIVE
+    assert harness.starts_at(event_id) == starts

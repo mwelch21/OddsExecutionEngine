@@ -69,6 +69,20 @@ class FillableSkipReason(StrEnum):
     EVENT_STATUS_UNOBSERVED = "event_status_unobserved"
 
 
+class EventObservation(DomainModel):
+    """What one provider answer said about an event's life, and when (#38).
+
+    `observed_at` is when the answer's data was current. A write carrying an
+    observation older than the one stored is skipped, so an older pull landing
+    late can never overwrite a newer one. `starts_at` is None when the answer
+    did not carry a start time; the stored one is then kept.
+    """
+
+    status: EventStatus
+    observed_at: datetime
+    starts_at: datetime | None = None
+
+
 class EventLifecycle(DomainModel):
     """What a stored event records about where it is in its life."""
 
