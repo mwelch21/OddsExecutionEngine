@@ -5,12 +5,17 @@ provider whose feed the test controls. No upstream is ever contacted.
 """
 
 import os
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import insert, select, update
 
+from backend.app.application.quote_ingestion_service import QuoteIngestionService
+from backend.app.application.watch_intent_service import (
+    WatchIntentAlreadyExpiredError,
+)
 from backend.app.config import Settings
 from backend.app.domain.models import (
     EventStatus,
@@ -22,12 +27,19 @@ from backend.app.domain.models import (
     WatchWindow,
 )
 from backend.app.domain.watch_window import WatchWindowNotAllowedError
+from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.quote_ingestion_uow import (
+    SqlAlchemyQuoteIngestionUnitOfWork,
+)
 from backend.app.infrastructure.persistence.schema import (
     events_table,
     public_events_table,
     watch_intents_table,
     workflow_events_table,
+)
+from backend.app.infrastructure.publishers.in_memory_publisher import (
+    InMemoryWorkflowEventPublisher,
 )
 from backend.app.main import create_app
 from backend.tests.db_helpers import prepare_test_database
@@ -97,6 +109,37 @@ class WindowHarness(Harness):
     def end(self) -> None:
         self.provider.withdraw(EVENT_ID)
         self.ingestion.refresh_sport(SPORT_KEY)
+
+    def ingestion_only(self) -> QuoteIngestionService:
+        """Ingestion with no watch evaluation after it, so any expiry seen is the
+        ingestion pass's own."""
+        return QuoteIngestionService(
+            unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(
+                self.session_factory
+            ),
+            quote_provider=self.provider,
+            normalization_engine=NormalizationEngine(),
+            workflow_event_publisher=InMemoryWorkflowEventPublisher(),
+            clock=lambda: self.now,
+        )
+
+    def ttl_due_watch(self) -> WatchIntent:
+        watch = self.watch(400)
+        with self.session_factory.create_session() as session:
+            session.execute(
+                update(watch_intents_table)
+                .where(watch_intents_table.c.id == watch.id)
+                .values(expires_at=self.now - timedelta(minutes=1))
+            )
+            session.commit()
+        return watch
+
+    def set_event(self, **values: object) -> None:
+        with self.session_factory.create_session() as session:
+            session.execute(
+                update(events_table).where(events_table.c.external_id == EVENT_ID).values(**values)
+            )
+            session.commit()
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
@@ -365,3 +408,196 @@ def _expire_as_started(database_url: str, watch_id: str) -> None:
             .values(status="expired", expired_reason="event_started")
         )
         session.commit()
+
+
+# --- Review round 1 -------------------------------------------------------------
+
+
+def test_a_stale_offered_answer_expires_nothing_not_even_a_due_ttl(
+    harness: WindowHarness,
+) -> None:
+    harness.provider.answered_at = NOW
+    harness.pre_game(110)
+    watch = harness.ttl_due_watch()
+
+    harness.provider.answered_at = NOW - timedelta(minutes=10)
+    harness.provider.offer(EVENT_ID, STARTED, [_quote(EVENT_ID, "FanDuel", 110, MOVED_LIVE)])
+    harness.ingestion_only().refresh_sport(SPORT_KEY)
+    harness.ingestion_only().refresh_quotes(EVENT_ID)
+
+    assert harness.status(EVENT_ID) is EventStatus.UPCOMING
+    assert harness.stored(watch.id) == (WatchStatus.ACTIVE, None)
+    assert harness.expired_events() == []
+
+
+def test_a_stale_absent_answer_expires_nothing_not_even_a_due_ttl(
+    harness: WindowHarness,
+) -> None:
+    harness.provider.answered_at = NOW
+    harness.live(110)
+    watch = harness.ttl_due_watch()
+
+    # An older pull that no longer offers the event: it may not end it.
+    harness.provider.answered_at = NOW - timedelta(minutes=10)
+    harness.provider.withdraw(EVENT_ID)
+    harness.ingestion_only().refresh_sport(SPORT_KEY)
+    harness.ingestion_only().refresh_quotes(EVENT_ID)
+
+    assert harness.status(EVENT_ID) is EventStatus.LIVE
+    assert harness.stored(watch.id) == (WatchStatus.ACTIVE, None)
+    assert harness.expired_events() == []
+
+
+def test_a_fresh_answer_does_expire_a_due_ttl_in_the_ingestion_pass(
+    harness: WindowHarness,
+) -> None:
+    harness.provider.answered_at = NOW
+    harness.pre_game(110)
+    watch = harness.ttl_due_watch()
+
+    harness.provider.answered_at = NOW + timedelta(seconds=1)
+    harness.ingestion_only().refresh_sport(SPORT_KEY)
+
+    assert harness.stored(watch.id) == (WatchStatus.EXPIRED, ExpiredReason.TTL)
+
+
+def test_the_backstop_expires_a_pre_game_watch_once_an_unobserved_kickoff_passes(
+    harness: WindowHarness,
+) -> None:
+    harness.pre_game(110)
+    pre_game = harness.watch(400)
+    live = harness.watch(400, WatchWindow.LIVE)
+    # Kickoff passed with no refresh since: still stored upcoming.
+    harness.set_event(starts_at=NOW - timedelta(minutes=1))
+
+    assert harness.watches.evaluate_for_event(EVENT_ID) == []
+
+    assert harness.stored(pre_game.id) == (WatchStatus.EXPIRED, ExpiredReason.EVENT_STARTED)
+    # A live window is still open: the next refresh may find the event live.
+    assert harness.stored(live.id) == (WatchStatus.ACTIVE, None)
+    # The stored status is left as observed (ADR-019).
+    assert harness.status(EVENT_ID) is EventStatus.UPCOMING
+
+
+def test_an_expired_watch_cannot_be_cancelled(harness: WindowHarness) -> None:
+    harness.pre_game(110)
+    watch = harness.watch(400)
+    harness.live(110)
+    assert harness.stored(watch.id) == (WatchStatus.EXPIRED, ExpiredReason.EVENT_STARTED)
+
+    with pytest.raises(WatchIntentAlreadyExpiredError):
+        harness.watches.cancel_watch_intent(watch.id)
+
+    assert harness.stored(watch.id) == (WatchStatus.EXPIRED, ExpiredReason.EVENT_STARTED)
+
+
+def test_a_watch_past_its_ttl_cancels_as_expired(harness: WindowHarness) -> None:
+    harness.pre_game(110)
+    watch = harness.watch(400)
+    with harness.session_factory.create_session() as session:
+        session.execute(
+            update(watch_intents_table)
+            .where(watch_intents_table.c.id == watch.id)
+            .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+        session.commit()
+
+    with pytest.raises(WatchIntentAlreadyExpiredError):
+        harness.watches.cancel_watch_intent(watch.id)
+    assert harness.stored(watch.id) == (WatchStatus.ACTIVE, None)
+
+
+def test_the_api_answers_409_when_cancelling_an_expired_watch(
+    sqlite_database_url: str,
+) -> None:
+    with _client(sqlite_database_url) as client:
+        created = client.post("/api/v1/watch-intents", json=_payload()).json()
+        _expire_as_started(sqlite_database_url, created["id"])
+        response = client.delete(f"/api/v1/watch-intents/{created['id']}")
+        fetched = client.get(f"/api/v1/watch-intents/{created['id']}").json()
+
+    assert response.status_code == 409
+    assert fetched["status"] == "expired"
+    assert fetched["expired_reason"] == "event_started"
+
+
+def _postgres_harness() -> WindowHarness:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+    return WindowHarness(prepare_test_database(database_url, seed_demo=False, drop_existing=True))
+
+
+def test_postgres_creation_waits_for_an_uncommitted_status_write() -> None:
+    """The race from review round 1: a status write in flight when a watch is made.
+
+    Ingestion's status write holds the event row until it commits. Creation reads
+    the event FOR UPDATE, so it waits, then reads the committed status and picks
+    the window from it. Without the lock it would read `upcoming`, default to
+    `pre_game`, and land an armed pre-game watch on a live event after the
+    expiry scan had already run.
+    """
+    harness = _postgres_harness()
+    harness.pre_game(110)
+
+    created: list[WatchIntent] = []
+    errors: list[BaseException] = []
+
+    def create() -> None:
+        try:
+            created.append(harness.watch(400))
+        except BaseException as error:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(error)
+
+    with harness.session_factory.create_session() as in_flight:
+        in_flight.execute(
+            update(events_table)
+            .where(events_table.c.external_id == EVENT_ID)
+            .values(status=EventStatus.LIVE.value)
+        )
+        creator = threading.Thread(target=create)
+        creator.start()
+        creator.join(timeout=1.0)
+        assert creator.is_alive(), "creation did not wait for the status write"
+        in_flight.commit()
+    creator.join(timeout=10.0)
+
+    assert errors == []
+    [watch] = created
+    assert watch.window is WatchWindow.LIVE
+
+
+def test_postgres_a_status_write_waits_for_a_watch_being_created() -> None:
+    """The other order: the watch commits first, and the expiry scan sees it."""
+    harness = _postgres_harness()
+    harness.pre_game(110)
+
+    watch_id = "wi-racing"
+    with harness.session_factory.create_session() as creating:
+        # What creation does: lock the event, then insert, then commit.
+        creating.execute(
+            select(events_table.c.status)
+            .where(events_table.c.external_id == EVENT_ID)
+            .with_for_update()
+        )
+        creating.execute(
+            insert(watch_intents_table).values(
+                id=watch_id,
+                event_external_id=EVENT_ID,
+                market_type="moneyline",
+                selection="knicks",
+                target_price=400,
+                status="active",
+                watch_window="pre_game",
+            )
+        )
+        writer = threading.Thread(target=lambda: harness.live(110))
+        writer.start()
+        writer.join(timeout=1.0)
+        assert writer.is_alive(), "the status write did not wait for the creator"
+        creating.commit()
+    writer.join(timeout=10.0)
+    assert not writer.is_alive()
+
+    assert harness.status(EVENT_ID) is EventStatus.LIVE
+    assert harness.stored(watch_id) == (WatchStatus.EXPIRED, ExpiredReason.EVENT_STARTED)

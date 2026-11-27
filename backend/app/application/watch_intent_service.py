@@ -7,11 +7,11 @@ from backend.app.application.ports import (
     WatchIntentUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.watch_expiry import WatchExpirer
 from backend.app.domain.events import (
     build_opportunity_identified_event,
     build_watch_intent_cancelled_event,
     build_watch_intent_created_event,
-    build_watch_intent_expired_event,
     build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
@@ -30,7 +30,6 @@ from backend.app.domain.watch_window import WatchWindowPolicy
 from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
-from backend.app.engines.watch_window_engine import WatchWindowEngine
 
 
 class WatchIntentAlreadyTriggeredError(Exception):
@@ -38,6 +37,17 @@ class WatchIntentAlreadyTriggeredError(Exception):
 
     def __init__(self, watch_intent_id: str) -> None:
         super().__init__(f"Watch intent {watch_intent_id} has already been triggered.")
+        self.watch_intent_id = watch_intent_id
+
+
+class WatchIntentAlreadyExpiredError(Exception):
+    """Raised when a cancel would overwrite a watch's terminal `expired` status.
+
+    An expired watch keeps why it expired; cancelling it would lose that record.
+    """
+
+    def __init__(self, watch_intent_id: str) -> None:
+        super().__init__(f"Watch intent {watch_intent_id} has already expired.")
         self.watch_intent_id = watch_intent_id
 
 
@@ -53,7 +63,7 @@ class WatchIntentService:
         opportunity_ttl_minutes: int,
         event_status_engine: EventStatusEngine | None = None,
         watch_window_policy: WatchWindowPolicy | None = None,
-        watch_window_engine: WatchWindowEngine | None = None,
+        watch_expirer: WatchExpirer | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
@@ -62,7 +72,7 @@ class WatchIntentService:
         self._opportunity_ttl_minutes = opportunity_ttl_minutes
         self._event_status_engine = event_status_engine or EventStatusEngine()
         self._watch_window_policy = watch_window_policy or WatchWindowPolicy()
-        self._watch_window_engine = watch_window_engine or WatchWindowEngine()
+        self._watch_expirer = watch_expirer or WatchExpirer()
 
     def create_watch_intent(
         self,
@@ -95,7 +105,10 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
-                lifecycle = uow.get_event_lifecycle(event_id)
+                # Locked until commit: ingestion's status write takes the same row
+                # lock, so it cannot move the event between this read and the
+                # insert, and its expiry scan then sees this watch.
+                lifecycle = uow.lock_event_lifecycle(event_id)
                 resolved_window = self._watch_window_policy.resolve(window, lifecycle)
                 intent = uow.create_watch_intent(
                     event_id=event_id,
@@ -181,13 +194,22 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
-                # `triggered` is terminal. Letting a cancel overwrite it would make
-                # "which of my watches fired?" unanswerable from watch state.
+                # A watch whose TTL passed reads as expired, so it cancels as one.
                 existing = uow.get_watch_intent(watch_intent_id)
-                if existing is not None and existing.status is WatchStatus.TRIGGERED:
-                    raise WatchIntentAlreadyTriggeredError(watch_intent_id)
+                if existing is not None and existing.effective_status(
+                    datetime.now(UTC)
+                ) is WatchStatus.EXPIRED:
+                    raise WatchIntentAlreadyExpiredError(watch_intent_id)
 
+                # Atomic against concurrent terminal transitions: the write changes
+                # only an active (or already cancelled) row. `triggered` and
+                # `expired` are terminal; overwriting either would erase why the
+                # watch ended.
                 intent = uow.cancel_watch_intent(watch_intent_id)
+                if intent.status is WatchStatus.TRIGGERED:
+                    raise WatchIntentAlreadyTriggeredError(watch_intent_id)
+                if intent.status is WatchStatus.EXPIRED:
+                    raise WatchIntentAlreadyExpiredError(watch_intent_id)
                 uow.stage_event(
                     build_watch_intent_cancelled_event(
                         watch_intent_id=watch_intent_id,
@@ -359,26 +381,25 @@ class WatchIntentService:
         try:
             with self._unit_of_work_factory() as uow:
                 now = datetime.now(UTC)
-                lifecycle = uow.get_event_lifecycle(event_id)
+                # Locked until commit, so the event cannot end or start between
+                # this check and the opportunity insert.
+                lifecycle = uow.lock_event_lifecycle(event_id)
                 intents = uow.list_active_watch_intents(event_id)
 
                 # Retired before evaluation, never evaluated: a passed TTL, or an
                 # event status that closed the window (ADR-017). Ingestion expires
                 # on the status write; this is the backstop for an event nobody
                 # refreshed since.
-                expiring = self._watch_window_engine.expiry_reasons(
-                    intents,
-                    {} if lifecycle is None else {event_id: lifecycle.status},
-                    now,
-                )
-                for retired in uow.expire_watch_intents(expiring):
-                    uow.stage_event(
-                        build_watch_intent_expired_event(
-                            watch_intent_id=retired.id,
-                            intent=retired,
-                        )
+                retired = {
+                    intent.id
+                    for intent in self._watch_expirer.expire(
+                        uow,
+                        intents,
+                        {} if lifecycle is None else {event_id: lifecycle},
+                        now,
                     )
-                armed = [intent for intent in intents if intent.id not in expiring]
+                }
+                armed = [intent for intent in intents if intent.id not in retired]
 
                 # Live events evaluate on their live lines; ended ones produce
                 # nothing (#38). Checked before any quote is read.

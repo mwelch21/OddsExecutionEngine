@@ -10,6 +10,7 @@ from backend.app.application.quote_ingestion_service import (
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventInfo,
+    EventLifecycle,
     EventObservation,
     EventSport,
     EventStatus,
@@ -117,10 +118,10 @@ class RecordingQuoteIngestionUnitOfWork:
 
     def set_event_status(
         self, event_ids: list[str], status: EventStatus, observed_at: datetime
-    ) -> None:
-        pass
+    ) -> list[str]:
+        return []
 
-    def get_event_statuses(self, event_ids: list[str]) -> dict[str, EventStatus]:
+    def get_event_lifecycles(self, event_ids: list[str]) -> dict[str, EventLifecycle]:
         return {}
 
     def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:

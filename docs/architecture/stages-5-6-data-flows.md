@@ -447,9 +447,12 @@ On UoW.__exit__ (exception):
                           |
                           +--[opportunity identified]--> triggered      (terminal)
 
-POST resolves the window first (WatchWindowPolicy): upcoming gives pre_game,
-live gives live, an ended event is refused with 409. Lifecycle expiry runs in
-the ingestion transaction that writes the status; evaluation re-checks it.
+POST resolves the window first (WatchWindowPolicy), reading the event FOR
+UPDATE: upcoming gives pre_game, live gives live, an ended event is refused
+with 409. Lifecycle expiry runs in the ingestion transaction that writes the
+status, only when that write was not stale; evaluation re-checks it, and also
+closes pre_game once an unobserved kickoff has passed. DELETE on an `expired`
+watch is refused with 409, like `triggered`.
 
 POST evaluates immediately, so a watch can land straight in `triggered`.
 All three exits are terminal; nothing returns to `active`. DELETE on a

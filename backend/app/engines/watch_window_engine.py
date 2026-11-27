@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from backend.app.domain.models import (
+    EventLifecycle,
     EventStatus,
     ExpiredReason,
     LinePhase,
@@ -43,32 +44,49 @@ class WatchWindowEngine:
         return None
 
     def expiry_reason(
-        self, intent: WatchIntent, status: EventStatus | None, now: datetime
+        self, intent: WatchIntent, lifecycle: EventLifecycle | None, now: datetime
     ) -> ExpiredReason | None:
         """Why an active watch must expire now, or None if it stays armed.
 
         A passed TTL is checked first: its time is known exactly, while a status
         change is only seen when a refresh observes it. An event never stored
-        has no status, so only the TTL applies.
+        has no lifecycle, so only the TTL applies.
+
+        A `pre_game` watch also closes once the stored start time has passed,
+        even while the event is still stored `upcoming`: nothing observed it
+        since kickoff, and its pre-game lines cannot fill any more. Without this,
+        an event never refreshed after its start keeps the watch armed forever
+        (ADR-017). The event's stored status is left as it is (ADR-019).
         """
         if intent.status is not WatchStatus.ACTIVE:
             return None
         if intent.is_expired_at(now):
             return ExpiredReason.TTL
-        if status is None:
+        if lifecycle is None:
             return None
-        return self.lifecycle_expiry(intent.window, status)
+        reason = self.lifecycle_expiry(intent.window, lifecycle.status)
+        if reason is None and intent.window is WatchWindow.PRE_GAME:
+            if _has_started(lifecycle.starts_at, now):
+                return ExpiredReason.EVENT_STARTED
+        return reason
 
     def expiry_reasons(
         self,
         intents: list[WatchIntent],
-        status_by_event: dict[str, EventStatus],
+        lifecycle_by_event: dict[str, EventLifecycle],
         now: datetime,
     ) -> dict[str, ExpiredReason]:
         """The watches that must expire now, by id, with the reason for each."""
         reasons: dict[str, ExpiredReason] = {}
         for intent in intents:
-            reason = self.expiry_reason(intent, status_by_event.get(intent.event_id), now)
+            reason = self.expiry_reason(intent, lifecycle_by_event.get(intent.event_id), now)
             if reason is not None:
                 reasons[intent.id] = reason
         return reasons
+
+
+def _has_started(starts_at: datetime | None, now: datetime) -> bool:
+    if starts_at is None:
+        return False
+    aware = starts_at if starts_at.tzinfo is not None else starts_at.replace(tzinfo=UTC)
+    return aware <= now

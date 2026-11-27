@@ -219,7 +219,7 @@ Monitoring:
 - `POST /api/v1/watch-intents` (optional `window` = `pre_game` | `live` | `full_game`, default from event status by `WatchWindowPolicy`; 409 on an ended event or `pre_game` on a live one; evaluates immediately; may return `triggered` with the opportunity nested). Watch responses carry `window` and `expired_reason` (ADR-017)
 - `GET /api/v1/watch-intents` (optional `event_id` and `status` filters)
 - `GET /api/v1/watch-intents/{id}`
-- `DELETE /api/v1/watch-intents/{id}` (409 if the watch already `triggered`)
+- `DELETE /api/v1/watch-intents/{id}` (409 if the watch already `triggered` or `expired`)
 - `GET /api/v1/opportunities` (optional `event_id` filter)
 - `GET /api/v1/opportunities/{id}`
 

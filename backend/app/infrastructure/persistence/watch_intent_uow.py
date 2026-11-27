@@ -126,10 +126,21 @@ class SqlAlchemyWatchIntentUnitOfWork:
         return row_to_watch_intent(row)
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
+        """Cancel an active watch; return the watch as it now stands.
+
+        Only an active or already cancelled row is written, in one statement, so
+        a watch that another transaction just triggered or expired keeps that
+        terminal status. The caller reads the returned status to tell which.
+        """
         session = self._require_session()
         session.execute(
             update(watch_intents_table)
-            .where(watch_intents_table.c.id == watch_intent_id)
+            .where(
+                watch_intents_table.c.id == watch_intent_id,
+                watch_intents_table.c.status.in_(
+                    [WatchStatus.ACTIVE.value, WatchStatus.CANCELLED.value]
+                ),
+            )
             .values(status=WatchStatus.CANCELLED.value)
         )
         row = session.execute(
@@ -315,11 +326,26 @@ class SqlAlchemyWatchIntentUnitOfWork:
         return result
 
     def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
-        row = self._require_session().execute(
-            select(events_table.c.status, events_table.c.starts_at).where(
-                events_table.c.external_id == event_external_id
-            )
-        ).first()
+        return self._read_event_lifecycle(event_external_id, lock=False)
+
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """Read the lifecycle and hold the event row until commit (FOR UPDATE).
+
+        Ingestion's status write updates the same row, so it waits for this
+        transaction, and this read waits for an uncommitted status write. SQLite
+        has no row locks and ignores the clause; it serializes writers anyway.
+        """
+        return self._read_event_lifecycle(event_external_id, lock=True)
+
+    def _read_event_lifecycle(
+        self, event_external_id: str, *, lock: bool
+    ) -> EventLifecycle | None:
+        query = select(events_table.c.status, events_table.c.starts_at).where(
+            events_table.c.external_id == event_external_id
+        )
+        if lock:
+            query = query.with_for_update()
+        row = self._require_session().execute(query).first()
         if row is None:
             return None
         starts_at = row.starts_at

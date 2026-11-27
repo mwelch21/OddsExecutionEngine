@@ -146,7 +146,7 @@ def test_status_closes_a_window(
 
 def test_a_passed_ttl_is_the_reason_even_once_the_event_ended() -> None:
     watch = _watch(WatchWindow.LIVE, expires_at=NOW - timedelta(hours=1))
-    assert ENGINE.expiry_reason(watch, EventStatus.ENDED, NOW) is ExpiredReason.TTL
+    assert ENGINE.expiry_reason(watch, _lifecycle(EventStatus.ENDED), NOW) is ExpiredReason.TTL
 
 
 def test_an_event_never_stored_closes_only_on_ttl() -> None:
@@ -157,13 +157,30 @@ def test_an_event_never_stored_closes_only_on_ttl() -> None:
 
 def test_a_watch_that_is_no_longer_active_never_expires_again() -> None:
     triggered = _watch(WatchWindow.PRE_GAME, status=WatchStatus.TRIGGERED)
-    assert ENGINE.expiry_reason(triggered, EventStatus.ENDED, NOW) is None
+    assert ENGINE.expiry_reason(triggered, _lifecycle(EventStatus.ENDED), NOW) is None
 
 
 def test_expiry_reasons_names_only_the_watches_that_close() -> None:
     watches = [_watch(window) for window in WatchWindow]
-    reasons = ENGINE.expiry_reasons(watches, {"event-1": EventStatus.LIVE}, NOW)
+    reasons = ENGINE.expiry_reasons(watches, {"event-1": _lifecycle(EventStatus.LIVE)}, NOW)
     assert reasons == {"wi-pre_game": ExpiredReason.EVENT_STARTED}
+
+
+def test_a_kickoff_nobody_observed_still_closes_a_pre_game_window() -> None:
+    # Stored upcoming, start passed, never refreshed since (#10 review): the
+    # backstop closes pre_game only; the stored status is not touched.
+    unobserved = _lifecycle(EventStatus.UPCOMING)
+    reasons = ENGINE.expiry_reasons(
+        [_watch(window) for window in WatchWindow], {"event-1": unobserved}, NOW
+    )
+    assert reasons == {"wi-pre_game": ExpiredReason.EVENT_STARTED}
+
+
+def test_a_pre_game_window_stays_open_before_kickoff() -> None:
+    later = EventLifecycle(status=EventStatus.UPCOMING, starts_at=NOW + timedelta(minutes=1))
+    assert ENGINE.expiry_reason(_watch(WatchWindow.PRE_GAME), later, NOW) is None
+    unknown_start = EventLifecycle(status=EventStatus.UPCOMING)
+    assert ENGINE.expiry_reason(_watch(WatchWindow.PRE_GAME), unknown_start, NOW) is None
 
 
 def test_a_ttl_read_projection_says_why_it_expired() -> None:

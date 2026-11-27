@@ -7,6 +7,7 @@ from backend.app.api.watch_intent_schemas import (
     WatchIntentResponse,
 )
 from backend.app.application.watch_intent_service import (
+    WatchIntentAlreadyExpiredError,
     WatchIntentAlreadyTriggeredError,
     WatchIntentService,
 )
@@ -77,6 +78,11 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
             raise HTTPException(
                 status_code=409,
                 detail="Watch intent has already been triggered",
+            ) from err
+        except WatchIntentAlreadyExpiredError as err:
+            raise HTTPException(
+                status_code=409,
+                detail="Watch intent has already expired",
             ) from err
         except ValueError as err:
             raise HTTPException(status_code=404, detail="Watch intent not found") from err

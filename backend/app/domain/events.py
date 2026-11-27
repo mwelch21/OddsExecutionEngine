@@ -223,7 +223,7 @@ class OpportunityIdentifiedPayload(DomainModel):
     matching_quotes: list[MatchingQuote]
     target_price: int
     line: float | None = None
-    phase: str = "pre_game"
+    phase: str
 
 
 class WatchIntentCreated(WorkflowEvent):

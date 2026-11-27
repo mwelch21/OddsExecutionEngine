@@ -151,6 +151,9 @@ class QuoteRefreshPersistenceResult(DomainModel):
     created_market_count: int
     updated_latest_count: int
     appended_history_count: int
+    # True only when this refresh's observation was written: a stale one is
+    # skipped, and must then close no watch window (ADR-017).
+    status_written: bool = False
 
 
 class QuoteRefreshSummary(DomainModel):

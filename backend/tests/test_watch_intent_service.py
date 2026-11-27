@@ -180,6 +180,9 @@ class RecordingWatchIntentUnitOfWork:
             return None
         return EventLifecycle(status=self._event_status)
 
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        return self.get_event_lifecycle(event_external_id)
+
     def get_opportunity_event_context(
         self, opportunity: Opportunity
     ) -> OpportunityEventContext:

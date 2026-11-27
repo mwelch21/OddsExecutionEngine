@@ -175,12 +175,15 @@ class QuoteIngestionUnitOfWork(Protocol):
 
     def set_event_status(
         self, event_ids: list[str], status: EventStatus, observed_at: datetime
-    ) -> None:
-        """Skips each event whose stored observation is newer than `observed_at`."""
+    ) -> list[str]:
+        """Skips each event whose stored observation is newer than `observed_at`.
+
+        Returns the events it wrote.
+        """
         ...
 
-    def get_event_statuses(self, event_ids: list[str]) -> dict[str, EventStatus]:
-        """The stored status of each named event that exists, by external id."""
+    def get_event_lifecycles(self, event_ids: list[str]) -> dict[str, EventLifecycle]:
+        """The stored status and start of each named event that exists."""
         ...
 
     def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:
@@ -260,7 +263,12 @@ class WatchIntentUnitOfWork(Protocol):
         expires_at: datetime | None = None,
     ) -> WatchIntent: ...
 
-    def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent: ...
+    def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
+        """Cancel only an active watch, atomically; return the watch as it stands.
+
+        Raises ValueError when no such watch exists.
+        """
+        ...
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
 
@@ -302,6 +310,13 @@ class WatchIntentUnitOfWork(Protocol):
 
     def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
         """Observed status and start time; None when the event was never stored."""
+        ...
+
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """As `get_event_lifecycle`, holding the event row locked until commit.
+
+        Serializes a watch write against ingestion's status write and expiry scan.
+        """
         ...
 
     def get_opportunity_event_context(
