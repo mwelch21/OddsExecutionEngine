@@ -20,6 +20,8 @@ type Props = {
   sportFocus: string[];
   /** Whether this view filters to it. Clearing never changes the stored focus. */
   focusApplied: boolean;
+  /** The focus read failed: every sport shows, and the chip says why. */
+  focusUnavailable: boolean;
   refreshSport: string;
   loading: boolean;
   refreshing: boolean;
@@ -42,6 +44,7 @@ export function EventList({
   status,
   sportFocus,
   focusApplied,
+  focusUnavailable,
   refreshSport,
   loading,
   refreshing,
@@ -144,6 +147,9 @@ export function EventList({
                 </button>
               ))}
             </div>
+            {focusUnavailable && (
+              <span className="focus-chip">Sport focus unavailable - showing all sports</span>
+            )}
             {sportFocus.length > 0 && (
               <span className="focus-chip">
                 {focusApplied ? (
