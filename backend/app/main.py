@@ -7,6 +7,7 @@ from fastapi import APIRouter, FastAPI, Request, Response
 
 from backend.app.api.admin import create_admin_router
 from backend.app.api.admin.auto_refresh_router import create_auto_refresh_router
+from backend.app.api.admin.book_filter_router import create_book_filter_router
 from backend.app.api.admin.component_status_router import create_component_status_router
 from backend.app.api.admin.credit_burn_router import create_credit_burn_router
 from backend.app.api.admin.deliveries_router import create_deliveries_router
@@ -28,6 +29,7 @@ from backend.app.application.recommendation_service import RecommendationService
 from backend.app.application.system_status_query_service import SystemStatusQueryService
 from backend.app.composition import (
     build_auto_refresh_service,
+    build_book_filter_service,
     build_quota_service,
     build_quote_ingestion_service,
     build_watch_intent_service,
@@ -89,11 +91,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     workflow_event_publisher = LoggingWorkflowEventPublisher()
     price_comparison_service = PriceComparisonService()
     recommendation_engine = RecommendationEngine(price_comparison_service)
+    # The allowed-books resolver for the API's read and recommendation paths.
+    # Watch evaluation gets its own from composition, so the worker shares it.
+    book_filter_service = build_book_filter_service(session_factory)
     recommendation_service = RecommendationService(
         unit_of_work_factory=lambda: SqlAlchemyRecommendationUnitOfWork(session_factory),
         workflow_event_publisher=workflow_event_publisher,
         quote_matching_engine=QuoteMatchingEngine(),
         recommendation_engine=recommendation_engine,
+        book_filter_resolver=book_filter_service,
     )
     watch_intent_service = build_watch_intent_service(
         app_settings,
@@ -122,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unit_of_work_factory=lambda: SqlAlchemyEventReadUnitOfWork(session_factory),
         recommendation_engine=recommendation_engine,
         sport_catalog=quote_ingestion_service,
+        book_filter_resolver=book_filter_service,
     )
     auto_refresh_service = build_auto_refresh_service(
         session_factory, quote_ingestion_service, quota_service
@@ -208,6 +215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Add features before `admin` joins api_v1: include_router copies routes once.
     admin = create_admin_router()
     admin.include_router(create_auto_refresh_router(auto_refresh_service))
+    admin.include_router(create_book_filter_router(book_filter_service))
     admin.include_router(create_refreshes_router(admin_query_service))
     admin.include_router(create_deliveries_router(delivery_query_service))
     admin.include_router(create_quota_history_router(credit_query_service))

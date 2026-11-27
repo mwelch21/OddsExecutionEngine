@@ -2,7 +2,12 @@ import logging
 from datetime import UTC, datetime
 from time import perf_counter
 
-from backend.app.application.ports import EventReadUnitOfWorkFactory, SportCatalog
+from backend.app.application.ports import (
+    BookFilterResolver,
+    EventReadUnitOfWorkFactory,
+    SportCatalog,
+)
+from backend.app.domain.book_filter import BookFilter
 from backend.app.domain.models import (
     EventFilter,
     EventPage,
@@ -28,10 +33,12 @@ class EventQueryService:
         unit_of_work_factory: EventReadUnitOfWorkFactory,
         recommendation_engine: RecommendationEngine,
         sport_catalog: SportCatalog,
+        book_filter_resolver: BookFilterResolver,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._recommendation_engine = recommendation_engine
         self._sport_catalog = sport_catalog
+        self._book_filter_resolver = book_filter_resolver
 
     def list_events(
         self,
@@ -45,6 +52,10 @@ class EventQueryService:
         A key maps to its stored (sport, league) through the catalog, the same
         pairing Auto-Refresh uses. A key outside the catalog matches no event,
         as an unknown league does. None or empty: no sport-key filter.
+
+        Quote freshness and counts cover only the allowed books (#136). The
+        filter never hides an event: one quoted only by other books lists with
+        no quotes.
         """
         started_at = perf_counter()
         now = datetime.now(UTC)
@@ -53,6 +64,7 @@ class EventQueryService:
                 update={"sport_leagues": self._sport_leagues_for(sport_keys)}
             )
 
+        book_filter = self._book_filter_resolver.resolve()
         try:
             with self._unit_of_work_factory() as uow:
                 total_events = uow.count_events(event_filter, now)
@@ -60,7 +72,13 @@ class EventQueryService:
                 # A page past the end is empty rather than an error: the set moves
                 # under the reader as events start.
                 events = (
-                    uow.list_events(event_filter, now, limit=page_size, offset=offset)
+                    uow.list_events(
+                        event_filter,
+                        now,
+                        limit=page_size,
+                        offset=offset,
+                        book_filter=book_filter,
+                    )
                     if offset < total_events
                     else []
                 )
@@ -119,12 +137,16 @@ class EventQueryService:
 
         Unpaged by design: a single event's board is bounded and renders as one
         screen, so paging it would only make a client reassemble it.
+
+        Only allowed books are shown (#136). A market every allowed book is
+        silent on stays on the board with no quotes, as an unquoted market does.
         """
         started_at = perf_counter()
+        book_filter = self._book_filter_resolver.resolve()
 
         try:
             with self._unit_of_work_factory() as uow:
-                event = uow.get_event(event_id)
+                event = uow.get_event(event_id, book_filter)
                 markets = uow.list_market_quotes(event_id) if event is not None else []
         except Exception:
             self._logger.exception(
@@ -144,7 +166,9 @@ class EventQueryService:
             )
             return None
 
-        ranked_markets = [self._to_board_market(market) for market in markets]
+        ranked_markets = [
+            self._to_board_market(market, book_filter) for market in markets
+        ]
         self._logger.info(
             "events.line_board.completed",
             extra={
@@ -157,13 +181,16 @@ class EventQueryService:
         )
         return LineBoard(event=event, markets=ranked_markets)
 
-    def _to_board_market(self, market: MarketQuotes) -> LineBoardMarket:
+    def _to_board_market(
+        self, market: MarketQuotes, book_filter: BookFilter
+    ) -> LineBoardMarket:
         """Rank one market's books with the engine rule, not a second sort.
 
         Two books at an identical price are separated only by the engine's
         tie-break. Ranking here rather than in the client is what keeps the book
         the board calls best and the book a watch would fire on the same book.
         """
+        allowed = book_filter.apply(market.quotes)
         return LineBoardMarket.from_ranked(
-            market, self._recommendation_engine.rank_quotes(market.quotes)
+            market, self._recommendation_engine.rank_quotes(allowed)
         )

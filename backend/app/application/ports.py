@@ -8,6 +8,7 @@ from backend.app.domain.auto_refresh import (
     WatchedEvent,
 )
 from backend.app.domain.base import DomainModel
+from backend.app.domain.book_filter import ALL_BOOKS, BookFilter
 from backend.app.domain.credits import BurnRow, RemainingReading
 from backend.app.domain.deliveries import DeliveryFilter, DeliveryStatus, StoredDelivery
 from backend.app.domain.destinations import Destination, DisabledReason, WebPushKeys
@@ -371,9 +372,14 @@ class EventReadUnitOfWork(Protocol):
         now: datetime,
         limit: int,
         offset: int,
-    ) -> list[EventSummary]: ...
+        book_filter: BookFilter = ALL_BOOKS,
+    ) -> list[EventSummary]:
+        """Each event's quote freshness counts only books `book_filter` admits."""
+        ...
 
-    def get_event(self, event_id: str) -> EventSummary | None: ...
+    def get_event(
+        self, event_id: str, book_filter: BookFilter = ALL_BOOKS
+    ) -> EventSummary | None: ...
 
     def list_market_quotes(self, event_id: str) -> list[MarketQuotes]: ...
 
@@ -532,3 +538,39 @@ class CreditReadUnitOfWork(Protocol):
 
 class CreditReadUnitOfWorkFactory(Protocol):
     def __call__(self) -> CreditReadUnitOfWork: ...
+
+
+class BookFilterResolver(Protocol):
+    """Supplies the allowed-books filter in force (#136).
+
+    The one place the filter comes from. Today it reads the global Admin
+    setting; after auth (#14) it reads the caller's own setting. Services ask it,
+    then pass the value object to the engines.
+    """
+
+    def resolve(self) -> BookFilter: ...
+
+
+class BookFilterUnitOfWork(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None: ...
+
+    def get_book_filter(self) -> BookFilter:
+        """The stored filter; all books when none is stored."""
+        ...
+
+    def save_book_filter(self, book_filter: BookFilter) -> BookFilter: ...
+
+    def list_seen_sportsbooks(self) -> list[str]:
+        """Distinct sportsbooks in stored latest quotes, sorted."""
+        ...
+
+
+class BookFilterUnitOfWorkFactory(Protocol):
+    def __call__(self) -> BookFilterUnitOfWork: ...

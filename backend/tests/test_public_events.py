@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import MarketType, MatchingQuote, Opportunity
@@ -56,6 +57,7 @@ def _validator(event_type: str) -> Draft202012Validator:
 def _service(session_factory: DatabaseSessionFactory) -> WatchIntentService:
     price_comparison = PriceComparisonService()
     return WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
         workflow_event_publisher=InMemoryWorkflowEventPublisher(),
         watch_evaluation_engine=WatchEvaluationEngine(

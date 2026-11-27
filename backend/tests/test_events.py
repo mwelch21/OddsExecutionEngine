@@ -1,5 +1,6 @@
 import pytest
 
+from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.recommendation_service import RecommendationService
 from backend.app.domain.events import (
     WorkflowEvent,
@@ -173,6 +174,7 @@ def test_recommendation_service_publishes_events_after_successful_commit() -> No
     unit_of_work = RecordingRecommendationUnitOfWork(quotes=[quote])
     publisher = InMemoryWorkflowEventPublisher()
     service = RecommendationService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: unit_of_work,
         workflow_event_publisher=publisher,
         quote_matching_engine=QuoteMatchingEngine(),
@@ -212,6 +214,7 @@ def test_recommendation_service_does_not_publish_events_on_rollback() -> None:
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = RecommendationService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: unit_of_work,
         workflow_event_publisher=publisher,
         quote_matching_engine=QuoteMatchingEngine(),
@@ -259,6 +262,7 @@ def test_recommendation_service_logs_success_and_failure(
     success_uow = RecordingRecommendationUnitOfWork(quotes=[quote])
     success_publisher = InMemoryWorkflowEventPublisher()
     success_service = RecommendationService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: success_uow,
         workflow_event_publisher=success_publisher,
         quote_matching_engine=QuoteMatchingEngine(),
@@ -275,6 +279,7 @@ def test_recommendation_service_logs_success_and_failure(
         fail_on_recommendation_write=True,
     )
     failing_service = RecommendationService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: failing_uow,
         workflow_event_publisher=InMemoryWorkflowEventPublisher(),
         quote_matching_engine=QuoteMatchingEngine(),

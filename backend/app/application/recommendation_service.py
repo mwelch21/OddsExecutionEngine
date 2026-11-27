@@ -2,6 +2,7 @@ import logging
 from time import perf_counter
 
 from backend.app.application.ports import (
+    BookFilterResolver,
     RecommendationUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
@@ -23,11 +24,13 @@ class RecommendationService:
         workflow_event_publisher: WorkflowEventPublisher,
         quote_matching_engine: QuoteMatchingEngine,
         recommendation_engine: RecommendationEngine,
+        book_filter_resolver: BookFilterResolver,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
         self._quote_matching_engine = quote_matching_engine
         self._recommendation_engine = recommendation_engine
+        self._book_filter_resolver = book_filter_resolver
 
     def recommend(self, intent: OrderIntent) -> ExecutionRecommendation:
         started_at = perf_counter()
@@ -45,6 +48,9 @@ class RecommendationService:
         )
 
         try:
+            # Resolved once per request: ranking, fillability and the nearest miss
+            # all see the same allowed books (#136).
+            book_filter = self._book_filter_resolver.resolve()
             with self._unit_of_work_factory() as unit_of_work:
                 order_intent_id = unit_of_work.create_order_intent(intent)
                 unit_of_work.stage_event(
@@ -54,7 +60,9 @@ class RecommendationService:
                     )
                 )
                 quotes = unit_of_work.list_quotes(intent.event_id)
-                matched_quotes = self._quote_matching_engine.match_quotes(intent, quotes)
+                matched_quotes = self._quote_matching_engine.match_quotes(
+                    intent, quotes, book_filter
+                )
                 recommendation = self._recommendation_engine.generate_recommendation(
                     intent,
                     matched_quotes,

@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+from backend.app.domain.book_filter import ALL_BOOKS, BookFilter
 from backend.app.domain.models import (
     LinePhase,
     MarketType,
@@ -39,6 +40,7 @@ class WatchEvaluationEngine:
         watch_intents: list[WatchIntent],
         quotes: list[Quote],
         market_id_lookup: dict[tuple[str, str, str, float | None], str],
+        book_filter: BookFilter = ALL_BOOKS,
     ) -> list[Opportunity]:
         """Evaluate watch intents against quotes, one opportunity per watch.
 
@@ -54,6 +56,10 @@ class WatchEvaluationEngine:
         Each watch fills only on lines its window admits (ADR-017): `pre_game` on
         pre-game lines, `live` on live lines, `full_game` on either. The caller
         passes the quotes the event's status leaves fillable (#38).
+
+        Only books `book_filter` admits can fill a watch or appear in its
+        `matching_quotes` (#136). The caller resolves the filter; this engine
+        never reads where it is stored.
 
         Args:
             watch_intents: Watch intents to evaluate. Non-active ones are skipped.
@@ -74,6 +80,7 @@ class WatchEvaluationEngine:
                 and quote.market_type == intent.market_type
                 and quote.selection == intent.selection
                 and quote.line == intent.line
+                and book_filter.admits(quote.sportsbook)
                 and self._watch_window.admits(intent.window, quote.phase)
                 and self._price_comparison.is_price_fillable(
                     quote.price, intent.target_price

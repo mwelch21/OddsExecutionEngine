@@ -170,7 +170,7 @@ Events are staged inside the unit of work, persisted in the same transaction as 
 
 Postgres. Separate latest-state and history.
 
-Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `sport_refreshes`, `quota_observations`, `refresh_records`.
+Tables: `events`, `event_participants`, `markets`, `market_quotes_latest`, `market_quotes_history`, `order_intents`, `watch_intents`, `execution_recommendations`, `opportunities`, `workflow_events`, `public_events`, `destinations`, `deliveries`, `auto_refresh_settings`, `book_filter_settings`, `sport_refreshes`, `quota_observations`, `refresh_records`.
 
 - `public_events` is the public outbox (ADR-014): CloudEvents written in the domain transaction, schemas under `contracts/events/`. An insert trigger sends `NOTIFY public_events, '<id>'` on Postgres.
 
@@ -200,7 +200,7 @@ Every route below is served under `/api/v1`; `GET /api/health` is the only unver
 
 Core:
 
-- `POST /api/v1/execution/recommendation`
+- `POST /api/v1/execution/recommendation` (ranks, fills and picks the nearest miss from allowed books only, #136)
 
 Ingestion:
 
@@ -211,8 +211,8 @@ Ingestion:
 
 Browse:
 
-- `GET /api/v1/events` (optional `league`, `sport` and `status` = `upcoming` | `live` | `all` filters, default `all` = upcoming plus live, ended never listed; `include_started` is a deprecated alias, `true` = `all`, `false` = `upcoming`; repeatable `sport_key` = catalog sport keys, an event in any of them matches, mapped through the catalog's (sport, league), an unknown key matches nothing; filters combine; page-based `page` / `page_size`)
-- `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
+- `GET /api/v1/events` (optional `league`, `sport` and `status` = `upcoming` | `live` | `all` filters, default `all` = upcoming plus live, ended never listed; `include_started` is a deprecated alias, `true` = `all`, `false` = `upcoming`; repeatable `sport_key` = catalog sport keys, an event in any of them matches, mapped through the catalog's (sport, league), an unknown key matches nothing; filters combine; each event's quote freshness and counts cover allowed books only, #136; page-based `page` / `page_size`)
+- `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; allowed books only, a market no allowed book quotes stays with no quotes, #136; unpaged)
 
 Monitoring:
 
@@ -236,6 +236,8 @@ Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` 
 
 - `GET /api/v1/admin/auto-refresh` (switch, upcoming `interval_minutes`, `live_interval_minutes` for sports with a watch on a live event, quota floor, `sport_focus` (catalog sport keys, sorted; empty = no focus), `watched_sports` (candidates before the focus) and the `excluded_sports` the focus drops (both from stored watches, no upstream call), last refresh outcome read from the newest auto refresh record, `paused`, `out_of_credits`, latest `quota` with the floor in force; defaults to off, 5 minutes, no focus)
 - `PUT /api/v1/admin/auto-refresh` (full replacement; each interval 1-60 else 422, an omitted `live_interval_minutes` is 5; an omitted `sport_focus` is empty, a key not in the catalog is 422; a non-empty focus narrows Auto-Refresh candidates, never manual refresh; never refreshes itself, the worker's next poll does)
+- `GET /api/v1/admin/book-filter` (allowed books, #136: `sportsbooks`, sorted, empty = all books; `available_sportsbooks` = distinct books in stored latest quotes, a DB read, no upstream call)
+- `PUT /api/v1/admin/book-filter` (full replacement; omitted or empty = all books; a book no stored quote has and the current filter does not hold is 422, nothing saved; saves only: no watch re-evaluated, no opportunity touched. The filter applies to the line board, events-list freshness, recommendation and watch evaluation; ingestion still stores every book)
 - `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200; each row's `credits_spent` is read through its linked upstream call, null when it made none)
 - `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
 - `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
@@ -296,6 +298,7 @@ See `docs/flows/_index.md` for full flow documentation.
 | WatchEvaluationEngine | `engines/watch_evaluation_engine.py` | Evaluates watch intents against quotes, produces opportunities |
 | OpportunityValidityEngine | `engines/opportunity_validity_engine.py` | Determines whether an opportunity is still valid given a TTL |
 | DestinationService | `application/destination_service.py` | Registers Web Push destinations; queues test notifications |
+| BookFilterService | `application/book_filter_service.py` | Allowed-books setting (#136) and the one `BookFilterResolver` every read/evaluate path asks; engines take the `BookFilter` value object |
 | DeliveryQueryService | `application/delivery_query_service.py` | Delivery log: filtered, paged deliveries with a subject line from `DeliverySubjectEngine` |
 | AutoRefreshService | `application/auto_refresh_service.py` | Auto-Refresh settings; one worker cycle: watched sports -> due sports -> sport-wide refresh (ADR-016) |
 | AdminQueryService | `application/admin_query_service.py` | Admin view reads over a read-only UoW: the refresh log, filtered and paged |

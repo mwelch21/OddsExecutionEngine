@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AutoRefreshSection } from "./controls/AutoRefreshSection";
+import { BookFilterSection } from "./controls/BookFilterSection";
 import { DestinationsSection } from "./controls/DestinationsSection";
 import { NotificationsSection } from "./controls/NotificationsSection";
 
@@ -15,6 +16,7 @@ export function ControlsTab() {
       <NotificationsSection onRegistered={() => setDevicesVersion((version) => version + 1)} />
       <DestinationsSection reloadKey={devicesVersion} />
       <AutoRefreshSection />
+      <BookFilterSection />
     </div>
   );
 }
