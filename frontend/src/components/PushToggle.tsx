@@ -117,23 +117,41 @@ export function PushToggle({ onEnabled }: { onEnabled?: () => void } = {}) {
       onEnabled?.();
     } catch (error: unknown) {
       setState("error");
-      setDetail(error instanceof Error ? error.message : "Could not enable notifications");
+      setDetail(describeError(error));
     }
   }
 
   return (
-    <Button
-      variant="secondary"
-      onClick={handleEnable}
-      disabled={state === "checking" || state === "enabling"}
-      title={detail || undefined}
-    >
-      <BellRing size={14} />
-      {state === "enabling"
-        ? "Enabling…"
-        : state === "error"
-          ? "Retry notifications"
-          : "Enable notifications"}
-    </Button>
+    <>
+      <Button
+        variant="secondary"
+        onClick={handleEnable}
+        disabled={state === "checking" || state === "enabling"}
+        title={detail || undefined}
+      >
+        <BellRing size={14} />
+        {state === "enabling"
+          ? "Enabling…"
+          : state === "error"
+            ? "Retry notifications"
+            : "Enable notifications"}
+      </Button>
+      {state === "error" && detail && (
+        <Pill tone="warn">
+          <BellOff size={14} />
+          {detail}
+        </Pill>
+      )}
+    </>
   );
+}
+
+/** Error text a phone can show: touch screens have no hover, so a tooltip alone hides it. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    // DOMExceptions from pushManager.subscribe (AbortError, InvalidStateError, NotAllowedError)
+    // carry the cause in their name.
+    return error.name && error.name !== "Error" ? `${error.name}: ${error.message}` : error.message;
+  }
+  return "Could not enable notifications";
 }
