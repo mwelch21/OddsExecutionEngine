@@ -7,11 +7,11 @@ from backend.app.application.ports import (
     WatchIntentUnitOfWorkFactory,
     WorkflowEventPublisher,
 )
+from backend.app.application.watch_expiry import WatchExpirer
 from backend.app.domain.events import (
     build_opportunity_identified_event,
     build_watch_intent_cancelled_event,
     build_watch_intent_created_event,
-    build_watch_intent_expired_event,
     build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
@@ -23,8 +23,10 @@ from backend.app.domain.models import (
     WatchIntent,
     WatchIntentCreationResult,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import build_opportunity_identified_public_event
+from backend.app.domain.watch_window import WatchWindowPolicy
 from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
@@ -35,6 +37,30 @@ class WatchIntentAlreadyTriggeredError(Exception):
 
     def __init__(self, watch_intent_id: str) -> None:
         super().__init__(f"Watch intent {watch_intent_id} has already been triggered.")
+        self.watch_intent_id = watch_intent_id
+
+
+class WatchEventNotFoundError(Exception):
+    """Raised when a watch names an event that is not stored.
+
+    A watch is made from a stored line board. Refusing an unstored event also
+    keeps creation serialized with ingestion: the event row lock is what orders
+    a new watch against the status write and its expiry scan.
+    """
+
+    def __init__(self, event_id: str) -> None:
+        super().__init__(f"Event {event_id} is not stored.")
+        self.event_id = event_id
+
+
+class WatchIntentAlreadyExpiredError(Exception):
+    """Raised when a cancel would overwrite a watch's terminal `expired` status.
+
+    An expired watch keeps why it expired; cancelling it would lose that record.
+    """
+
+    def __init__(self, watch_intent_id: str) -> None:
+        super().__init__(f"Watch intent {watch_intent_id} has already expired.")
         self.watch_intent_id = watch_intent_id
 
 
@@ -49,6 +75,8 @@ class WatchIntentService:
         opportunity_validity_engine: OpportunityValidityEngine,
         opportunity_ttl_minutes: int,
         event_status_engine: EventStatusEngine | None = None,
+        watch_window_policy: WatchWindowPolicy | None = None,
+        watch_expirer: WatchExpirer | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
@@ -56,6 +84,8 @@ class WatchIntentService:
         self._opportunity_validity_engine = opportunity_validity_engine
         self._opportunity_ttl_minutes = opportunity_ttl_minutes
         self._event_status_engine = event_status_engine or EventStatusEngine()
+        self._watch_window_policy = watch_window_policy or WatchWindowPolicy()
+        self._watch_expirer = watch_expirer or WatchExpirer()
 
     def create_watch_intent(
         self,
@@ -65,7 +95,15 @@ class WatchIntentService:
         target_price: int,
         line: float | None = None,
         expires_at: datetime | None = None,
+        window: WatchWindow | None = None,
     ) -> WatchIntentCreationResult:
+        """Create a watch and evaluate it at once.
+
+        Without a `window`, `WatchWindowPolicy` picks one from the event's status.
+        Raises `WatchEventNotFoundError` for an event that is not stored, and
+        `WatchWindowNotAllowedError` for an ended event or a `pre_game` window on
+        a live one; nothing is stored then.
+        """
         started_at = perf_counter()
         inserted_opportunities: list[Opportunity] = []
 
@@ -81,12 +119,20 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
+                # Locked until commit: ingestion's status write takes the same row
+                # lock, so it cannot move the event between this read and the
+                # insert, and its expiry scan then sees this watch.
+                lifecycle = uow.lock_event_lifecycle(event_id)
+                if lifecycle is None:
+                    raise WatchEventNotFoundError(event_id)
+                resolved_window = self._watch_window_policy.resolve(window, lifecycle)
                 intent = uow.create_watch_intent(
                     event_id=event_id,
                     market_type=market_type,
                     selection=selection,
                     target_price=target_price,
                     line=line,
+                    window=resolved_window,
                     expires_at=expires_at,
                 )
 
@@ -103,7 +149,7 @@ class WatchIntentService:
                 now = datetime.now(UTC)
                 if not intent.is_expired_at(now):
                     fillable = self._event_status_engine.fillable_quotes(
-                        uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
+                        lifecycle, uow.list_quotes(event_id), now
                     )
                     quotes = fillable.quotes
                     if fillable.skipped_reason is not None:
@@ -121,14 +167,9 @@ class WatchIntentService:
                         market_id_lookup=market_id_lookup,
                     )
 
-                if new_opportunities:
-                    inserted_opportunities = uow.create_opportunities(new_opportunities)
-                    retired = self._notify_and_retire(uow, inserted_opportunities)
-                    # The response reports the watch as the caller will next read it.
-                    intent = next(
-                        (r for r in retired if r.id == intent.id),
-                        intent,
-                    )
+                inserted_opportunities, retired = self._fill(uow, new_opportunities)
+                # The response reports the watch as the caller will next read it.
+                intent = next((r for r in retired if r.id == intent.id), intent)
 
             self._workflow_event_publisher.publish(uow.committed_events)
         except Exception:
@@ -164,13 +205,22 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
-                # `triggered` is terminal. Letting a cancel overwrite it would make
-                # "which of my watches fired?" unanswerable from watch state.
+                # A watch whose TTL passed reads as expired, so it cancels as one.
                 existing = uow.get_watch_intent(watch_intent_id)
-                if existing is not None and existing.status is WatchStatus.TRIGGERED:
-                    raise WatchIntentAlreadyTriggeredError(watch_intent_id)
+                if existing is not None and existing.effective_status(
+                    datetime.now(UTC)
+                ) is WatchStatus.EXPIRED:
+                    raise WatchIntentAlreadyExpiredError(watch_intent_id)
 
+                # Atomic against concurrent terminal transitions: the write changes
+                # only an active (or already cancelled) row. `triggered` and
+                # `expired` are terminal; overwriting either would erase why the
+                # watch ended.
                 intent = uow.cancel_watch_intent(watch_intent_id)
+                if intent.status is WatchStatus.TRIGGERED:
+                    raise WatchIntentAlreadyTriggeredError(watch_intent_id)
+                if intent.status is WatchStatus.EXPIRED:
+                    raise WatchIntentAlreadyExpiredError(watch_intent_id)
                 uow.stage_event(
                     build_watch_intent_cancelled_event(
                         watch_intent_id=watch_intent_id,
@@ -281,17 +331,40 @@ class WatchIntentService:
             now=now,
         )[0]
 
-    def _notify_and_retire(
+    def _fill(
         self,
         uow: WatchIntentUnitOfWork,
         opportunities: list[Opportunity],
-    ) -> list[WatchIntent]:
-        """Notify once per opportunity and retire the watch that produced it.
+    ) -> tuple[list[Opportunity], list[WatchIntent]]:
+        """Retire each watch that filled, then record and notify its opportunity.
 
-        Only opportunities the DB actually accepted reach here, and the transition
-        commits in the same transaction as the insert. A row therefore cannot exist
-        without its watch being `triggered`, so a concurrent evaluation that loses
-        the insert race leaves the watch correctly retired by the winner.
+        The trigger comes first and moves only a still-active watch. A watch a
+        concurrent DELETE or expiry just retired comes back unchanged, so it gets
+        no opportunity and no notification. Returns the opportunities inserted and
+        the watches triggered, all in the caller's transaction.
+        """
+        if not opportunities:
+            return [], []
+        retired = uow.trigger_watch_intents([opp.watch_intent_id for opp in opportunities])
+        armed = {intent.id for intent in retired}
+        if not armed:
+            return [], []
+        inserted = uow.create_opportunities(
+            [opp for opp in opportunities if opp.watch_intent_id in armed]
+        )
+        self._notify(uow, inserted)
+        return inserted, retired
+
+    def _notify(
+        self,
+        uow: WatchIntentUnitOfWork,
+        opportunities: list[Opportunity],
+    ) -> None:
+        """Notify once per opportunity the DB accepted.
+
+        Only opportunities the DB actually accepted reach here, and they commit in
+        the same transaction as their watch's `triggered` transition, so a row
+        cannot exist without its watch retired.
 
         `OpportunityIdentified` is the single user-facing alert no matter how many
         books matched. Its public counterpart, `opportunity.identified.v1`, is staged
@@ -300,13 +373,6 @@ class WatchIntentService:
         `WatchIntentTriggered` is the audit record of the terminal transition, so
         the watch lifecycle stays answerable without joining to opportunities.
         """
-        if not opportunities:
-            return []
-
-        retired = uow.trigger_watch_intents(
-            [opp.watch_intent_id for opp in opportunities]
-        )
-
         for opp in opportunities:
             uow.stage_event(
                 build_opportunity_identified_event(
@@ -328,7 +394,6 @@ class WatchIntentService:
                 )
             )
 
-        return retired
 
     def evaluate_for_event(self, event_id: str) -> list[Opportunity]:
         started_at = perf_counter()
@@ -341,55 +406,54 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
+                # Locked until commit, so the event cannot end or start between
+                # this check and the opportunity insert.
+                lifecycle = uow.lock_event_lifecycle(event_id)
+                # Read after the lock: time spent waiting for it counts.
                 now = datetime.now(UTC)
+                intents = uow.list_active_watch_intents(event_id)
+
+                # Retired before evaluation, never evaluated: a passed TTL, or an
+                # event status that closed the window (ADR-017). Ingestion expires
+                # on the status write; this is the backstop for an event nobody
+                # refreshed since.
+                retired = {
+                    intent.id
+                    for intent in self._watch_expirer.expire(
+                        uow,
+                        intents,
+                        {} if lifecycle is None else {event_id: lifecycle},
+                        now,
+                    )
+                }
+                armed = [intent for intent in intents if intent.id not in retired]
+
                 # Live events evaluate on their live lines; ended ones produce
                 # nothing (#38). Checked before any quote is read.
-                lifecycle = uow.get_event_lifecycle(event_id)
                 skipped = self._event_status_engine.skip_reason(lifecycle, now)
                 if skipped is not None:
                     self._logger.info(
                         "watch_evaluation.skipped",
                         extra={"event_id": event_id, "reason": skipped.value},
                     )
-                    return []
+                    armed = []
 
-                intents = uow.list_active_watch_intents(event_id)
-
-                # Watches past their TTL are retired before evaluation and never
-                # evaluated: a reachable target must not fill an expired watch.
-                expired = [intent for intent in intents if intent.is_expired_at(now)]
-                for retired in uow.expire_watch_intents([i.id for i in expired]):
-                    uow.stage_event(
-                        build_watch_intent_expired_event(
-                            watch_intent_id=retired.id,
-                            intent=retired,
-                        )
-                    )
-
-                live = [intent for intent in intents if not intent.is_expired_at(now)]
-                # Quotes are read only when an unexpired watch could use them.
+                # Quotes are read only when an armed watch could use them.
                 quotes = (
                     self._event_status_engine.fillable_quotes(
                         lifecycle, uow.list_quotes(event_id), now
                     ).quotes
-                    if live
+                    if armed
                     else []
                 )
-                evaluated: list[Opportunity] = []
 
-                if live and quotes:
-                    market_id_lookup = uow.get_market_id_lookup(event_id)
-                    evaluated = self._watch_evaluation_engine.evaluate(
-                        watch_intents=live,
+                if armed and quotes:
+                    new_opportunities = self._watch_evaluation_engine.evaluate(
+                        watch_intents=armed,
                         quotes=quotes,
-                        market_id_lookup=market_id_lookup,
+                        market_id_lookup=uow.get_market_id_lookup(event_id),
                     )
-
-                new_opportunities = evaluated
-
-                if new_opportunities:
-                    inserted_opportunities = uow.create_opportunities(new_opportunities)
-                    self._notify_and_retire(uow, inserted_opportunities)
+                    inserted_opportunities, _ = self._fill(uow, new_opportunities)
 
             if uow.committed_events:
                 self._workflow_event_publisher.publish(uow.committed_events)

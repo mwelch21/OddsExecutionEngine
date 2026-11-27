@@ -36,6 +36,16 @@ export type Recommendation = {
   matched_quote_count: number;
 };
 
+/**
+ * Which lines a watch may fill on (ADR-017). `pre_game` expires at kickoff;
+ * `live` and `full_game` expire when the event ends.
+ */
+export type WatchWindow = "pre_game" | "live" | "full_game";
+
+export type ExpiredReason = "ttl" | "event_started" | "event_ended" | "event_cancelled";
+
+export type WatchStatus = "active" | "triggered" | "cancelled" | "expired";
+
 export type WatchIntent = {
   id: string;
   event_id: string;
@@ -43,9 +53,15 @@ export type WatchIntent = {
   selection: string;
   target_price: number;
   line: number | null;
-  status: "active" | "triggered" | "cancelled" | "expired";
+  status: WatchStatus;
+  window: WatchWindow;
+  /** Set only when `status` is `expired`. */
+  expired_reason: ExpiredReason | null;
   created_at: string | null;
 };
+
+/** Omit `window` to let the server pick it from the event's status. */
+export type WatchRequest = LineIntent & { window?: WatchWindow };
 
 export type WatchList = {
   watch_intents: WatchIntent[];
@@ -66,6 +82,8 @@ export type Opportunity = {
   best_sportsbook: string;
   best_price: number;
   matching_quotes: Array<{ sportsbook: string; price: number }>;
+  /** The best book's line phase when identified. */
+  phase: "pre_game" | "live";
   created_at: string | null;
   is_valid: boolean;
   invalid_reason: string | null;
@@ -205,15 +223,18 @@ export async function getRecommendation(intent: LineIntent) {
   });
 }
 
-export async function createWatch(intent: LineIntent) {
+export async function createWatch(intent: WatchRequest) {
   return request<WatchIntent & { opportunity?: unknown }>("/watch-intents", {
     method: "POST",
     body: JSON.stringify(intent)
   });
 }
 
-export async function listWatches(eventId: string) {
-  return request<WatchList>(`/watch-intents?event_id=${encodeURIComponent(eventId)}`);
+/** Without `status`, the server lists watches that can still fire. */
+export async function listWatches(eventId: string, status?: WatchStatus) {
+  const query = new URLSearchParams({ event_id: eventId });
+  if (status) query.set("status", status);
+  return request<WatchList>(`/watch-intents?${query.toString()}`);
 }
 
 /** Free, DB-backed. Rejects with `NotFoundError` for an unknown id. */

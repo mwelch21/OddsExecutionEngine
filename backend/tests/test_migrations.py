@@ -20,8 +20,13 @@ from backend.app.infrastructure.persistence.schema import (
 )
 
 
-def _seed_market_and_watch(session: Session, created_at: datetime) -> None:
-    """One event / market / watch, using only columns that predate 0007."""
+def _seed_market_and_watch(
+    session: Session, created_at: datetime, **watch_columns: object
+) -> None:
+    """One event / market / watch, using only columns that predate 0007.
+
+    `watch_columns` adds later watch columns when the test runs at a later revision.
+    """
     session.execute(
         insert(events_table).values(
             id="event-row-1",
@@ -49,6 +54,7 @@ def _seed_market_and_watch(session: Session, created_at: datetime) -> None:
             selection="knicks",
             line=None,
             target_price=120,
+            **watch_columns,
         )
     )
 
@@ -107,7 +113,7 @@ def test_watch_intent_can_hold_at_most_one_opportunity(
 
     session_factory = DatabaseSessionFactory(sqlite_database_url)
     with session_factory.create_session() as session:
-        _seed_market_and_watch(session, datetime.now(UTC))
+        _seed_market_and_watch(session, datetime.now(UTC), watch_window="pre_game")
         session.execute(
             insert(opportunities_table).values(
                 id="opp-1",
@@ -396,3 +402,96 @@ def test_postgres_event_status_line_phase_migration_backfills_phase_from_kickoff
         pytest.skip("Postgres integration environment is not configured.")
 
     _assert_event_status_line_phase_migration(database_url, _reset_postgres(database_url))
+
+
+def _assert_watch_window_migration(
+    database_url: str, session_factory: DatabaseSessionFactory
+) -> None:
+    config = _build_alembic_config(database_url)
+    command.upgrade(config, "20261127_0018")
+    kickoff = datetime(2026, 11, 20, 20, 0, tzinfo=UTC)
+    with session_factory.create_session() as session:
+        # The event starts a day after `created_at`: kickoff.
+        _seed_market_and_watch(session, kickoff - timedelta(days=1))
+        session.execute(
+            text(
+                "INSERT INTO watch_intents (id, event_external_id, market_type, selection,"
+                " target_price, status) VALUES"
+                " ('wi-expired', 'event-1', 'moneyline', 'knicks', 120, 'expired'),"
+                " ('wi-live', 'event-1', 'moneyline', 'knicks', 120, 'triggered')"
+            )
+        )
+        for opportunity_id, watch_id, created_at in (
+            ("opp-pre", "wi-1", kickoff - timedelta(hours=1)),
+            ("opp-live", "wi-live", kickoff + timedelta(minutes=30)),
+        ):
+            session.execute(
+                text(
+                    "INSERT INTO opportunities (id, watch_intent_id, event_external_id,"
+                    " market_id, best_sportsbook, best_price, matching_quotes, created_at)"
+                    " VALUES (:id, :watch, 'event-1', 'market-1', 'DraftKings', 125, '[]', :at)"
+                ),
+                {"id": opportunity_id, "watch": watch_id, "at": created_at},
+            )
+        session.commit()
+
+    command.upgrade(config, "20261127_0019")
+
+    with session_factory.create_session() as session:
+        rows = session.execute(
+            text("SELECT id, watch_window, expired_reason FROM watch_intents")
+        ).all()
+        # Every stored watch did what pre_game means; only a TTL could expire one.
+        assert {str(r[0]): (str(r[1]), r[2]) for r in rows} == {
+            "wi-1": ("pre_game", None),
+            "wi-expired": ("pre_game", "ttl"),
+            "wi-live": ("pre_game", None),
+        }
+        phases = dict(
+            session.execute(text("SELECT id, phase FROM opportunities")).tuples().all()
+        )
+        # No opportunity could fill on a live line before #38: all pre_game.
+        assert phases == {"opp-pre": "pre_game", "opp-live": "pre_game"}
+
+        # The policy is the only default: an insert must name its window.
+        with pytest.raises(IntegrityError):
+            session.execute(
+                text(
+                    "INSERT INTO watch_intents (id, event_external_id, market_type,"
+                    " selection, target_price) VALUES ('wi-x', 'event-1', 'moneyline',"
+                    " 'knicks', 120)"
+                )
+            )
+        session.rollback()
+        for statement in (
+            "UPDATE watch_intents SET watch_window = 'halftime'",
+            "UPDATE watch_intents SET expired_reason = 'bored' WHERE id = 'wi-expired'",
+            # A reason belongs to an expired watch only, and an expired one has one.
+            "UPDATE watch_intents SET expired_reason = 'ttl' WHERE id = 'wi-1'",
+            "UPDATE watch_intents SET expired_reason = NULL WHERE id = 'wi-expired'",
+            "UPDATE opportunities SET phase = 'overtime'",
+        ):
+            with pytest.raises(IntegrityError):
+                session.execute(text(statement))
+            session.rollback()
+
+    command.downgrade(config, "20261127_0018")
+    inspector = inspect(session_factory.engine)
+    watch_columns = {c["name"] for c in inspector.get_columns("watch_intents")}
+    assert not {"watch_window", "expired_reason"} & watch_columns
+    assert "phase" not in {c["name"] for c in inspector.get_columns("opportunities")}
+    command.upgrade(config, "head")
+
+
+def test_watch_window_migration_backfills_pre_game_and_ttl(sqlite_database_url: str) -> None:
+    _assert_watch_window_migration(
+        sqlite_database_url, DatabaseSessionFactory(sqlite_database_url)
+    )
+
+
+def test_postgres_watch_window_migration_backfills_pre_game_and_ttl() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    _assert_watch_window_migration(database_url, _reset_postgres(database_url))

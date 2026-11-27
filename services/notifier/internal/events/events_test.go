@@ -126,6 +126,49 @@ func TestRenderOpportunity(t *testing.T) {
 	}
 }
 
+// A live opportunity leads with "LIVE · "; pre-game and absent phase do not.
+func TestRenderOpportunityMarksLiveLines(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase any
+		want  string
+	}{
+		{"live", "live", "LIVE · Knicks @ Celtics"},
+		{"pre-game", "pre_game", "Knicks @ Celtics"},
+		{"absent", nil, "Knicks @ Celtics"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			event := loadExample(t, TypeOpportunityIdentifiedV1)
+			var data map[string]any
+			json.Unmarshal(event.Data, &data) //nolint:errcheck // example is valid
+			if c.phase == nil {
+				delete(data, "phase")
+			} else {
+				data["phase"] = c.phase
+			}
+			event.Data, _ = json.Marshal(data)
+
+			n, err := Render(event, "iPhone", testOrigin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n.Title != c.want {
+				t.Fatalf("title = %q, want %q", n.Title, c.want)
+			}
+		})
+	}
+}
+
+// A live title falls back like any other when the teams are unknown.
+func TestRenderLiveOpportunityWithoutTeams(t *testing.T) {
+	var data OpportunityIdentifiedData
+	data.Phase = PhaseLive
+	if n := renderOpportunity(data, testOrigin); n.Title != "LIVE · Opportunity" {
+		t.Fatalf("title = %q", n.Title)
+	}
+}
+
 func TestRenderOpportunityEscapesTheEventIDInThePath(t *testing.T) {
 	var data OpportunityIdentifiedData
 	data.OpportunityID = "opp 1"

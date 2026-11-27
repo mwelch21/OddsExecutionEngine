@@ -43,8 +43,12 @@ Whether a stored line was pulled before kickoff (`pre_game`) or while the event 
 _Avoid_: Line status
 
 **Watch window**:
-The part of an event's life in which a watch may fire: pre-game only, live only, or the full game. Every watch has one; the same target price means a different bet before and during a game.
+The part of an event's life in which a watch may fire: pre-game only, live only, or the full game. Every watch has one; the same target price means a different bet before and during a game. A pre-game window closes when the event starts; the others close when it ends. When the author names none, the event's status at creation picks it: upcoming gives pre-game, live gives live.
 _Avoid_: Scope, mode, timing
+
+**Expired reason**:
+Why an expired watch expired: its time limit passed (`ttl`), its event started and closed a pre-game window (`event_started`), its event ended (`event_ended`), or its event was cancelled (`event_cancelled`, not yet observed). Only an expired watch has one. Expiry for an event reason sends no notification.
+_Avoid_: Expiry cause, end reason
 
 **Auto-Refresh**:
 The operator's on/off switch that lets the system refresh quotes on its own: each sport with an active watch it can act on is kept within about one interval of fresh. Off means refresh is manual only. Manual refresh works either way.

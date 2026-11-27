@@ -11,6 +11,7 @@ from backend.app.application.ports import (
     RefreshRecorder,
     WorkflowEventPublisher,
 )
+from backend.app.application.watch_expiry import WatchExpirer
 from backend.app.domain.events import (
     build_market_snapshot_created_event,
     build_quote_updated_event,
@@ -25,6 +26,7 @@ from backend.app.domain.models import (
     QuoteRefreshSummary,
     SportRefreshResult,
     SupportedSport,
+    WatchIntent,
 )
 from backend.app.domain.quota import link_observation, linked_observation
 from backend.app.domain.refresh_records import (
@@ -92,6 +94,7 @@ class QuoteIngestionService:
         error_classifier: RefreshErrorClassifier = classify_domain_error,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         event_status_engine: EventStatusEngine | None = None,
+        watch_expirer: WatchExpirer | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._quote_provider = quote_provider
@@ -104,6 +107,7 @@ class QuoteIngestionService:
         self._error_classifier = error_classifier
         self._clock = clock
         self._event_status_engine = event_status_engine or EventStatusEngine()
+        self._watch_expirer = watch_expirer or WatchExpirer()
 
     def refresh_quotes(
         self, event_id: str, trigger: RefreshTrigger = RefreshTrigger.MANUAL
@@ -184,6 +188,8 @@ class QuoteIngestionService:
                 persistence_result = unit_of_work.persist_quotes(
                     event_id, normalized_quotes, event_metadata, observation
                 )
+                if persistence_result.status_written:
+                    self._expire_closed_windows(unit_of_work, [event_id])
 
                 for persisted_quote in persistence_result.persisted_quotes:
                     if persisted_quote.market_created:
@@ -229,8 +235,11 @@ class QuoteIngestionService:
             emitted_event_types=emitted_event_types,
         )
 
-        # Evaluate active watch intents after successful ingestion
-        if self._watch_intent_service is not None:
+        # Evaluate active watch intents after successful ingestion. A stale answer
+        # whose status write was rejected changed nothing a watch depends on, and
+        # its evaluation's backstop must not expire watches on its behalf.
+        stale = observation is not None and not persistence_result.status_written
+        if self._watch_intent_service is not None and not stale:
             try:
                 self._watch_intent_service.evaluate_for_event(event_id)  # type: ignore[attr-defined]
             except Exception:
@@ -352,8 +361,11 @@ class QuoteIngestionService:
         # Every sport-wide pull, manual or automatic, restarts that sport's
         # Auto-Refresh cooldown (ADR-016). Only reached once the pull succeeded.
         with self._unit_of_work_factory() as unit_of_work:
-            self._end_absent_events(unit_of_work, sport, set(all_quotes), now)
+            ended = self._end_absent_events(unit_of_work, sport, set(all_quotes), now)
+            expired = self._expire_closed_windows(unit_of_work, ended)
             unit_of_work.record_sport_refreshed(sport, datetime.now(UTC))
+        if expired:
+            self._workflow_event_publisher.publish(unit_of_work.committed_events)
 
         self._logger.info(
             "sport_refresh.completed",
@@ -416,12 +428,16 @@ class QuoteIngestionService:
         sport_key: str,
         offered: set[str],
         now: datetime,
-    ) -> None:
-        """Mark ended each started event of this sport the pull no longer offered."""
+    ) -> list[str]:
+        """Mark ended each started event of this sport the pull no longer offered.
+
+        Returns the events it ended; one whose stored observation is newer is
+        left as it was and is not returned.
+        """
         catalog = {entry.key: entry for entry in self._quote_provider.list_supported_sports()}
         entry = catalog.get(sport_key)
         if entry is None:
-            return
+            return []
         stored = unit_of_work.list_event_starts(entry.sport, entry.league)
         ended = sorted(
             event_id
@@ -430,12 +446,39 @@ class QuoteIngestionService:
             and self._event_status_engine.observe_absent_from_sport_pull(starts_at, now)
             is EventStatus.ENDED
         )
-        unit_of_work.set_event_status(ended, EventStatus.ENDED, now)
+        ended = unit_of_work.set_event_status(ended, EventStatus.ENDED, now)
         if ended:
             self._logger.info(
                 "sport_refresh.events_ended",
                 extra={"sport": sport_key, "event_ids": ended},
             )
+        return ended
+
+    def _expire_closed_windows(
+        self, unit_of_work: QuoteIngestionUnitOfWork, written_event_ids: list[str]
+    ) -> list[WatchIntent]:
+        """Expire the watches whose window the stored status now closes (ADR-017).
+
+        Runs in the transaction that wrote the status, and only for events whose
+        guarded status write succeeded: a stale observation closes nothing, not
+        even a TTL. The status write holds the event row lock until commit, so a
+        watch created concurrently either waits and reads the new status, or
+        committed first and is seen here. Stages a workflow event per watch,
+        never a notification. Returns the watches it expired.
+        """
+        if not written_event_ids:
+            return []
+        lifecycles = unit_of_work.get_event_lifecycles(written_event_ids)
+        intents = unit_of_work.list_active_watch_intents(sorted(lifecycles))
+        retired = self._watch_expirer.expire(
+            unit_of_work, intents, lifecycles, self._clock()
+        )
+        if retired:
+            self._logger.info(
+                "quote_ingestion.watches_expired",
+                extra={"event_ids": sorted(lifecycles), "watch_count": len(retired)},
+            )
+        return retired
 
     def _record_refresh(
         self,

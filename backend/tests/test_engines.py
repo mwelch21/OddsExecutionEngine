@@ -8,6 +8,7 @@ from backend.app.domain.models import (
     Quote,
     WatchIntent,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
@@ -247,6 +248,7 @@ def test_normalization_engine_rejects_invalid_market_shape() -> None:
 def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,
@@ -289,6 +291,7 @@ def test_watch_evaluation_creates_opportunities_for_fillable_quotes() -> None:
 def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,
@@ -315,6 +318,7 @@ def test_watch_evaluation_returns_empty_when_no_fillable_quotes() -> None:
 def test_watch_evaluation_excludes_books_that_miss_the_target() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,
@@ -348,6 +352,7 @@ def test_watch_evaluation_excludes_books_that_miss_the_target() -> None:
 def test_watch_evaluation_breaks_price_ties_alphabetically() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,
@@ -386,6 +391,7 @@ def test_watch_evaluation_breaks_price_ties_alphabetically() -> None:
 def test_watch_evaluation_skips_triggered_intents() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,
@@ -413,6 +419,7 @@ def test_watch_evaluation_skips_triggered_intents() -> None:
 def test_watch_evaluation_matches_on_line() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.SPREAD,
@@ -454,6 +461,7 @@ def test_watch_evaluation_matches_on_line() -> None:
 def test_watch_evaluation_skips_cancelled_intents() -> None:
     intents = [
         WatchIntent(
+            window=WatchWindow.PRE_GAME,
             id="wi-1",
             event_id="event-1",
             market_type=MarketType.MONEYLINE,

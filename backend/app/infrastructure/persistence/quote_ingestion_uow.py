@@ -10,13 +10,16 @@ from sqlalchemy.sql.elements import ColumnElement
 from backend.app.application.ports import QuoteIngestionUnitOfWork
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventLifecycle,
     EventObservation,
     EventSport,
     EventStatus,
+    ExpiredReason,
     LinePhase,
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
+    WatchIntent,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
@@ -30,6 +33,10 @@ from backend.app.infrastructure.persistence.schema import (
     workflow_events_table,
 )
 from backend.app.infrastructure.persistence.upsert import upsert
+from backend.app.infrastructure.persistence.watch_rows import (
+    expire_watch_intents,
+    list_active_watch_intents,
+)
 
 
 class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
@@ -147,6 +154,7 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
             created_market_count=created_market_count,
             updated_latest_count=latest_count,
             appended_history_count=len(persisted_quotes),
+            status_written=observation is not None and write_latest,
         )
 
     def stage_event(self, event: WorkflowEvent) -> None:
@@ -200,14 +208,37 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
 
     def set_event_status(
         self, event_ids: list[str], status: EventStatus, observed_at: datetime
-    ) -> None:
+    ) -> list[str]:
         if not event_ids:
-            return
-        self._require_session().execute(
+            return []
+        written = self._require_session().execute(
             update(events_table)
             .where(events_table.c.external_id.in_(event_ids), _not_newer_than(observed_at))
             .values(status=status.value, status_observed_at=observed_at)
+            .returning(events_table.c.external_id)
         )
+        return sorted(str(event_id) for event_id in written.scalars())
+
+    def get_event_lifecycles(self, event_ids: list[str]) -> dict[str, EventLifecycle]:
+        if not event_ids:
+            return {}
+        rows = self._require_session().execute(
+            select(
+                events_table.c.external_id, events_table.c.status, events_table.c.starts_at
+            ).where(events_table.c.external_id.in_(event_ids))
+        )
+        return {
+            str(row.external_id): EventLifecycle(
+                status=EventStatus(row.status), starts_at=_as_utc(row.starts_at)
+            )
+            for row in rows
+        }
+
+    def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:
+        return list_active_watch_intents(self._require_session(), event_ids)
+
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        return expire_watch_intents(self._require_session(), reasons)
 
     def _write_observation(self, event_row_id: str, observation: EventObservation) -> bool:
         """Write the observation unless the stored one is newer. True when written."""

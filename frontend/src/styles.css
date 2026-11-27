@@ -1783,3 +1783,24 @@ select {
   font-weight: 700;
   text-transform: uppercase;
 }
+
+/* Watch window (ADR-017) */
+.watch-window-select {
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.watch-list-expired {
+  margin-top: 12px;
+}
+
+.watch-list-expired h3 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.watch-card-expired {
+  grid-template-columns: minmax(0, 1fr) auto;
+  opacity: 0.75;
+}

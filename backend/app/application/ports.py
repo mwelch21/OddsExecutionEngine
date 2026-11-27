@@ -17,6 +17,7 @@ from backend.app.domain.models import (
     EventStatus,
     EventSummary,
     ExecutionRecommendation,
+    ExpiredReason,
     MarketQuotes,
     MarketType,
     Opportunity,
@@ -27,6 +28,7 @@ from backend.app.domain.models import (
     SupportedSport,
     WatchIntent,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.domain.quota import QuotaObservation, QuotaReading
@@ -173,8 +175,23 @@ class QuoteIngestionUnitOfWork(Protocol):
 
     def set_event_status(
         self, event_ids: list[str], status: EventStatus, observed_at: datetime
-    ) -> None:
-        """Skips each event whose stored observation is newer than `observed_at`."""
+    ) -> list[str]:
+        """Skips each event whose stored observation is newer than `observed_at`.
+
+        Returns the events it wrote.
+        """
+        ...
+
+    def get_event_lifecycles(self, event_ids: list[str]) -> dict[str, EventLifecycle]:
+        """The stored status and start of each named event that exists."""
+        ...
+
+    def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:
+        """Stored-active watches on the named events."""
+        ...
+
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        """Expire each still-active watch with its reason, in this transaction."""
         ...
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None: ...
@@ -242,14 +259,24 @@ class WatchIntentUnitOfWork(Protocol):
         selection: str,
         target_price: int,
         line: float | None,
+        window: WatchWindow,
         expires_at: datetime | None = None,
     ) -> WatchIntent: ...
 
-    def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent: ...
+    def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
+        """Cancel only an active watch, atomically; return the watch as it stands.
 
-    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+        Raises ValueError when no such watch exists.
+        """
+        ...
 
-    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+        """Move each still-active watch to `triggered`; return only those moved."""
+        ...
+
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        """Expire each still-active watch with its reason; return the ones expired."""
+        ...
 
     def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None: ...
 
@@ -285,6 +312,13 @@ class WatchIntentUnitOfWork(Protocol):
 
     def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
         """Observed status and start time; None when the event was never stored."""
+        ...
+
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """As `get_event_lifecycle`, holding the event row locked until commit.
+
+        Serializes a watch write against ingestion's status write and expiry scan.
+        """
         ...
 
     def get_opportunity_event_context(

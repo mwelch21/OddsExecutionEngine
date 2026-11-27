@@ -351,7 +351,7 @@ workflow_events (append-only audit log for ALL domain events)
 |-------|-------------|-------------|-------------|
 | **WatchIntentCreated** | POST /api/v1/watch-intents | watch_intent_id | watch_intent_id |
 | **WatchIntentCancelled** | DELETE /api/v1/watch-intents/{id} | watch_intent_id | watch_intent_id |
-| **WatchIntentExpired** | TTL passed, retired before evaluation | watch_intent_id | watch_intent_id |
+| **WatchIntentExpired** | TTL passed, or the event status closed the watch window (ADR-017); never notifies | watch_intent_id | watch_intent_id |
 | **WatchIntentTriggered** | Watch fired; terminal transition (audit only) | watch_intent_id | watch_intent_id |
 | **OpportunityIdentified** | Watch creation OR quote refresh evaluation; exactly one per opportunity, however many books matched | opportunity_id | watch_intent_id |
 
@@ -367,13 +367,14 @@ workflow_events (append-only audit log for ALL domain events)
 
 ```
 WatchIntentCreated:
-  { event_id, market_type, selection, target_price, line }
+  { event_id, market_type, selection, target_price, window, line }
 
 WatchIntentCancelled:
   { event_id, market_type, selection }
 
 WatchIntentExpired:
-  { watch_intent_id, event_id, expires_at }
+  { watch_intent_id, event_id, window, expired_reason, expires_at }
+  expired_reason: ttl | event_started | event_ended | event_cancelled
 
 WatchIntentTriggered:
   { watch_intent_id, event_id, opportunity_id, best_sportsbook, best_price }
@@ -440,9 +441,18 @@ On UoW.__exit__ (exception):
 ```
                           +--[DELETE /api/v1/watch-intents/{id}]--> cancelled  (terminal)
                           |
-(not exists) --[POST]--> active --[TTL passed at evaluation]--> expired  (terminal)
+(not exists) --[POST]--> active --[TTL passed]-----------------> expired (ttl)            (terminal)
+                          |      --[event live, window pre_game]--> expired (event_started)  (terminal)
+                          |      --[event ended, any window]------> expired (event_ended)    (terminal)
                           |
                           +--[opportunity identified]--> triggered      (terminal)
+
+POST resolves the window first (WatchWindowPolicy), reading the event FOR
+UPDATE: upcoming gives pre_game, live gives live, an ended event is refused
+with 409. Lifecycle expiry runs in the ingestion transaction that writes the
+status, only when that write was not stale; evaluation re-checks it, and also
+closes pre_game once an unobserved kickoff has passed. DELETE on an `expired`
+watch is refused with 409, like `triggered`.
 
 POST evaluates immediately, so a watch can land straight in `triggered`.
 All three exits are terminal; nothing returns to `active`. DELETE on a

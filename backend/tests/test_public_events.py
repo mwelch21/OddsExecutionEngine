@@ -190,6 +190,7 @@ def test_typed_payload_preserves_wire_shape_and_timestamps(
         "best": {"sportsbook": "FanDuel", "price": -105, "quoted_at": expected_time},
         "matching": [{"sportsbook": "FanDuel", "price": -105}],
         "expires_at": payload["data"]["expires_at"],
+        "phase": "pre_game",
     }
     _validator(OPPORTUNITY_IDENTIFIED_V1).validate(payload)
     restored = PublicEvent[OpportunityIdentifiedDataV1].model_validate(payload)

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from backend.app.domain.models import MarketType, OpportunityWithValidity
+from backend.app.domain.models import LinePhase, MarketType, OpportunityWithValidity
 
 
 class MatchingQuoteResponse(BaseModel):
@@ -28,6 +28,8 @@ class OpportunityResponse(BaseModel):
     best_sportsbook: str
     best_price: int
     matching_quotes: list[MatchingQuoteResponse]
+    # The best book's line phase when identified: pre_game or live.
+    phase: LinePhase
     created_at: datetime | None
     is_valid: bool
     invalid_reason: str | None
@@ -49,6 +51,7 @@ class OpportunityResponse(BaseModel):
                 MatchingQuoteResponse(sportsbook=quote.sportsbook, price=quote.price)
                 for quote in opp.matching_quotes
             ],
+            phase=opp.phase,
             created_at=opp.created_at,
             is_valid=owv.is_valid,
             invalid_reason=owv.reason,

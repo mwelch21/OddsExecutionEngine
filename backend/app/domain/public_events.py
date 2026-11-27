@@ -13,7 +13,7 @@ from uuid import uuid4
 from pydantic import Field, PlainSerializer, SerializeAsAny, model_validator
 
 from backend.app.domain.base import DomainModel
-from backend.app.domain.models import MarketType, Opportunity
+from backend.app.domain.models import LinePhase, MarketType, Opportunity
 
 PUBLIC_EVENT_SOURCE = "/oddsengine"
 OPPORTUNITY_IDENTIFIED_V1 = "oddsengine.opportunity.identified.v1"
@@ -108,6 +108,8 @@ class OpportunityIdentifiedDataV1(DomainModel):
     best: BestBookPriceV1
     matching: list[BookPriceV1] = Field(min_length=1)
     expires_at: UtcIso
+    # Added within v1 (#10): optional in the schema, always sent by this producer.
+    phase: LinePhase
 
 
 class DestinationTestDataV1(DomainModel):
@@ -184,6 +186,7 @@ def build_opportunity_identified_public_event(
                 for quote in opportunity.matching_quotes
             ],
             expires_at=created_at + valid_for,
+            phase=opportunity.phase,
         ),
     )
 

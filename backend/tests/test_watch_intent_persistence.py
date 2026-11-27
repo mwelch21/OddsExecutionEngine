@@ -3,7 +3,13 @@ import os
 import pytest
 from sqlalchemy import select
 
-from backend.app.domain.models import MarketType, MatchingQuote, Opportunity, WatchStatus
+from backend.app.domain.models import (
+    MarketType,
+    MatchingQuote,
+    Opportunity,
+    WatchStatus,
+    WatchWindow,
+)
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.schema import opportunities_table
 from backend.app.infrastructure.persistence.seed import truncate_application_tables
@@ -191,6 +197,7 @@ def _create_watch_context(
             selection="knicks",
             target_price=121,
             line=None,
+            window=WatchWindow.PRE_GAME,
         )
         market_id_lookup = uow.get_market_id_lookup(FIXTURE_EVENT_ID)
 

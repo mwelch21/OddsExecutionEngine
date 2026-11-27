@@ -13,12 +13,15 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventLifecycle,
     EventStatus,
+    ExpiredReason,
+    LinePhase,
     MarketType,
     MatchingQuote,
     Opportunity,
     Quote,
     WatchIntent,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
@@ -32,6 +35,11 @@ from backend.app.infrastructure.persistence.schema import (
     public_events_table,
     watch_intents_table,
     workflow_events_table,
+)
+from backend.app.infrastructure.persistence.watch_rows import (
+    expire_watch_intents,
+    list_active_watch_intents,
+    row_to_watch_intent,
 )
 
 
@@ -93,6 +101,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
         selection: str,
         target_price: int,
         line: float | None,
+        window: WatchWindow,
         expires_at: datetime | None = None,
     ) -> WatchIntent:
         watch_intent_id = str(uuid4())
@@ -107,19 +116,31 @@ class SqlAlchemyWatchIntentUnitOfWork:
                 target_price=target_price,
                 expires_at=expires_at,
                 status=WatchStatus.ACTIVE.value,
+                watch_window=window.value,
             )
         )
         # Read back to get server-generated created_at
         row = session.execute(
             select(watch_intents_table).where(watch_intents_table.c.id == watch_intent_id)
         ).mappings().one()
-        return _row_to_watch_intent(row)
+        return row_to_watch_intent(row)
 
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
+        """Cancel an active watch; return the watch as it now stands.
+
+        Only an active or already cancelled row is written, in one statement, so
+        a watch that another transaction just triggered or expired keeps that
+        terminal status. The caller reads the returned status to tell which.
+        """
         session = self._require_session()
         session.execute(
             update(watch_intents_table)
-            .where(watch_intents_table.c.id == watch_intent_id)
+            .where(
+                watch_intents_table.c.id == watch_intent_id,
+                watch_intents_table.c.status.in_(
+                    [WatchStatus.ACTIVE.value, WatchStatus.CANCELLED.value]
+                ),
+            )
             .values(status=WatchStatus.CANCELLED.value)
         )
         row = session.execute(
@@ -127,18 +148,14 @@ class SqlAlchemyWatchIntentUnitOfWork:
         ).mappings().one_or_none()
         if row is None:
             raise ValueError(f"Watch intent {watch_intent_id} not found")
-        return _row_to_watch_intent(row)
+        return row_to_watch_intent(row)
 
     def list_active_watch_intents(
         self, event_id: str | None = None
     ) -> list[WatchIntent]:
-        query = select(watch_intents_table).where(
-            watch_intents_table.c.status == WatchStatus.ACTIVE.value
+        return list_active_watch_intents(
+            self._require_session(), None if event_id is None else [event_id]
         )
-        if event_id is not None:
-            query = query.where(watch_intents_table.c.event_external_id == event_id)
-        rows = self._require_session().execute(query).mappings().all()
-        return [_row_to_watch_intent(row) for row in rows]
 
     def list_watch_intents(
         self,
@@ -156,7 +173,7 @@ class SqlAlchemyWatchIntentUnitOfWork:
             .mappings()
             .all()
         )
-        return [_row_to_watch_intent(row) for row in rows]
+        return [row_to_watch_intent(row) for row in rows]
 
     def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None:
         row = (
@@ -169,50 +186,43 @@ class SqlAlchemyWatchIntentUnitOfWork:
             .mappings()
             .one_or_none()
         )
-        return None if row is None else _row_to_watch_intent(row)
+        return None if row is None else row_to_watch_intent(row)
 
-    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
-        if not watch_intent_ids:
-            return []
-
-        session = self._require_session()
-        session.execute(
-            update(watch_intents_table)
-            .where(watch_intents_table.c.id.in_(watch_intent_ids))
-            .values(status=WatchStatus.EXPIRED.value)
-        )
-        rows = (
-            session.execute(
-                select(watch_intents_table).where(
-                    watch_intents_table.c.id.in_(watch_intent_ids)
-                )
-            )
-            .mappings()
-            .all()
-        )
-        return [_row_to_watch_intent(row) for row in rows]
+    def expire_watch_intents(
+        self, reasons: dict[str, ExpiredReason]
+    ) -> list[WatchIntent]:
+        return expire_watch_intents(self._require_session(), reasons)
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
-        """Retire watches that produced an opportunity. Terminal: they never re-arm."""
+        """Retire watches that produced an opportunity. Terminal: they never re-arm.
+
+        Moves only a still-active watch, in one statement, and returns the ones it
+        moved. A watch a concurrent DELETE or expiry already retired is left as
+        it is and not returned, so it never gets an opportunity.
+        """
         if not watch_intent_ids:
             return []
-
         session = self._require_session()
-        session.execute(
+        moved = session.execute(
             update(watch_intents_table)
-            .where(watch_intents_table.c.id.in_(watch_intent_ids))
+            .where(
+                watch_intents_table.c.id.in_(watch_intent_ids),
+                watch_intents_table.c.status == WatchStatus.ACTIVE.value,
+            )
             .values(status=WatchStatus.TRIGGERED.value)
+            .returning(watch_intents_table.c.id)
         )
+        moved_ids = [str(watch_id) for watch_id in moved.scalars()]
+        if not moved_ids:
+            return []
         rows = (
             session.execute(
-                select(watch_intents_table).where(
-                    watch_intents_table.c.id.in_(watch_intent_ids)
-                )
+                select(watch_intents_table).where(watch_intents_table.c.id.in_(moved_ids))
             )
             .mappings()
             .all()
         )
-        return [_row_to_watch_intent(row) for row in rows]
+        return [row_to_watch_intent(row) for row in rows]
 
     def list_quotes(self, event_id: str) -> list[Quote]:
         return list_latest_quotes(self._require_session(), event_id)
@@ -325,11 +335,26 @@ class SqlAlchemyWatchIntentUnitOfWork:
         return result
 
     def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
-        row = self._require_session().execute(
-            select(events_table.c.status, events_table.c.starts_at).where(
-                events_table.c.external_id == event_external_id
-            )
-        ).first()
+        return self._read_event_lifecycle(event_external_id, lock=False)
+
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """Read the lifecycle and hold the event row until commit (FOR UPDATE).
+
+        Ingestion's status write updates the same row, so it waits for this
+        transaction, and this read waits for an uncommitted status write. SQLite
+        has no row locks and ignores the clause; it serializes writers anyway.
+        """
+        return self._read_event_lifecycle(event_external_id, lock=True)
+
+    def _read_event_lifecycle(
+        self, event_external_id: str, *, lock: bool
+    ) -> EventLifecycle | None:
+        query = select(events_table.c.status, events_table.c.starts_at).where(
+            events_table.c.external_id == event_external_id
+        )
+        if lock:
+            query = query.with_for_update()
+        row = self._require_session().execute(query).first()
         if row is None:
             return None
         starts_at = row.starts_at
@@ -434,20 +459,6 @@ class SqlAlchemyWatchIntentUnitOfWork:
         )
 
 
-def _row_to_watch_intent(row: RowMapping) -> WatchIntent:
-    return WatchIntent(
-        id=row["id"],
-        event_id=row["event_external_id"],
-        market_type=MarketType(row["market_type"]),
-        selection=row["selection"],
-        target_price=row["target_price"],
-        line=row["line"],
-        expires_at=row["expires_at"],
-        status=WatchStatus(row["status"]),
-        created_at=row["created_at"],
-    )
-
-
 def _row_to_opportunity(row: RowMapping) -> Opportunity:
     return Opportunity(
         id=row["id"],
@@ -464,6 +475,7 @@ def _row_to_opportunity(row: RowMapping) -> Opportunity:
             for quote in row["matching_quotes"]
         ],
         line=row["line"],
+        phase=LinePhase(row["phase"]),
         created_at=row["created_at"],
     )
 
@@ -489,6 +501,7 @@ def _build_opportunity_insert_statement(
         "matching_quotes": [
             quote.model_dump(mode="json") for quote in opportunity.matching_quotes
         ],
+        "phase": opportunity.phase.value,
     }
     conflict_columns = ["watch_intent_id"]
 

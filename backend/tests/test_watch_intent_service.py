@@ -6,12 +6,14 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventLifecycle,
     EventStatus,
+    ExpiredReason,
     MarketType,
     MatchingQuote,
     Opportunity,
     Quote,
     WatchIntent,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import (
     OPPORTUNITY_IDENTIFIED_V1,
@@ -34,7 +36,8 @@ class RecordingWatchIntentUnitOfWork:
         created_intent: WatchIntent,
         active_intents: list[WatchIntent] | None = None,
         inserted_opportunities: list[Opportunity] | None = None,
-        event_status: EventStatus | None = None,
+        # A stored event unless a test says otherwise: creation refuses unstored ones.
+        event_status: EventStatus | None = EventStatus.UPCOMING,
     ) -> None:
         self._created_intent = created_intent
         self._active_intents = active_intents or [created_intent]
@@ -49,6 +52,8 @@ class RecordingWatchIntentUnitOfWork:
         self.expired_ids: list[str] = []
         self.quote_reads = 0
         self.triggered_ids: list[str] = []
+        # Simulates a concurrent DELETE or expiry committing before the trigger.
+        self.retire_before_trigger = False
 
     def __enter__(self) -> "RecordingWatchIntentUnitOfWork":
         self._staged_events = []
@@ -78,6 +83,7 @@ class RecordingWatchIntentUnitOfWork:
         selection: str,
         target_price: int,
         line: float | None,
+        window: WatchWindow,
         expires_at: datetime | None = None,
     ) -> WatchIntent:
         return self._created_intent
@@ -85,10 +91,13 @@ class RecordingWatchIntentUnitOfWork:
     def cancel_watch_intent(self, watch_intent_id: str) -> WatchIntent:
         raise NotImplementedError
 
-    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        watch_intent_ids = list(reasons)
         self.expired_ids.extend(watch_intent_ids)
         expired = [
-            intent.model_copy(update={"status": WatchStatus.EXPIRED})
+            intent.model_copy(
+                update={"status": WatchStatus.EXPIRED, "expired_reason": reasons[intent.id]}
+            )
             for intent in self._active_intents
             if intent.id in set(watch_intent_ids)
         ]
@@ -101,6 +110,8 @@ class RecordingWatchIntentUnitOfWork:
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
         self.triggered_ids.extend(watch_intent_ids)
+        if self.retire_before_trigger:
+            return []
         wanted = set(watch_intent_ids)
         triggered = [
             intent.model_copy(update={"status": WatchStatus.TRIGGERED})
@@ -174,6 +185,9 @@ class RecordingWatchIntentUnitOfWork:
             return None
         return EventLifecycle(status=self._event_status)
 
+    def lock_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        return self.get_event_lifecycle(event_external_id)
+
     def get_opportunity_event_context(
         self, opportunity: Opportunity
     ) -> OpportunityEventContext:
@@ -207,6 +221,7 @@ class StubWatchEvaluationEngine(WatchEvaluationEngine):
 
 def test_create_watch_intent_returns_a_triggered_watch_when_it_fills_at_once() -> None:
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -251,6 +266,7 @@ def test_create_watch_intent_returns_a_triggered_watch_when_it_fills_at_once() -
 
 def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -308,6 +324,7 @@ def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
 
 def test_evaluate_for_event_does_not_re_evaluate_a_triggered_watch() -> None:
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -343,6 +360,7 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
     None
 ):
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -370,8 +388,34 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
     assert result == []
     assert publisher.published_events == []
     assert uow.committed_public_events == ()
-    assert uow.triggered_ids == []
+    # The trigger runs first and is active-only; a rejected insert then notifies
+    # nothing. Only a winner that already triggered the watch can reject it.
+    assert uow.triggered_ids == ["wi-1"]
     assert [opp.id for opp in uow.created_batches[0]] == ["opp-1"]
+
+
+def test_evaluation_gives_no_opportunity_to_a_watch_retired_meanwhile() -> None:
+    """A concurrent DELETE or expiry won: the active-only trigger moves nothing."""
+    intent = _watch()
+    candidate = _make_opportunity("opp-1", intent.id, "DraftKings")
+    uow = RecordingWatchIntentUnitOfWork(
+        created_intent=intent, active_intents=[intent], event_status=EventStatus.UPCOMING
+    )
+    uow.retire_before_trigger = True
+    publisher = InMemoryWorkflowEventPublisher()
+
+    result = WatchIntentService(
+        unit_of_work_factory=lambda: uow,
+        workflow_event_publisher=publisher,
+        watch_evaluation_engine=StubWatchEvaluationEngine([candidate]),
+        opportunity_validity_engine=OpportunityValidityEngine(),
+        opportunity_ttl_minutes=5,
+    ).evaluate_for_event("event-1")
+
+    assert result == []
+    assert uow.created_batches == []
+    assert publisher.published_events == []
+    assert uow.committed_public_events == ()
 
 
 def _make_opportunity(
@@ -409,8 +453,11 @@ def _evaluate_counting_quote_reads(
     return uow
 
 
-def _watch(expires_at: datetime | None = None) -> WatchIntent:
+def _watch(
+    expires_at: datetime | None = None, window: WatchWindow = WatchWindow.PRE_GAME
+) -> WatchIntent:
     return WatchIntent(
+        window=window,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -433,5 +480,25 @@ def test_evaluation_reads_no_quotes_when_no_watch_is_still_armed() -> None:
 
 
 def test_evaluation_reads_quotes_once_an_armed_watch_can_use_them() -> None:
-    uow = _evaluate_counting_quote_reads(EventStatus.LIVE, _watch())
+    uow = _evaluate_counting_quote_reads(EventStatus.LIVE, _watch(window=WatchWindow.LIVE))
     assert uow.quote_reads == 1
+
+
+def test_evaluation_expires_a_pre_game_watch_on_a_live_event_as_a_backstop() -> None:
+    uow = _evaluate_counting_quote_reads(EventStatus.LIVE, _watch())
+
+    assert uow.expired_ids == ["wi-1"]
+    assert uow.quote_reads == 0
+    [expired] = uow.committed_events
+    assert expired.event_type == "WatchIntentExpired"
+    assert expired.payload.model_dump()["expired_reason"] == "event_started"
+    assert uow.committed_public_events == ()
+
+
+def test_evaluation_expires_every_window_on_an_ended_event() -> None:
+    for window in WatchWindow:
+        uow = _evaluate_counting_quote_reads(EventStatus.ENDED, _watch(window=window))
+
+        assert uow.expired_ids == ["wi-1"]
+        [expired] = uow.committed_events
+        assert expired.payload.model_dump()["expired_reason"] == "event_ended"
