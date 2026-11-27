@@ -56,8 +56,10 @@ class RecordingWatchIntentUnitOfWork:
         self.triggered_ids: list[str] = []
         # Simulates a concurrent DELETE or expiry committing before the trigger.
         self.retire_before_trigger = False
+        self.is_open = False
 
     def __enter__(self) -> "RecordingWatchIntentUnitOfWork":
+        self.is_open = True
         self._staged_events = []
         self._committed_events = ()
         self.created_batches = []
@@ -69,6 +71,7 @@ class RecordingWatchIntentUnitOfWork:
         exc: BaseException | None,
         tb: object | None,
     ) -> None:
+        self.is_open = False
         if exc_type is None:
             self._committed_events = tuple(self._staged_events)
             self.committed_public_events = tuple(self._staged_public_events)
@@ -511,3 +514,48 @@ def test_evaluation_expires_every_window_on_an_ended_event() -> None:
         assert uow.expired_ids == ["wi-1"]
         [expired] = uow.committed_events
         assert expired.payload.model_dump()["expired_reason"] == "event_ended"
+
+
+class UowWatchingResolver:
+    """Records whether the watch unit of work was open at each resolve."""
+
+    def __init__(self, uow: RecordingWatchIntentUnitOfWork) -> None:
+        self._uow = uow
+        self.open_at_resolve: list[bool] = []
+
+    def resolve(self) -> BookFilter:
+        self.open_at_resolve.append(self._uow.is_open)
+        return ALL_BOOKS
+
+
+def test_book_filter_is_resolved_before_the_watch_unit_of_work_opens() -> None:
+    # The resolver reads through its own connection. Resolving inside the watch
+    # unit of work would hold two connections per request (#136).
+    intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
+        id="wi-1",
+        event_id="event-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+    )
+    uow = RecordingWatchIntentUnitOfWork(created_intent=intent, active_intents=[intent])
+    resolver = UowWatchingResolver(uow)
+    service = WatchIntentService(
+        book_filter_resolver=resolver,
+        unit_of_work_factory=lambda: uow,
+        workflow_event_publisher=InMemoryWorkflowEventPublisher(),
+        watch_evaluation_engine=StubWatchEvaluationEngine([]),
+        opportunity_validity_engine=OpportunityValidityEngine(),
+        opportunity_ttl_minutes=5,
+    )
+
+    service.create_watch_intent(
+        event_id="event-1",
+        market_type=MarketType.MONEYLINE,
+        selection="knicks",
+        target_price=120,
+    )
+    service.evaluate_for_event("event-1")
+
+    assert resolver.open_at_resolve == [False, False]
