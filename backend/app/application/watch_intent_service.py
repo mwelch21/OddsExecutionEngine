@@ -15,6 +15,7 @@ from backend.app.domain.events import (
     build_watch_intent_triggered_event,
 )
 from backend.app.domain.models import (
+    EventLifecycle,
     EventStatus,
     MarketType,
     Opportunity,
@@ -99,10 +100,20 @@ class WatchIntentService:
                 # Immediate evaluation against current quotes. A watch created with a
                 # TTL already in the past can never fill, so it is not evaluated.
                 new_opportunities: list[Opportunity] = []
-                if not intent.is_expired_at(datetime.now(UTC)):
-                    quotes = self._event_status_engine.fillable_quotes(
-                        uow.get_event_status(event_id), uow.list_quotes(event_id)
-                    ).quotes
+                now = datetime.now(UTC)
+                if not intent.is_expired_at(now):
+                    fillable = self._event_status_engine.fillable_quotes(
+                        uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
+                    )
+                    quotes = fillable.quotes
+                    if fillable.skipped_reason is not None:
+                        self._logger.info(
+                            "watch_intent.create.evaluation_skipped",
+                            extra={
+                                "event_id": event_id,
+                                "reason": fillable.skipped_reason.value,
+                            },
+                        )
                     market_id_lookup = uow.get_market_id_lookup(event_id)
                     new_opportunities = self._watch_evaluation_engine.evaluate(
                         watch_intents=[intent],
@@ -226,8 +237,8 @@ class WatchIntentService:
             if wanted is not WatchStatus.ACTIVE or not intents:
                 return _sorted_by_creation(intents, now)
 
-            status_map = {
-                event: uow.get_event_status(event)
+            lifecycles = {
+                event: uow.get_event_lifecycle(event)
                 for event in {intent.event_id for intent in intents}
             }
 
@@ -235,7 +246,7 @@ class WatchIntentService:
             [
                 intent
                 for intent in intents
-                if status_map.get(intent.event_id) is not EventStatus.ENDED
+                if _not_ended(lifecycles.get(intent.event_id))
             ],
             now,
         )
@@ -334,12 +345,12 @@ class WatchIntentService:
                 # Live events evaluate on their live lines; ended ones produce
                 # nothing (#38).
                 fillable = self._event_status_engine.fillable_quotes(
-                    uow.get_event_status(event_id), uow.list_quotes(event_id)
+                    uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
                 )
                 if fillable.skipped_reason is not None:
                     self._logger.info(
                         "watch_evaluation.skipped",
-                        extra={"event_id": event_id, "reason": fillable.skipped_reason},
+                        extra={"event_id": event_id, "reason": fillable.skipped_reason.value},
                     )
                     return []
 
@@ -395,6 +406,12 @@ class WatchIntentService:
             },
         )
         return inserted_opportunities
+
+
+def _not_ended(lifecycle: EventLifecycle | None) -> bool:
+    # A watch on a started event nobody has observed since kickoff stays listed:
+    # the next refresh may find it live, and then it can fill.
+    return lifecycle is None or lifecycle.status is not EventStatus.ENDED
 
 
 def _sorted_by_creation(intents: list[WatchIntent], now: datetime) -> list[WatchIntent]:

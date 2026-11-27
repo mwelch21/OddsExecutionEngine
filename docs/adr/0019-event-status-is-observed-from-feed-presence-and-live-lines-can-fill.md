@@ -27,6 +27,7 @@ This ADR reverses the "started events can never fill" rule.
 - **What a watch may fill on.** One pure rule, `EventStatusEngine.fillable_quotes`:
   - `ended`: nothing. Evaluation logs `watch_evaluation.skipped` with `reason=event_ended`.
   - `live`: live lines only. A pre-game row that a book left behind at kickoff is a price nobody can take.
+  - `upcoming` but past its start: nothing (`reason=event_status_unobserved`). Nothing has observed it since kickoff, so its pre-game lines may be gone. Its watches stay listed: the next refresh may find it live.
   - `upcoming`: every stored line.
 - **Browse filter.** `GET /api/v1/events` takes `status` = `upcoming` | `live` | `all` (`all` is upcoming plus live; the default). Ended events are never listed. `include_started` stays as a deprecated alias (`true` reads as `all`, `false` as `upcoming`), so v1 stays additive (ADR-018). An explicit `status` wins over the alias.
 

@@ -113,7 +113,7 @@ class LineBoardQuoteResponse(BaseModel):
     quoted_at: datetime | None
     ingested_at: datetime | None
     line_age_known: bool
-    phase: LinePhase | None
+    phase: LinePhase
 
     @classmethod
     def from_domain(cls, quote: Quote) -> "LineBoardQuoteResponse":
@@ -123,7 +123,8 @@ class LineBoardQuoteResponse(BaseModel):
             quoted_at=quote.quoted_at,
             ingested_at=quote.ingested_at,
             line_age_known=quote.line_age_known,
-            phase=quote.phase,
+            # Every stored row has a phase; storage treats an unset one as pre_game.
+            phase=quote.phase or LinePhase.PRE_GAME,
         )
 
 

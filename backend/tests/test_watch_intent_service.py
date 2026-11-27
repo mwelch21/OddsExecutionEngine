@@ -4,6 +4,7 @@ from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventLifecycle,
     EventStatus,
     MarketType,
     MatchingQuote,
@@ -166,8 +167,10 @@ class RecordingWatchIntentUnitOfWork:
     ) -> list[tuple[Opportunity, datetime | None]]:
         raise NotImplementedError
 
-    def get_event_status(self, event_external_id: str) -> EventStatus | None:
-        return self._event_status
+    def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        if self._event_status is None:
+            return None
+        return EventLifecycle(status=self._event_status)
 
     def get_opportunity_event_context(
         self, opportunity: Opportunity

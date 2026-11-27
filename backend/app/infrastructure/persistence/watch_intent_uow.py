@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventLifecycle,
     EventStatus,
     MarketType,
     MatchingQuote,
@@ -323,13 +324,18 @@ class SqlAlchemyWatchIntentUnitOfWork:
             result.append((opp, row))
         return result
 
-    def get_event_status(self, event_external_id: str) -> EventStatus | None:
-        value = self._require_session().execute(
-            select(events_table.c.status).where(
+    def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        row = self._require_session().execute(
+            select(events_table.c.status, events_table.c.starts_at).where(
                 events_table.c.external_id == event_external_id
             )
-        ).scalar_one_or_none()
-        return None if value is None else EventStatus(value)
+        ).first()
+        if row is None:
+            return None
+        starts_at = row.starts_at
+        if starts_at is not None and starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=UTC)
+        return EventLifecycle(status=EventStatus(row.status), starts_at=starts_at)
 
     def get_opportunity_event_context(
         self, opportunity: Opportunity

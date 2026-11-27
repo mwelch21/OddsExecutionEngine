@@ -39,7 +39,7 @@ def create_event_router(service: EventQueryService) -> APIRouter:
                 EventFilter(
                     league=league,
                     sport=sport,
-                    status=_resolve_status(status, include_started),
+                    status=EventListStatus.resolve(status, include_started),
                 ),
                 page=page,
                 page_size=page_size,
@@ -55,13 +55,3 @@ def create_event_router(service: EventQueryService) -> APIRouter:
 
     return router
 
-
-def _resolve_status(
-    status: EventListStatus | None, include_started: bool | None
-) -> EventListStatus:
-    """`status` wins; the deprecated alias applies only when it is absent (ADR-018)."""
-    if status is not None:
-        return status
-    if include_started is not None:
-        return EventListStatus.from_include_started(include_started)
-    return EventListStatus.ALL

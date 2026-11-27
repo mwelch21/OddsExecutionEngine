@@ -135,7 +135,7 @@ export type LineBoardQuote = {
   quoted_at: string | null;
   ingested_at: string | null;
   line_age_known: boolean;
-  phase: LinePhase | null;
+  phase: LinePhase;
 };
 
 export type LineBoardMarket = {

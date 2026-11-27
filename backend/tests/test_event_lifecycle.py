@@ -9,7 +9,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.watch_intent_service import WatchIntentService
@@ -299,3 +299,29 @@ def test_both_clocks_keep_their_meaning_across_kickoff(harness: Harness) -> None
     assert board["FanDuel"].quoted_at is None
     assert board["FanDuel"].line_age_known is False
     assert board["FanDuel"].ingested_at is not None
+
+
+def test_a_started_event_not_observed_since_kickoff_fills_on_nothing(
+    harness: Harness,
+) -> None:
+    event_id = "unobserved"
+    harness.provider.offer(
+        event_id, NOW + timedelta(hours=1), [_quote(event_id, "DraftKings", 150, MOVED_PRE_GAME)]
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    # Kickoff passes with no refresh: stored upcoming, start behind us.
+    with harness.session_factory.create_session() as session:
+        session.execute(
+            update(events_table)
+            .where(events_table.c.external_id == event_id)
+            .values(starts_at=NOW - timedelta(minutes=10))
+        )
+        session.commit()
+
+    created = harness.watches.create_watch_intent(
+        event_id=event_id, market_type=MarketType.MONEYLINE, selection="knicks", target_price=140
+    )
+
+    # +150 is a pre-game price that may be gone; nothing fills until a pull says.
+    assert created.opportunity is None
+    assert harness.status(event_id) is EventStatus.UPCOMING

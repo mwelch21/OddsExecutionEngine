@@ -11,6 +11,7 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventFilter,
     EventInfo,
+    EventLifecycle,
     EventSport,
     EventStatus,
     EventSummary,
@@ -273,8 +274,8 @@ class WatchIntentUnitOfWork(Protocol):
         self, opportunities: list[Opportunity]
     ) -> list[tuple[Opportunity, datetime | None]]: ...
 
-    def get_event_status(self, event_external_id: str) -> EventStatus | None:
-        """The observed status; None when the event was never stored."""
+    def get_event_lifecycle(self, event_external_id: str) -> EventLifecycle | None:
+        """Observed status and start time; None when the event was never stored."""
         ...
 
     def get_opportunity_event_context(

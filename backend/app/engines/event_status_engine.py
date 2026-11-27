@@ -1,6 +1,13 @@
 from datetime import UTC, datetime
 
-from backend.app.domain.models import EventStatus, FillableQuotes, LinePhase, Quote
+from backend.app.domain.models import (
+    EventLifecycle,
+    EventStatus,
+    FillableQuotes,
+    FillableSkipReason,
+    LinePhase,
+    Quote,
+)
 
 
 def _aware(value: datetime) -> datetime:
@@ -44,16 +51,24 @@ class EventStatusEngine:
         return LinePhase.LIVE if status is EventStatus.LIVE else LinePhase.PRE_GAME
 
     def fillable_quotes(
-        self, status: EventStatus | None, quotes: list[Quote]
+        self, lifecycle: EventLifecycle | None, quotes: list[Quote], now: datetime
     ) -> FillableQuotes:
-        """The quotes a watch on an event with this status may fill on.
+        """The quotes a watch on this event may fill on.
 
         Ended: none. Live: live lines only, because a pre-game row a book left
-        behind at kickoff is a price nobody can take any more. Upcoming, or an
-        event never stored: every quote.
+        behind at kickoff is a price nobody can take any more. Upcoming but past
+        its start: none, because nothing has observed it since kickoff. Upcoming,
+        or an event never stored: every quote.
         """
+        if lifecycle is None:
+            return FillableQuotes(quotes=quotes)
+        status = lifecycle.status
         if status is EventStatus.ENDED:
-            return FillableQuotes(quotes=[], skipped_reason="event_ended")
+            return FillableQuotes(quotes=[], skipped_reason=FillableSkipReason.EVENT_ENDED)
+        if status is EventStatus.UPCOMING and _has_started(lifecycle.starts_at, now):
+            return FillableQuotes(
+                quotes=[], skipped_reason=FillableSkipReason.EVENT_STATUS_UNOBSERVED
+            )
         if status is EventStatus.LIVE:
             return FillableQuotes(
                 quotes=[quote for quote in quotes if quote.phase is LinePhase.LIVE]

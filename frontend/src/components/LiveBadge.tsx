@@ -15,7 +15,7 @@ export function LiveBadge({ status }: { status: EventStatus }) {
  * Says which kind of line a quote is on a live board. A pre-game row a book left
  * behind at kickoff cannot fill, so it is labelled rather than passed off as live.
  */
-export function LinePhaseBadge({ phase }: { phase: LinePhase | null }) {
+export function LinePhaseBadge({ phase }: { phase: LinePhase }) {
   if (phase === "live") {
     return (
       <span className="live-badge live-badge-small" title="Pulled while the event was live">

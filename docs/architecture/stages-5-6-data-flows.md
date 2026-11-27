@@ -105,6 +105,7 @@ WatchIntentService.evaluate_for_event(event_id)    [POST-COMMIT HOOK]
   |
   |-- EventStatusEngine.fillable_quotes(events.status, latest quotes)  [PURE ENGINE]
   |     ended    -> skip, log watch_evaluation.skipped reason=event_ended
+  |     upcoming past its start -> skip, reason=event_status_unobserved
   |     live     -> live-phase quotes only (ADR-019)
   |     upcoming -> every quote
   |-- SELECT watch_intents WHERE event_external_id AND status='active'

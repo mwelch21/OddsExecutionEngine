@@ -45,9 +45,35 @@ class EventListStatus(StrEnum):
     ALL = "all"
 
     @classmethod
-    def from_include_started(cls, include_started: bool) -> "EventListStatus":
-        """The deprecated `include_started` flag, read as the filter it stands for."""
-        return cls.ALL if include_started else cls.UPCOMING
+    def resolve(
+        cls, status: "EventListStatus | None", include_started: bool | None
+    ) -> "EventListStatus":
+        """The filter a request asks for (ADR-019).
+
+        An explicit `status` wins. The deprecated `include_started` alias applies
+        only when it is absent: true reads as all, false as upcoming.
+        """
+        if status is not None:
+            return status
+        if include_started is not None:
+            return cls.ALL if include_started else cls.UPCOMING
+        return cls.ALL
+
+
+class FillableSkipReason(StrEnum):
+    """Why an event rules out every quote a watch could fill on."""
+
+    EVENT_ENDED = "event_ended"
+    # Stored upcoming but past its start: not observed since kickoff, so its
+    # pre-game lines may be gone and its live lines are unknown.
+    EVENT_STATUS_UNOBSERVED = "event_status_unobserved"
+
+
+class EventLifecycle(DomainModel):
+    """What a stored event records about where it is in its life."""
+
+    status: EventStatus
+    starts_at: datetime | None = None
 
 
 class OrderIntent(DomainModel):
@@ -76,7 +102,8 @@ class Quote(DomainModel):
     line: float | None = None
     quoted_at: datetime | None = None
     ingested_at: datetime | None = None
-    # Set once the quote is stored; None on a quote fresh from a provider.
+    # Stamped at ingest from the event's observed status; None on a quote fresh
+    # from a provider. Storage treats None as pre_game.
     phase: LinePhase | None = None
 
     @property
@@ -94,8 +121,8 @@ class FillableQuotes(DomainModel):
     """The stored quotes a watch may fill on, and why there are none if so."""
 
     quotes: list[Quote]
-    # Set only when the event itself rules every quote out, e.g. `event_ended`.
-    skipped_reason: str | None = None
+    # Set only when the event itself rules every quote out.
+    skipped_reason: FillableSkipReason | None = None
 
 
 class PersistedQuote(DomainModel):

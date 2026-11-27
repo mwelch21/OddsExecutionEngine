@@ -2,7 +2,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from backend.app.domain.models import EventStatus, LinePhase, MarketType, Quote
+from backend.app.domain.models import (
+    EventLifecycle,
+    EventListStatus,
+    EventStatus,
+    FillableSkipReason,
+    LinePhase,
+    MarketType,
+    Quote,
+)
 from backend.app.engines.event_status_engine import EventStatusEngine
 
 NOW = datetime(2026, 11, 27, 20, 0, tzinfo=UTC)
@@ -77,13 +85,27 @@ def test_a_line_takes_its_phase_from_the_event_status(
     assert engine.line_phase(status) is phase
 
 
+def _at(status: EventStatus, starts_at: datetime | None = None) -> EventLifecycle:
+    return EventLifecycle(status=status, starts_at=starts_at or NOW - timedelta(hours=1))
+
+
+def test_a_started_event_not_observed_since_kickoff_fills_on_nothing() -> None:
+    # Stored upcoming, start passed, no pull since: its pre-game lines may be gone.
+    quotes = [_quote("DraftKings", LinePhase.PRE_GAME)]
+
+    gate = engine.fillable_quotes(_at(EventStatus.UPCOMING), quotes, NOW)
+
+    assert gate.quotes == []
+    assert gate.skipped_reason is FillableSkipReason.EVENT_STATUS_UNOBSERVED
+
+
 def test_an_ended_event_produces_nothing_and_says_why() -> None:
     quotes = [_quote("DraftKings", LinePhase.PRE_GAME), _quote("FanDuel", LinePhase.LIVE)]
 
-    gate = engine.fillable_quotes(EventStatus.ENDED, quotes)
+    gate = engine.fillable_quotes(_at(EventStatus.ENDED), quotes, NOW)
 
     assert gate.quotes == []
-    assert gate.skipped_reason == "event_ended"
+    assert gate.skipped_reason is FillableSkipReason.EVENT_ENDED
 
 
 def test_a_live_event_fills_only_on_live_lines() -> None:
@@ -92,7 +114,7 @@ def test_a_live_event_fills_only_on_live_lines() -> None:
     pre_game = _quote("DraftKings", LinePhase.PRE_GAME)
     live = _quote("FanDuel", LinePhase.LIVE)
 
-    gate = engine.fillable_quotes(EventStatus.LIVE, [pre_game, live])
+    gate = engine.fillable_quotes(_at(EventStatus.LIVE), [pre_game, live], NOW)
 
     assert gate.quotes == [live]
     assert gate.skipped_reason is None
@@ -101,7 +123,9 @@ def test_a_live_event_fills_only_on_live_lines() -> None:
 def test_an_upcoming_event_fills_on_every_stored_line() -> None:
     quotes = [_quote("DraftKings", LinePhase.PRE_GAME), _quote("FanDuel", None)]
 
-    gate = engine.fillable_quotes(EventStatus.UPCOMING, quotes)
+    gate = engine.fillable_quotes(
+        _at(EventStatus.UPCOMING, NOW + timedelta(hours=1)), quotes, NOW
+    )
 
     assert gate.quotes == quotes
     assert gate.skipped_reason is None
@@ -109,4 +133,19 @@ def test_an_upcoming_event_fills_on_every_stored_line() -> None:
 
 def test_an_event_never_stored_is_treated_as_upcoming() -> None:
     quotes = [_quote("DraftKings", LinePhase.PRE_GAME)]
-    assert engine.fillable_quotes(None, quotes).quotes == quotes
+    assert engine.fillable_quotes(None, quotes, NOW).quotes == quotes
+
+
+@pytest.mark.parametrize(
+    ("status", "include_started", "expected"),
+    [
+        (None, None, EventListStatus.ALL),
+        (None, True, EventListStatus.ALL),
+        (None, False, EventListStatus.UPCOMING),
+        (EventListStatus.LIVE, False, EventListStatus.LIVE),
+    ],
+)
+def test_list_status_resolves_the_deprecated_alias_only_when_status_is_absent(
+    status: EventListStatus | None, include_started: bool | None, expected: EventListStatus
+) -> None:
+    assert EventListStatus.resolve(status, include_started) is expected
