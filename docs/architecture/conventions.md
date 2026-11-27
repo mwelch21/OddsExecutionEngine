@@ -158,3 +158,11 @@
 - No pagination, and no status filter. A single event's board is bounded and renders as one screen; the browse list hides ended events, but asking for one board by id is a different question.
 - Each quote carries `phase` (`pre_game` or `live`). A live board can hold a pre-game row a book left behind at kickoff; `phase` is what tells it apart, and only live rows can fill.
 - Known gap, accepted, inherited from the browse list: ingestion never prunes the latest row for a line a book has stopped offering, so a retired row can still be ranked and named `best_sportsbook`. Its `quoted_at` is what exposes it — a best book whose line has not moved in days is the tell. Pruning is its own ticket.
+
+## Operator filters are resolved once and passed as values (#136)
+
+- A setting that narrows what the system shows or evaluates, and that becomes per-user once auth lands (#14), is resolved by one application-layer resolver. The allowed-books filter is the first: `BookFilterService` is the only `BookFilterResolver`.
+- Engines take the resolved filter as a value object (`BookFilter`) and never read storage. Services take the resolver as a required constructor argument, so a missing one fails at wiring, not silently as "all books".
+- Resolve once per request or evaluation, before the caller's unit of work opens. The resolver reads through its own connection; resolving inside another unit of work holds two connections per request and can drain the pool under load.
+- Empty means no narrowing (all books), so no stored row and an upgraded database behave as before.
+- The filter narrows reads and evaluation only. Ingestion still stores every book, and changing the filter re-evaluates nothing.

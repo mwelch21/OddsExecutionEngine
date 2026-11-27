@@ -123,6 +123,10 @@ class WatchIntentService:
         )
 
         try:
+            # Resolved before the watch unit of work opens: the resolver reads
+            # through its own connection, and holding two per request can drain
+            # the pool under concurrent watch creation (#136).
+            book_filter = self._book_filter_resolver.resolve()
             with self._unit_of_work_factory() as uow:
                 # Locked until commit: ingestion's status write takes the same row
                 # lock, so it cannot move the event between this read and the
@@ -170,7 +174,7 @@ class WatchIntentService:
                         watch_intents=[intent],
                         quotes=quotes,
                         market_id_lookup=market_id_lookup,
-                        book_filter=self._book_filter_resolver.resolve(),
+                        book_filter=book_filter,
                     )
 
                 inserted_opportunities, retired = self._fill(uow, new_opportunities)
@@ -411,6 +415,9 @@ class WatchIntentService:
         )
 
         try:
+            # Resolved before the watch unit of work opens, for the same reason
+            # as in `create_watch_intent`: one connection per evaluation (#136).
+            book_filter = self._book_filter_resolver.resolve()
             with self._unit_of_work_factory() as uow:
                 # Locked until commit, so the event cannot end or start between
                 # this check and the opportunity insert.
@@ -458,7 +465,7 @@ class WatchIntentService:
                         watch_intents=armed,
                         quotes=quotes,
                         market_id_lookup=uow.get_market_id_lookup(event_id),
-                        book_filter=self._book_filter_resolver.resolve(),
+                        book_filter=book_filter,
                     )
                     inserted_opportunities, _ = self._fill(uow, new_opportunities)
 
