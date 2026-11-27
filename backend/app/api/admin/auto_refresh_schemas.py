@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from backend.app.domain.auto_refresh import (
+    DEFAULT_INTERVAL_MINUTES,
     MAX_INTERVAL_MINUTES,
     MIN_INTERVAL_MINUTES,
     AutoRefreshSettings,
@@ -13,16 +14,25 @@ from backend.app.domain.quota import QuotaSource
 
 
 class AutoRefreshSettingsRequest(BaseModel):
-    """A full replacement of the settings; an omitted `quota_floor` means "derive it"."""
+    """A full replacement of the settings.
+
+    An omitted `quota_floor` means "derive it"; an omitted `live_interval_minutes`
+    means the default, 5. A client that omits a field resets it, as any full
+    replacement does.
+    """
 
     enabled: bool
     interval_minutes: int = Field(ge=MIN_INTERVAL_MINUTES, le=MAX_INTERVAL_MINUTES)
+    live_interval_minutes: int = Field(
+        default=DEFAULT_INTERVAL_MINUTES, ge=MIN_INTERVAL_MINUTES, le=MAX_INTERVAL_MINUTES
+    )
     quota_floor: int | None = Field(default=None, ge=0)
 
     def to_domain(self) -> AutoRefreshSettings:
         return AutoRefreshSettings(
             enabled=self.enabled,
             interval_minutes=self.interval_minutes,
+            live_interval_minutes=self.live_interval_minutes,
             quota_floor=self.quota_floor,
         )
 
@@ -48,7 +58,10 @@ class QuotaResponse(BaseModel):
 
 class AutoRefreshResponse(BaseModel):
     enabled: bool
+    # The upcoming interval: sports whose candidate watches are all pre-game.
     interval_minutes: int
+    # Sports with a candidate watch on a live event (#128).
+    live_interval_minutes: int
     quota_floor: int | None
     last_outcome: AutoRefreshOutcomeResponse | None
     # Out of credits: still on, but nothing paid is pulled until credits return.
@@ -66,6 +79,7 @@ class AutoRefreshResponse(BaseModel):
         return cls(
             enabled=status.settings.enabled,
             interval_minutes=status.settings.interval_minutes,
+            live_interval_minutes=status.settings.live_interval_minutes,
             quota_floor=status.settings.quota_floor,
             last_outcome=None
             if outcome is None

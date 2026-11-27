@@ -27,7 +27,10 @@ export type Quota = {
 /** The operator's switch. Turning it on spends nothing by itself; the worker does. */
 export type AutoRefresh = {
   enabled: boolean;
+  /** Upcoming interval: sports whose candidate watches are all pre-game. */
   interval_minutes: number;
+  /** Live interval: sports with a candidate watch on a game in play (#128). */
+  live_interval_minutes: number;
   /** The operator's warn-below floor; `null` means derive it (10% of the plan). */
   quota_floor: number | null;
   last_outcome: AutoRefreshOutcome | null;
@@ -38,7 +41,10 @@ export type AutoRefresh = {
   quota: Quota | null;
 };
 
-export type AutoRefreshSettings = Pick<AutoRefresh, "enabled" | "interval_minutes" | "quota_floor">;
+export type AutoRefreshSettings = Pick<
+  AutoRefresh,
+  "enabled" | "interval_minutes" | "live_interval_minutes" | "quota_floor"
+>;
 
 export async function getAutoRefresh() {
   return request<AutoRefresh>(`${ADMIN}/auto-refresh`);

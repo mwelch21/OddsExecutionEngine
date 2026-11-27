@@ -16,6 +16,7 @@ from backend.app.application.quote_ingestion_service import QuoteIngestionServic
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.config import Settings
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
+from backend.app.engines.auto_refresh_candidate_engine import AutoRefreshCandidateEngine
 from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
@@ -119,5 +120,6 @@ def build_auto_refresh_service(
         cycle_lock=PostgresAdvisoryCycleLock(session_factory),
         quote_ingestion_service=quote_ingestion_service,
         cadence_engine=AutoRefreshCadenceEngine(),
+        candidate_engine=AutoRefreshCandidateEngine(),
         quota_service=quota_service,
     )

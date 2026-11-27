@@ -70,7 +70,9 @@
 - Every upstream call, served or refused, hands its quota to the injected `QuotaRecorder` before the provider raises on the response. A recorder failure is logged and never fails the refresh. A response the cache answered records nothing.
 - Every refresh, manual or Auto-Refresh, sport or event, leaves one `refresh_records` row (#96), written by `QuoteIngestionService` through the injected `RefreshRecorder` in its own transaction after ingestion settles. Failed and refused refreshes are recorded; a request rejected before any pull (unknown sport or event) is not a refresh and is not. A recorder failure is logged and never fails the refresh.
 - `OUT_OF_USAGE_CREDITS` is matched on the body's `error_code`, not the status code, and raised as `OutOfUsageCreditsError` (503 from the refresh routes).
-- While Auto-Refresh is paused for credits, its only upstream call is the free `GET /v4/sports` balance check, at most once per interval and only when a watched sport is due.
+- While Auto-Refresh is paused for credits, its only upstream call is the free `GET /v4/sports` balance check, at most once per upcoming interval and only when a watched sport is due.
+- Auto-Refresh candidates follow the evaluator, not the clock (#128). `AutoRefreshCandidateEngine` alone decides whether a watch makes its sport a candidate, from the stored event status and the watch window; a UoW query may pre-filter but never decides. Never use `starts_at` as a live signal.
+- Auto-Refresh has two operator-set intervals, upcoming and live, both global and 1-60 minutes. Nothing changes an interval automatically: no game-clock, elapsed-time or per-game speed-up.
 
 ## Decisions log policy
 

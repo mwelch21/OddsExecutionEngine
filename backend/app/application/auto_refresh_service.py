@@ -14,12 +14,13 @@ from backend.app.domain.auto_refresh import (
     AutoRefreshOutcome,
     AutoRefreshSettings,
     AutoRefreshStatus,
+    CandidateSport,
     RefreshOutcomeStatus,
 )
-from backend.app.domain.models import EventSport
 from backend.app.domain.quota import OutOfUsageCreditsError
 from backend.app.domain.refresh_records import RefreshResult, RefreshTrigger
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
+from backend.app.engines.auto_refresh_candidate_engine import AutoRefreshCandidateEngine
 
 
 class AutoRefreshService:
@@ -38,6 +39,7 @@ class AutoRefreshService:
         cycle_lock: AutoRefreshCycleLock,
         quote_ingestion_service: QuoteIngestionService,
         cadence_engine: AutoRefreshCadenceEngine,
+        candidate_engine: AutoRefreshCandidateEngine,
         quota_service: QuotaService,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -45,6 +47,7 @@ class AutoRefreshService:
         self._cycle_lock = cycle_lock
         self._quote_ingestion_service = quote_ingestion_service
         self._cadence_engine = cadence_engine
+        self._candidate_engine = candidate_engine
         self._quota_service = quota_service
         self._clock = clock
 
@@ -64,14 +67,22 @@ class AutoRefreshService:
             last_outcome = uow.get_last_outcome()
         self._logger.info(
             "auto_refresh.settings_updated",
-            extra={"enabled": saved.enabled, "interval_minutes": saved.interval_minutes},
+            extra={
+                "enabled": saved.enabled,
+                "interval_minutes": saved.interval_minutes,
+                "live_interval_minutes": saved.live_interval_minutes,
+            },
         )
         return AutoRefreshStatus(
             settings=saved, last_outcome=last_outcome, quota=self._quota_service.status()
         )
 
     def run_cycle(self) -> AutoRefreshCycleReport:
-        """One poll: refresh every watched sport whose cooldown has elapsed."""
+        """One poll: refresh every candidate sport whose cooldown has elapsed.
+
+        Settings are read on every poll, so a changed interval applies from the
+        next one with no restart.
+        """
         with self._cycle_lock.hold() as acquired:
             if not acquired:
                 self._logger.info("auto_refresh.cycle_skipped_lock_held")
@@ -84,14 +95,26 @@ class AutoRefreshService:
             settings = uow.get_settings()
             if not settings.enabled:
                 return AutoRefreshCycleReport(ran=True, enabled=False)
-            watched = uow.list_watched_event_sports(now)
+            watched = uow.list_watched_events(now)
             refresh_times = uow.get_sport_refresh_times()
 
-        candidates = self._sport_keys_for(watched)
+        live_by_key = self._sport_keys_for(self._candidate_engine.candidates(watched, now))
+        candidates = set(live_by_key)
+        live = {key for key, is_live in live_by_key.items() if is_live}
         due = self._cadence_engine.due_sports(
-            candidates, refresh_times, settings.interval_minutes, now
+            candidates,
+            live,
+            refresh_times,
+            settings.interval_minutes,
+            settings.live_interval_minutes,
+            now,
         )
-        report = AutoRefreshCycleReport(ran=True, enabled=True, candidate_sports=sorted(candidates))
+        report = AutoRefreshCycleReport(
+            ran=True,
+            enabled=True,
+            candidate_sports=sorted(candidates),
+            live_sports=sorted(live),
+        )
         if due and self._paused(settings.interval_minutes, now):
             return report.model_copy(update={"paused": True})
 
@@ -124,16 +147,21 @@ class AutoRefreshService:
         self._logger.info("auto_refresh.balance_checked", extra={"paused": still_paused})
         return still_paused
 
-    def _sport_keys_for(self, watched: list[EventSport]) -> set[str]:
-        """Provider keys for stored (sport, league) pairs; never a guessed key."""
-        if not watched:
+    def _sport_keys_for(self, candidates: list[CandidateSport]) -> dict[str, bool]:
+        """Each candidate's provider key, True when it runs on the live interval.
+
+        Keys come from stored (sport, league) pairs; never a guessed key.
+        """
+        if not candidates:
             # No watch to serve: skip even the catalog lookup.
-            return set()
-        wanted = {(event_sport.sport, event_sport.league) for event_sport in watched}
+            return {}
+        live_by_pair = {
+            (candidate.sport, candidate.league): candidate.live for candidate in candidates
+        }
         return {
-            entry.key
+            entry.key: live_by_pair[(entry.sport, entry.league)]
             for entry in self._quote_ingestion_service.list_supported_sports()
-            if (entry.sport, entry.league) in wanted
+            if (entry.sport, entry.league) in live_by_pair
         }
 
     def _refresh(self, sport: str) -> tuple[AutoRefreshOutcome, bool]:

@@ -5,8 +5,12 @@ from datetime import UTC, datetime
 from sqlalchemy import RowMapping, or_, select, text
 from sqlalchemy.orm import Session
 
-from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
-from backend.app.domain.models import EventSport, WatchStatus
+from backend.app.domain.auto_refresh import (
+    AutoRefreshOutcome,
+    AutoRefreshSettings,
+    WatchedEvent,
+)
+from backend.app.domain.models import EventStatus, WatchStatus, WatchWindow
 from backend.app.domain.refresh_records import RefreshTrigger
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.refresh_records import refresh_record_from_row
@@ -57,6 +61,7 @@ class SqlAlchemyAutoRefreshUnitOfWork:
         return AutoRefreshSettings(
             enabled=row["enabled"],
             interval_minutes=row["interval_minutes"],
+            live_interval_minutes=row["live_interval_minutes"],
             quota_floor=row["quota_floor"],
         )
 
@@ -68,6 +73,7 @@ class SqlAlchemyAutoRefreshUnitOfWork:
                 "id": SETTINGS_ROW_ID,
                 "enabled": settings.enabled,
                 "interval_minutes": settings.interval_minutes,
+                "live_interval_minutes": settings.live_interval_minutes,
                 "quota_floor": settings.quota_floor,
                 "updated_at": datetime.now(UTC),
             },
@@ -101,17 +107,23 @@ class SqlAlchemyAutoRefreshUnitOfWork:
             error=record.error,
         )
 
-    def list_watched_event_sports(self, now: datetime) -> list[EventSport]:
-        """The sports of events with a watch the evaluator will act on.
+    def list_watched_events(self, now: datetime) -> list[WatchedEvent]:
+        """Active watches the candidate rule may count, with their event's status.
 
-        Mirrors `WatchIntentService.evaluate_for_event`: stored active, TTL not
-        passed, and on an event that has not started. A watch on an event with no
-        stored sport cannot be refreshed sport-wide and is left out.
+        A pre-filter only: stored active, TTL not passed, on an event that is not
+        ended and has a stored sport (one without cannot be refreshed sport-wide).
+        `AutoRefreshCandidateEngine` makes the decision from the window and status.
         """
         rows = (
             self._require_session()
             .execute(
-                select(events_table.c.sport, events_table.c.league)
+                select(
+                    events_table.c.sport,
+                    events_table.c.league,
+                    events_table.c.status,
+                    events_table.c.starts_at,
+                    watch_intents_table.c.watch_window,
+                )
                 .distinct()
                 .select_from(
                     watch_intents_table.join(
@@ -126,14 +138,23 @@ class SqlAlchemyAutoRefreshUnitOfWork:
                         watch_intents_table.c.expires_at.is_(None),
                         watch_intents_table.c.expires_at > now,
                     ),
-                    or_(events_table.c.starts_at.is_(None), events_table.c.starts_at > now),
+                    events_table.c.status != EventStatus.ENDED.value,
                     events_table.c.sport.is_not(None),
                 )
             )
             .mappings()
             .all()
         )
-        return [EventSport(sport=row["sport"], league=row["league"]) for row in rows]
+        return [
+            WatchedEvent(
+                sport=row["sport"],
+                league=row["league"],
+                status=EventStatus(row["status"]),
+                window=WatchWindow(row["watch_window"]),
+                starts_at=row["starts_at"],
+            )
+            for row in rows
+        ]
 
     def get_sport_refresh_times(self) -> dict[str, datetime]:
         rows = self._require_session().execute(select(sport_refreshes_table)).mappings().all()

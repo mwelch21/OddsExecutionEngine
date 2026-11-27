@@ -17,7 +17,7 @@ ADRs live one per file in [`docs/adr/`](../adr/), numbered `NNNN-slug.md`. Add a
 - [ADR-013: Notification delivery is a Go service reading the Postgres outbox](../adr/0013-notification-delivery-is-a-go-service-reading-the-postgres-outbox.md)
 - [ADR-014: Public events are versioned CloudEvents in their own outbox](../adr/0014-public-events-are-versioned-cloudevents-in-their-own-outbox.md)
 - [ADR-015: Public events fan out into independently retryable deliveries](../adr/0015-public-events-fan-out-into-independently-retryable-deliveries.md)
-- [ADR-016: Auto-Refresh is the only automatic refresh path](../adr/0016-auto-refresh-is-the-only-automatic-refresh-path.md)
+- [ADR-016: Auto-Refresh is the only automatic refresh path](../adr/0016-auto-refresh-is-the-only-automatic-refresh-path.md) — amended 2026-11-27 (#128): candidates follow event status and watch window; a second, live interval
 - [ADR-017: A watch has an explicit window across the event lifecycle](../adr/0017-a-watch-has-an-explicit-window-across-the-event-lifecycle.md)
 - [ADR-018: The frontend uses path routes and reaches the API under `/api/v1`](../adr/0018-frontend-uses-path-routes-and-reaches-the-api-under-api.md)
 - [ADR-019: Event status is observed from feed presence, and live lines can fill](../adr/0019-event-status-is-observed-from-feed-presence-and-live-lines-can-fill.md) — reverses the "started events can never fill" rule

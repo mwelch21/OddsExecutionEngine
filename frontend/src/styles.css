@@ -1219,6 +1219,44 @@ select {
   font-size: 14px;
 }
 
+.admin-sliders {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 24px;
+}
+
+.admin-slider {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-slider-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.admin-slider-label strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
 .admin-field .target-input {
   padding: 0 10px;
 }
