@@ -91,7 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     workflow_event_publisher = LoggingWorkflowEventPublisher()
     price_comparison_service = PriceComparisonService()
     recommendation_engine = RecommendationEngine(price_comparison_service)
-    # One resolver for every read and evaluate path that applies the allowed books.
+    # The allowed-books resolver for the API's read and recommendation paths.
+    # Watch evaluation gets its own from composition, so the worker shares it.
     book_filter_service = build_book_filter_service(session_factory)
     recommendation_service = RecommendationService(
         unit_of_work_factory=lambda: SqlAlchemyRecommendationUnitOfWork(session_factory),

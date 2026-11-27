@@ -1,3 +1,4 @@
+
 """Event status from feed presence, line phase, and what a watch may fill (#38).
 
 Runs the real ingestion and watch services against a migrated database, with a
@@ -11,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, update
 
+from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.models import (
@@ -130,6 +132,7 @@ class Harness:
         comparison = PriceComparisonService()
         recommendation = RecommendationEngine(comparison)
         self.watches = WatchIntentService(
+            book_filter_resolver=AllBooksResolver(),
             unit_of_work_factory=lambda: SqlAlchemyWatchIntentUnitOfWork(session_factory),
             workflow_event_publisher=InMemoryWorkflowEventPublisher(),
             watch_evaluation_engine=WatchEvaluationEngine(comparison, recommendation),

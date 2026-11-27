@@ -1,7 +1,6 @@
 import logging
 from time import perf_counter
 
-from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.ports import (
     BookFilterResolver,
     RecommendationUnitOfWorkFactory,
@@ -25,13 +24,13 @@ class RecommendationService:
         workflow_event_publisher: WorkflowEventPublisher,
         quote_matching_engine: QuoteMatchingEngine,
         recommendation_engine: RecommendationEngine,
-        book_filter_resolver: BookFilterResolver | None = None,
+        book_filter_resolver: BookFilterResolver,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
         self._quote_matching_engine = quote_matching_engine
         self._recommendation_engine = recommendation_engine
-        self._book_filter_resolver = book_filter_resolver or AllBooksResolver()
+        self._book_filter_resolver = book_filter_resolver
 
     def recommend(self, intent: OrderIntent) -> ExecutionRecommendation:
         started_at = perf_counter()

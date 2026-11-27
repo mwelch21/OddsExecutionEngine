@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
 from backend.app.domain.book_filter import ALL_BOOKS, BookFilter
@@ -237,6 +238,7 @@ def test_create_watch_intent_returns_a_triggered_watch_when_it_fills_at_once() -
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=publisher,
         watch_evaluation_engine=StubWatchEvaluationEngine([inserted]),
@@ -299,6 +301,7 @@ def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=publisher,
         watch_evaluation_engine=StubWatchEvaluationEngine([opportunity]),
@@ -342,6 +345,7 @@ def test_evaluate_for_event_does_not_re_evaluate_a_triggered_watch() -> None:
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=publisher,
         watch_evaluation_engine=StubWatchEvaluationEngine([opportunity]),
@@ -378,6 +382,7 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=publisher,
         watch_evaluation_engine=StubWatchEvaluationEngine([candidate]),
@@ -407,6 +412,7 @@ def test_evaluation_gives_no_opportunity_to_a_watch_retired_meanwhile() -> None:
     publisher = InMemoryWorkflowEventPublisher()
 
     result = WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=publisher,
         watch_evaluation_engine=StubWatchEvaluationEngine([candidate]),
@@ -446,6 +452,7 @@ def _evaluate_counting_quote_reads(
         created_intent=intent, active_intents=[intent], event_status=event_status
     )
     WatchIntentService(
+        book_filter_resolver=AllBooksResolver(),
         unit_of_work_factory=lambda: uow,
         workflow_event_publisher=InMemoryWorkflowEventPublisher(),
         watch_evaluation_engine=StubWatchEvaluationEngine([]),

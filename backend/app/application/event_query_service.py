@@ -2,7 +2,6 @@ import logging
 from datetime import UTC, datetime
 from time import perf_counter
 
-from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.ports import (
     BookFilterResolver,
     EventReadUnitOfWorkFactory,
@@ -34,12 +33,12 @@ class EventQueryService:
         unit_of_work_factory: EventReadUnitOfWorkFactory,
         recommendation_engine: RecommendationEngine,
         sport_catalog: SportCatalog,
-        book_filter_resolver: BookFilterResolver | None = None,
+        book_filter_resolver: BookFilterResolver,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._recommendation_engine = recommendation_engine
         self._sport_catalog = sport_catalog
-        self._book_filter_resolver = book_filter_resolver or AllBooksResolver()
+        self._book_filter_resolver = book_filter_resolver
 
     def list_events(
         self,

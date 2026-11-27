@@ -55,9 +55,8 @@ def build_quota_service(session_factory: DatabaseSessionFactory) -> QuotaService
 
 
 def build_book_filter_service(session_factory: DatabaseSessionFactory) -> BookFilterService:
-    """The allowed-books setting and its resolver (#136). The API and the worker
-    both build it here, so a watch evaluated after a refresh uses the same books
-    as one evaluated on creation."""
+    """The allowed-books setting and its resolver (#136). Stateless: each instance
+    reads the one stored setting, so the API and the worker always agree."""
     return BookFilterService(
         unit_of_work_factory=lambda: SqlAlchemyBookFilterUnitOfWork(session_factory),
     )

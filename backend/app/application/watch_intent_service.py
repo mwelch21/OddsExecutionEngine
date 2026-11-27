@@ -2,7 +2,6 @@ import logging
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
-from backend.app.application.book_filter_service import AllBooksResolver
 from backend.app.application.ports import (
     BookFilterResolver,
     WatchIntentUnitOfWork,
@@ -76,10 +75,10 @@ class WatchIntentService:
         watch_evaluation_engine: WatchEvaluationEngine,
         opportunity_validity_engine: OpportunityValidityEngine,
         opportunity_ttl_minutes: int,
+        book_filter_resolver: BookFilterResolver,
         event_status_engine: EventStatusEngine | None = None,
         watch_window_policy: WatchWindowPolicy | None = None,
         watch_expirer: WatchExpirer | None = None,
-        book_filter_resolver: BookFilterResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
@@ -91,7 +90,7 @@ class WatchIntentService:
         self._watch_expirer = watch_expirer or WatchExpirer()
         # The allowed books (#136), resolved at each evaluation: a changed filter
         # applies from the next one, and nothing is re-evaluated on the change.
-        self._book_filter_resolver = book_filter_resolver or AllBooksResolver()
+        self._book_filter_resolver = book_filter_resolver
 
     def create_watch_intent(
         self,
