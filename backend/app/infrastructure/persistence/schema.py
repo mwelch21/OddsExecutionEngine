@@ -131,6 +131,23 @@ watch_intents_table = Table(
     Column("expires_at", DateTime(timezone=True), nullable=True),
     Column("status", String(length=16), nullable=False, server_default="active"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # No server default: `WatchWindowPolicy` is the only place a default lives (ADR-017).
+    Column("watch_window", String(length=16), nullable=False),
+    Column("expired_reason", String(length=32), nullable=True),
+    CheckConstraint(
+        "watch_window IN ('pre_game', 'live', 'full_game')",
+        name="ck_watch_intents_watch_window",
+    ),
+    CheckConstraint(
+        "expired_reason IN ('ttl', 'event_started', 'event_ended', 'event_cancelled')",
+        name="ck_watch_intents_expired_reason",
+    ),
+    # An expired watch always says why; no other watch carries a reason.
+    CheckConstraint(
+        "(status = 'expired' AND expired_reason IS NOT NULL)"
+        " OR (status <> 'expired' AND expired_reason IS NULL)",
+        name="ck_watch_intents_expired_reason_status",
+    ),
 )
 
 opportunities_table = Table(
@@ -149,6 +166,8 @@ opportunities_table = Table(
     Column("best_price", Integer, nullable=False),
     Column("matching_quotes", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("phase", String(length=16), nullable=False, server_default="pre_game"),
+    CheckConstraint("phase IN ('pre_game', 'live')", name="ck_opportunities_phase"),
     # A watch names exactly one market and is terminal once it fires, so it can
     # produce at most one opportunity, ever.
     UniqueConstraint("watch_intent_id", name="uq_opportunities_watch_intent"),

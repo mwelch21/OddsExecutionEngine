@@ -82,7 +82,7 @@
 
 - `watch_intents.expires_at` is nullable; `NULL` means the watch has no TTL and never expires by time.
 - Expiry is a domain rule, not a query: `WatchIntent.is_expired_at` is the single definition, used by both evaluation and reads so the two cannot disagree.
-- Watches past their TTL are retired to `expired` and emit `WatchIntentExpired` **before** evaluation runs. A watch with a reachable target must never produce an opportunity after its TTL has passed.
+- Watches past their TTL are retired to `expired` with `expired_reason = ttl` and emit `WatchIntentExpired` **before** evaluation runs. A watch with a reachable target must never produce an opportunity after its TTL has passed.
 - Expiry is applied when an event is next evaluated, so a watch whose TTL passed while nothing refreshed is still stored as `active`. Reads project the correct status via `effective_status`; they never write. `?status=expired` therefore also scans stored-active rows, otherwise such a watch would be missing from both the active and expired listings.
 - Creating a watch whose TTL has already passed stores it, but skips the immediate evaluation: it can never fill.
 
@@ -126,6 +126,18 @@
 - Every stored quote carries `phase`, stamped at ingest from the event status: `live` when pulled while the event was live, else `pre_game`. Phase is not a clock; `quoted_at` and `ingested_at` keep their meaning across kickoff.
 - `EventStatusEngine` owns these rules, including what a watch may fill on: nothing on an ended event (logged as `watch_evaluation.skipped`, `reason=event_ended`), nothing on an event stored `upcoming` past its start (`reason=event_status_unobserved`), live lines only on a live event, pre-game lines only on an upcoming one.
 - Status costs no credits. Do not add a `/scores` call for it (#127).
+
+## Watch window (ADR-017)
+
+- Every watch stores `window`: `pre_game`, `live` or `full_game` (`watch_intents.watch_window`). Never derive it on read: a change of default must not change what a stored watch means.
+- `WatchWindowPolicy` (`backend/app/domain/watch_window.py`) is the only place the default lives: an upcoming event (or one never stored) gives `pre_game`, a live one gives `live`. The column has no server default, so every insert names its window.
+- `POST /api/v1/watch-intents` takes an optional `window`. It returns **409** `{code: EVENT_ENDED}` on an ended event, and **409** `{code: WINDOW_CLOSED}` for `pre_game` on a live event. Neither stores anything.
+- `WatchWindowEngine.admits` decides which lines a watch may use: `pre_game` takes pre-game lines, `live` takes live lines, `full_game` takes either. It applies on top of `EventStatusEngine.fillable_quotes`, inside `WatchEvaluationEngine`, never in a service.
+- Lifecycle expiry: `pre_game` watches expire with `event_started` when the event goes live; every active watch expires with `event_ended` when it ends. Ingestion expires them in the transaction that wrote the status, reading the status as stored, so a skipped stale observation closes nothing. Evaluation re-checks the same rule (`WatchWindowEngine.expiry_reason`) as a backstop.
+- A passed TTL is the reason when it applies: its time is known exactly, a status change only when a refresh sees it.
+- Lifecycle expiry stages `WatchIntentExpired` (with `window` and `expired_reason`) and no public event. It never notifies.
+- `event_cancelled` is a defined reason that nothing writes until a cancel signal exists (#127).
+- Each opportunity stores `phase`, the phase of its best book's line. `opportunity.identified.v1` carries it as the optional `phase` (additive, so v1 stays), and the notifier titles a live one `LIVE · <matchup>`.
 
 ## The line board is ranked server-side
 

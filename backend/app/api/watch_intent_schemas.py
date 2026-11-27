@@ -4,11 +4,14 @@ from pydantic import BaseModel, Field, model_validator
 
 from backend.app.api.opportunity_schemas import MatchingQuoteResponse
 from backend.app.domain.models import (
+    ExpiredReason,
+    LinePhase,
     MarketType,
     Opportunity,
     WatchIntent,
     WatchIntentCreationResult,
     WatchStatus,
+    WatchWindow,
 )
 
 
@@ -19,6 +22,9 @@ class CreateWatchIntentRequest(BaseModel):
     line: float | None = None
     target_price: int
     expires_at: datetime | None = None
+    # Omit to let the server pick from the event's status: upcoming gives
+    # pre_game, live gives live (ADR-017).
+    window: WatchWindow | None = None
 
     @model_validator(mode="after")
     def validate_market_fields(self) -> "CreateWatchIntentRequest":
@@ -43,6 +49,9 @@ class WatchIntentResponse(BaseModel):
     line: float | None
     expires_at: datetime | None
     status: WatchStatus
+    window: WatchWindow
+    # Set only when status is expired.
+    expired_reason: ExpiredReason | None
     created_at: datetime | None
 
     @classmethod
@@ -56,6 +65,8 @@ class WatchIntentResponse(BaseModel):
             line=intent.line,
             expires_at=intent.expires_at,
             status=intent.status,
+            window=intent.window,
+            expired_reason=intent.expired_reason,
             created_at=intent.created_at,
         )
 
@@ -72,6 +83,7 @@ class IdentifiedOpportunityResponse(BaseModel):
     best_sportsbook: str
     best_price: int
     matching_quotes: list[MatchingQuoteResponse]
+    phase: LinePhase
 
     @classmethod
     def from_domain(cls, opportunity: Opportunity) -> "IdentifiedOpportunityResponse":
@@ -83,6 +95,7 @@ class IdentifiedOpportunityResponse(BaseModel):
                 MatchingQuoteResponse(sportsbook=quote.sportsbook, price=quote.price)
                 for quote in opportunity.matching_quotes
             ],
+            phase=opportunity.phase,
         )
 
 

@@ -18,6 +18,7 @@ from backend.app.domain.models import (
     OrderIntent,
     Quote,
     WatchIntent,
+    WatchWindow,
 )
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.quote_matching_engine import QuoteMatchingEngine
@@ -288,6 +289,7 @@ def test_recommendation_service_logs_success_and_failure(
 
 def test_build_watch_intent_created_event_contains_deterministic_payload() -> None:
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.SPREAD,
@@ -306,12 +308,14 @@ def test_build_watch_intent_created_event_contains_deterministic_payload() -> No
         "market_type": "spread",
         "selection": "knicks",
         "target_price": -110,
+        "window": "pre_game",
         "line": 5.5,
     }
 
 
 def test_build_watch_intent_cancelled_event_contains_deterministic_payload() -> None:
     intent = WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="wi-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,
@@ -369,6 +373,7 @@ def test_build_opportunity_identified_event_contains_deterministic_payload() -> 
         ],
         "target_price": 120,
         "line": None,
+        "phase": "pre_game",
     }
 
 

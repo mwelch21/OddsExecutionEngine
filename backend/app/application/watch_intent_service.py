@@ -23,11 +23,14 @@ from backend.app.domain.models import (
     WatchIntent,
     WatchIntentCreationResult,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import build_opportunity_identified_public_event
+from backend.app.domain.watch_window import WatchWindowPolicy
 from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.watch_evaluation_engine import WatchEvaluationEngine
+from backend.app.engines.watch_window_engine import WatchWindowEngine
 
 
 class WatchIntentAlreadyTriggeredError(Exception):
@@ -49,6 +52,8 @@ class WatchIntentService:
         opportunity_validity_engine: OpportunityValidityEngine,
         opportunity_ttl_minutes: int,
         event_status_engine: EventStatusEngine | None = None,
+        watch_window_policy: WatchWindowPolicy | None = None,
+        watch_window_engine: WatchWindowEngine | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_event_publisher = workflow_event_publisher
@@ -56,6 +61,8 @@ class WatchIntentService:
         self._opportunity_validity_engine = opportunity_validity_engine
         self._opportunity_ttl_minutes = opportunity_ttl_minutes
         self._event_status_engine = event_status_engine or EventStatusEngine()
+        self._watch_window_policy = watch_window_policy or WatchWindowPolicy()
+        self._watch_window_engine = watch_window_engine or WatchWindowEngine()
 
     def create_watch_intent(
         self,
@@ -65,7 +72,14 @@ class WatchIntentService:
         target_price: int,
         line: float | None = None,
         expires_at: datetime | None = None,
+        window: WatchWindow | None = None,
     ) -> WatchIntentCreationResult:
+        """Create a watch and evaluate it at once.
+
+        Without a `window`, `WatchWindowPolicy` picks one from the event's status.
+        Raises `WatchWindowNotAllowedError` for an ended event, or a `pre_game`
+        window on a live one; nothing is stored then.
+        """
         started_at = perf_counter()
         inserted_opportunities: list[Opportunity] = []
 
@@ -81,12 +95,15 @@ class WatchIntentService:
 
         try:
             with self._unit_of_work_factory() as uow:
+                lifecycle = uow.get_event_lifecycle(event_id)
+                resolved_window = self._watch_window_policy.resolve(window, lifecycle)
                 intent = uow.create_watch_intent(
                     event_id=event_id,
                     market_type=market_type,
                     selection=selection,
                     target_price=target_price,
                     line=line,
+                    window=resolved_window,
                     expires_at=expires_at,
                 )
 
@@ -103,7 +120,7 @@ class WatchIntentService:
                 now = datetime.now(UTC)
                 if not intent.is_expired_at(now):
                     fillable = self._event_status_engine.fillable_quotes(
-                        uow.get_event_lifecycle(event_id), uow.list_quotes(event_id), now
+                        lifecycle, uow.list_quotes(event_id), now
                     )
                     quotes = fillable.quotes
                     if fillable.skipped_reason is not None:
@@ -342,54 +359,55 @@ class WatchIntentService:
         try:
             with self._unit_of_work_factory() as uow:
                 now = datetime.now(UTC)
-                # Live events evaluate on their live lines; ended ones produce
-                # nothing (#38). Checked before any quote is read.
                 lifecycle = uow.get_event_lifecycle(event_id)
-                skipped = self._event_status_engine.skip_reason(lifecycle, now)
-                if skipped is not None:
-                    self._logger.info(
-                        "watch_evaluation.skipped",
-                        extra={"event_id": event_id, "reason": skipped.value},
-                    )
-                    return []
-
                 intents = uow.list_active_watch_intents(event_id)
 
-                # Watches past their TTL are retired before evaluation and never
-                # evaluated: a reachable target must not fill an expired watch.
-                expired = [intent for intent in intents if intent.is_expired_at(now)]
-                for retired in uow.expire_watch_intents([i.id for i in expired]):
+                # Retired before evaluation, never evaluated: a passed TTL, or an
+                # event status that closed the window (ADR-017). Ingestion expires
+                # on the status write; this is the backstop for an event nobody
+                # refreshed since.
+                expiring = self._watch_window_engine.expiry_reasons(
+                    intents,
+                    {} if lifecycle is None else {event_id: lifecycle.status},
+                    now,
+                )
+                for retired in uow.expire_watch_intents(expiring):
                     uow.stage_event(
                         build_watch_intent_expired_event(
                             watch_intent_id=retired.id,
                             intent=retired,
                         )
                     )
+                armed = [intent for intent in intents if intent.id not in expiring]
 
-                live = [intent for intent in intents if not intent.is_expired_at(now)]
-                # Quotes are read only when an unexpired watch could use them.
+                # Live events evaluate on their live lines; ended ones produce
+                # nothing (#38). Checked before any quote is read.
+                skipped = self._event_status_engine.skip_reason(lifecycle, now)
+                if skipped is not None:
+                    self._logger.info(
+                        "watch_evaluation.skipped",
+                        extra={"event_id": event_id, "reason": skipped.value},
+                    )
+                    armed = []
+
+                # Quotes are read only when an armed watch could use them.
                 quotes = (
                     self._event_status_engine.fillable_quotes(
                         lifecycle, uow.list_quotes(event_id), now
                     ).quotes
-                    if live
+                    if armed
                     else []
                 )
-                evaluated: list[Opportunity] = []
 
-                if live and quotes:
-                    market_id_lookup = uow.get_market_id_lookup(event_id)
-                    evaluated = self._watch_evaluation_engine.evaluate(
-                        watch_intents=live,
+                if armed and quotes:
+                    new_opportunities = self._watch_evaluation_engine.evaluate(
+                        watch_intents=armed,
                         quotes=quotes,
-                        market_id_lookup=market_id_lookup,
+                        market_id_lookup=uow.get_market_id_lookup(event_id),
                     )
-
-                new_opportunities = evaluated
-
-                if new_opportunities:
-                    inserted_opportunities = uow.create_opportunities(new_opportunities)
-                    self._notify_and_retire(uow, inserted_opportunities)
+                    if new_opportunities:
+                        inserted_opportunities = uow.create_opportunities(new_opportunities)
+                        self._notify_and_retire(uow, inserted_opportunities)
 
             if uow.committed_events:
                 self._workflow_event_publisher.publish(uow.committed_events)

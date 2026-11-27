@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from backend.app.domain.models import MarketType, WatchIntent, WatchStatus
+from backend.app.domain.models import MarketType, WatchIntent, WatchStatus, WatchWindow
 
 NOW = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
 
@@ -11,6 +11,7 @@ def _watch(
     status: WatchStatus = WatchStatus.ACTIVE,
 ) -> WatchIntent:
     return WatchIntent(
+        window=WatchWindow.PRE_GAME,
         id="watch-1",
         event_id="event-1",
         market_type=MarketType.MONEYLINE,

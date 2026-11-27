@@ -83,6 +83,10 @@
           "type": "string",
           "format": "date-time",
           "description": "When the opportunity stops being valid (created_at + the opportunity TTL). Past it, drop the event rather than act on it."
+        },
+        "phase": {
+          "enum": ["pre_game", "live"],
+          "description": "Optional, added within v1 (#10). The phase of the best book's line: pre_game, or live while the event is under way. A live price is a different bet from a pre-game one. Absent reads as pre_game."
         }
       }
     }

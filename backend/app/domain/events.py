@@ -5,6 +5,7 @@ from uuid import uuid4
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import (
     ExecutionRecommendation,
+    ExpiredReason,
     MatchingQuote,
     Opportunity,
     OrderIntent,
@@ -202,6 +203,7 @@ class WatchIntentCreatedPayload(DomainModel):
     market_type: str
     selection: str
     target_price: int
+    window: str
     line: float | None = None
 
 
@@ -221,6 +223,7 @@ class OpportunityIdentifiedPayload(DomainModel):
     matching_quotes: list[MatchingQuote]
     target_price: int
     line: float | None = None
+    phase: str = "pre_game"
 
 
 class WatchIntentCreated(WorkflowEvent):
@@ -229,8 +232,12 @@ class WatchIntentCreated(WorkflowEvent):
 
 
 class WatchIntentExpiredPayload(DomainModel):
+    """A watch expired. Lifecycle expiry sends no notification (ADR-017)."""
+
     watch_intent_id: str
     event_id: str
+    window: str
+    expired_reason: str
     expires_at: datetime | None = None
 
 
@@ -283,6 +290,7 @@ def build_watch_intent_created_event(
             market_type=intent.market_type.value,
             selection=intent.selection,
             target_price=intent.target_price,
+            window=intent.window.value,
             line=intent.line,
         ),
     )
@@ -319,9 +327,17 @@ def build_watch_intent_expired_event(
         payload=WatchIntentExpiredPayload(
             watch_intent_id=watch_intent_id,
             event_id=intent.event_id,
+            window=intent.window.value,
+            expired_reason=_require_expired_reason(intent).value,
             expires_at=intent.expires_at,
         ),
     )
+
+
+def _require_expired_reason(intent: WatchIntent) -> ExpiredReason:
+    if intent.expired_reason is None:
+        raise ValueError(f"Watch intent {intent.id} expired without a reason.")
+    return intent.expired_reason
 
 
 def build_opportunity_identified_event(
@@ -344,6 +360,7 @@ def build_opportunity_identified_event(
             matching_quotes=list(opportunity.matching_quotes),
             target_price=opportunity.target_price,
             line=opportunity.line,
+            phase=opportunity.phase.value,
         ),
     )
 

@@ -11,6 +11,7 @@ from backend.app.application.watch_intent_service import (
     WatchIntentService,
 )
 from backend.app.domain.models import WatchStatus
+from backend.app.domain.watch_window import WatchWindowNotAllowedError
 
 EVENT_ID_QUERY = Query(default=None)
 STATUS_QUERY = Query(default=None, alias="status")
@@ -27,14 +28,21 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
     def create_watch_intent(
         request: CreateWatchIntentRequest,
     ) -> CreateWatchIntentResponse:
-        result = service.create_watch_intent(
-            event_id=request.event_id,
-            market_type=request.market_type,
-            selection=request.selection,
-            target_price=request.target_price,
-            line=request.line,
-            expires_at=request.expires_at,
-        )
+        try:
+            result = service.create_watch_intent(
+                event_id=request.event_id,
+                market_type=request.market_type,
+                selection=request.selection,
+                target_price=request.target_price,
+                line=request.line,
+                expires_at=request.expires_at,
+                window=request.window,
+            )
+        except WatchWindowNotAllowedError as err:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": err.refusal.value, "message": str(err)},
+            ) from err
         return CreateWatchIntentResponse.from_creation(result)
 
     @router.get(

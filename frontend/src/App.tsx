@@ -18,7 +18,8 @@ import {
   type Opportunity,
   type Recommendation,
   type SupportedSport,
-  type WatchIntent
+  type WatchIntent,
+  type WatchWindow
 } from "./lib/api";
 import {
   canonicalizeLocation,
@@ -28,7 +29,14 @@ import {
   type AdminTab,
   type Route
 } from "./lib/deepLink";
-import { formatAmerican, formatLine, marketLabel, matchupLabel } from "./lib/format";
+import {
+  WATCH_WINDOWS,
+  formatAmerican,
+  formatLine,
+  marketLabel,
+  matchupLabel,
+  windowLabel
+} from "./lib/format";
 import { AdminView } from "./components/admin/AdminView";
 import { AttentionPill } from "./components/admin/systems/AttentionPill";
 import { invalidateSystemStatus } from "./components/admin/systems/systemStatus";
@@ -71,6 +79,7 @@ export function App() {
   const [opportunityNote, setOpportunityNote] = useState<string | null>(null);
 
   const [watches, setWatches] = useState<WatchIntent[]>([]);
+  const [expiredWatches, setExpiredWatches] = useState<WatchIntent[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [message, setMessage] = useState("Ready");
 
@@ -83,6 +92,8 @@ export function App() {
   const [watchDraft, setWatchDraft] = useState<LineBoardMarket | null>(null);
   const [watchTarget, setWatchTarget] = useState("");
   const [watchCheck, setWatchCheck] = useState<Recommendation | null>(null);
+  // Empty means "let the server pick from the event's status" (ADR-017).
+  const [watchWindow, setWatchWindow] = useState<WatchWindow | "">("");
 
   useEffect(() => {
     let cancelled = false;
@@ -128,12 +139,14 @@ export function App() {
   const loadBoard = useCallback(async (eventId: string) => {
     setBoardLoading(true);
     try {
-      const [boardResponse, watchResponse] = await Promise.all([
+      const [boardResponse, watchResponse, expiredResponse] = await Promise.all([
         getLineBoard(eventId),
-        listWatches(eventId)
+        listWatches(eventId),
+        listWatches(eventId, "expired")
       ]);
       setBoard(boardResponse);
       setWatches(watchResponse.watch_intents);
+      setExpiredWatches(expiredResponse.watch_intents);
       setMessage(`${boardResponse.markets.length} markets on the board`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load line board");
@@ -251,7 +264,9 @@ export function App() {
         market_type: market.market_type,
         selection: market.selection,
         line: market.line,
-        target_price: targetPrice
+        target_price: targetPrice,
+        // Sent only when picked: the server's policy owns the default.
+        ...(watchWindow ? { window: watchWindow } : {})
       });
       const watchResponse = await listWatches(selectedEventId);
       setWatches(watchResponse.watch_intents);
@@ -279,6 +294,7 @@ export function App() {
     setWatchDraft(market);
     setWatchTarget(String(market.best_price ?? 0));
     setWatchCheck(null);
+    setWatchWindow("");
   }
 
   /** Free, DB-backed: answers "is this fillable right now" before arming a watch. */
@@ -414,7 +430,11 @@ export function App() {
 
             <aside className="side-rail">
               {selectedEventId && (
-                <WatchPanel watches={watches} onCancel={(id) => void handleCancelWatch(id)} />
+                <WatchPanel
+                  watches={watches}
+                  expired={expiredWatches}
+                  onCancel={(id) => void handleCancelWatch(id)}
+                />
               )}
               <ExecutionNote />
             </aside>
@@ -461,6 +481,20 @@ export function App() {
                 </label>
               </div>
             </div>
+            <label className="select-shell watch-window-select">
+              Window
+              <select
+                value={watchWindow}
+                onChange={(event) => setWatchWindow(event.target.value as WatchWindow | "")}
+              >
+                <option value="">Default (from event status)</option>
+                {WATCH_WINDOWS.map((option) => (
+                  <option key={option} value={option}>
+                    {windowLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
             {watchCheck && (
               <p className={watchCheck.fillable ? "fill-note good" : "fill-note"}>
                 {watchCheck.fillable

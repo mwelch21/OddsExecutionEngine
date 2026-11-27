@@ -17,6 +17,7 @@ from backend.app.domain.models import (
     EventStatus,
     EventSummary,
     ExecutionRecommendation,
+    ExpiredReason,
     MarketQuotes,
     MarketType,
     Opportunity,
@@ -27,6 +28,7 @@ from backend.app.domain.models import (
     SupportedSport,
     WatchIntent,
     WatchStatus,
+    WatchWindow,
 )
 from backend.app.domain.public_events import OpportunityEventContext, PublicEvent
 from backend.app.domain.quota import QuotaObservation, QuotaReading
@@ -177,6 +179,18 @@ class QuoteIngestionUnitOfWork(Protocol):
         """Skips each event whose stored observation is newer than `observed_at`."""
         ...
 
+    def get_event_statuses(self, event_ids: list[str]) -> dict[str, EventStatus]:
+        """The stored status of each named event that exists, by external id."""
+        ...
+
+    def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:
+        """Stored-active watches on the named events."""
+        ...
+
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        """Expire each still-active watch with its reason, in this transaction."""
+        ...
+
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None: ...
 
     def stage_event(self, event: WorkflowEvent) -> None: ...
@@ -242,6 +256,7 @@ class WatchIntentUnitOfWork(Protocol):
         selection: str,
         target_price: int,
         line: float | None,
+        window: WatchWindow,
         expires_at: datetime | None = None,
     ) -> WatchIntent: ...
 
@@ -249,7 +264,9 @@ class WatchIntentUnitOfWork(Protocol):
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
 
-    def expire_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        """Expire each still-active watch with its reason; return the ones expired."""
+        ...
 
     def get_watch_intent(self, watch_intent_id: str) -> WatchIntent | None: ...
 

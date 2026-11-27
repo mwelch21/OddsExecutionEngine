@@ -1,4 +1,10 @@
-import type { EventQuoteFreshness, EventSummary, LineBoardMarket } from "./api";
+import type {
+  EventQuoteFreshness,
+  EventSummary,
+  ExpiredReason,
+  LineBoardMarket,
+  WatchWindow
+} from "./api";
 
 export function formatAmerican(price?: number | null) {
   if (price === null || price === undefined) return "--";
@@ -108,4 +114,29 @@ export function summarizeFreshness(
     tone: pulledAge === null ? "neutral" : "good",
     unknownNote
   };
+}
+
+export const WATCH_WINDOWS: WatchWindow[] = ["pre_game", "live", "full_game"];
+
+const WINDOW_LABELS: Record<WatchWindow, string> = {
+  pre_game: "Pre-game",
+  live: "Live",
+  full_game: "Full game"
+};
+
+/** A watch window as a reader says it: "Pre-game", "Live", "Full game". */
+export function windowLabel(value: WatchWindow): string {
+  return WINDOW_LABELS[value];
+}
+
+const EXPIRED_REASON_LABELS: Record<ExpiredReason, string> = {
+  ttl: "Time limit passed",
+  event_started: "Event started",
+  event_ended: "Event ended",
+  event_cancelled: "Event cancelled"
+};
+
+/** Why a watch expired, in words. */
+export function expiredReasonLabel(reason: ExpiredReason | null): string {
+  return reason ? EXPIRED_REASON_LABELS[reason] : "Expired";
 }

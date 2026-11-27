@@ -192,6 +192,7 @@ class Harness:
                     target_price=900,
                     expires_at=expires_at,
                     status="active",
+                    watch_window="pre_game",
                 )
             )
             session.commit()

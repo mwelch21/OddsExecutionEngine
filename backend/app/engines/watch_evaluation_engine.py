@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from backend.app.domain.models import (
+    LinePhase,
     MarketType,
     MatchingQuote,
     Opportunity,
@@ -10,6 +11,7 @@ from backend.app.domain.models import (
 )
 from backend.app.engines.price_comparison_engine import PriceComparisonService
 from backend.app.engines.recommendation_engine import RecommendationEngine
+from backend.app.engines.watch_window_engine import WatchWindowEngine
 
 
 def _market_lookup_key(
@@ -26,9 +28,11 @@ class WatchEvaluationEngine:
         self,
         price_comparison_service: PriceComparisonService,
         recommendation_engine: RecommendationEngine,
+        watch_window_engine: WatchWindowEngine | None = None,
     ) -> None:
         self._price_comparison = price_comparison_service
         self._recommendation_engine = recommendation_engine
+        self._watch_window = watch_window_engine or WatchWindowEngine()
 
     def evaluate(
         self,
@@ -46,6 +50,10 @@ class WatchEvaluationEngine:
         No deduplication happens here: a watch is terminal once it fires, so a
         triggered watch never reaches this engine again. The unique constraint on
         `opportunities.watch_intent_id` is the real guard.
+
+        Each watch fills only on lines its window admits (ADR-017): `pre_game` on
+        pre-game lines, `live` on live lines, `full_game` on either. The caller
+        passes the quotes the event's status leaves fillable (#38).
 
         Args:
             watch_intents: Watch intents to evaluate. Non-active ones are skipped.
@@ -66,6 +74,7 @@ class WatchEvaluationEngine:
                 and quote.market_type == intent.market_type
                 and quote.selection == intent.selection
                 and quote.line == intent.line
+                and self._watch_window.admits(intent.window, quote.phase)
                 and self._price_comparison.is_price_fillable(
                     quote.price, intent.target_price
                 )
@@ -103,6 +112,7 @@ class WatchEvaluationEngine:
                         for quote in ranked
                     ],
                     line=intent.line,
+                    phase=best.phase or LinePhase.PRE_GAME,
                 )
             )
 

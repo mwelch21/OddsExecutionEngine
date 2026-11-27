@@ -13,12 +13,14 @@ from backend.app.domain.models import (
     EventObservation,
     EventSport,
     EventStatus,
+    ExpiredReason,
     MarketType,
     PersistedQuote,
     ProviderFetchReport,
     Quote,
     QuoteRefreshPersistenceResult,
     SupportedSport,
+    WatchIntent,
 )
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.infrastructure.publishers.in_memory_publisher import (
@@ -117,6 +119,15 @@ class RecordingQuoteIngestionUnitOfWork:
         self, event_ids: list[str], status: EventStatus, observed_at: datetime
     ) -> None:
         pass
+
+    def get_event_statuses(self, event_ids: list[str]) -> dict[str, EventStatus]:
+        return {}
+
+    def list_active_watch_intents(self, event_ids: list[str]) -> list[WatchIntent]:
+        return []
+
+    def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
+        return []
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         self.sport_refreshes.append(sport_key)

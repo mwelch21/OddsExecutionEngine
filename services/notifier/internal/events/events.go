@@ -62,7 +62,16 @@ type OpportunityIdentifiedData struct {
 		Price      int    `json:"price"`
 	} `json:"best"`
 	ExpiresAt *time.Time `json:"expires_at"`
+	// Phase is "pre_game" or "live"; optional within v1, absent reads as pre_game.
+	Phase string `json:"phase"`
 }
+
+// PhaseLive marks an opportunity that filled on a live line.
+const PhaseLive = "live"
+
+// livePrefix leads the title of a live opportunity: a live price is a
+// different bet from a pre-game one, so the reader must see which it is.
+const livePrefix = "LIVE · "
 
 // QuotaWarningData is the data of quota.warning.v1.
 type QuotaWarningData struct {
@@ -168,13 +177,16 @@ func Render(event CloudEvent, destinationLabel, appOrigin string) (Notification,
 	}
 }
 
-// renderOpportunity: title is the matchup; body is
+// renderOpportunity: title is the matchup, led by "LIVE · " for a live line; body is
 // "<selection> <best price> @ <book> · target <target price> · fillable".
 // The link is the app's line board route with the opportunity pinned (ADR-018).
 func renderOpportunity(data OpportunityIdentifiedData, appOrigin string) Notification {
 	title := "Opportunity"
 	if data.Event.Away != nil && data.Event.Home != nil {
 		title = *data.Event.Away + " @ " + *data.Event.Home
+	}
+	if data.Phase == PhaseLive {
+		title = livePrefix + title
 	}
 
 	selection := displayName(data.Selection)

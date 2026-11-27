@@ -178,15 +178,45 @@ class WatchStatus(StrEnum):
     TRIGGERED = "triggered"
 
 
+class WatchWindow(StrEnum):
+    """Which part of an event's life a watch covers (ADR-017). Always stored.
+
+    The same target price means a different bet before the game and during it,
+    so a watch says which lines it may fill on:
+
+    - `pre_game`: pre-game lines only; expires when the event starts.
+    - `live`: live lines only; expires when the event ends.
+    - `full_game`: either; expires when the event ends.
+    """
+
+    PRE_GAME = "pre_game"
+    LIVE = "live"
+    FULL_GAME = "full_game"
+
+
+class ExpiredReason(StrEnum):
+    """Why a watch expired (ADR-017)."""
+
+    TTL = "ttl"
+    EVENT_STARTED = "event_started"
+    EVENT_ENDED = "event_ended"
+    # Defined for the contract; nothing writes it until a cancel signal exists (#127).
+    EVENT_CANCELLED = "event_cancelled"
+
+
 class WatchIntent(DomainModel):
     id: str
     event_id: str
     market_type: MarketType
     selection: str
     target_price: int
+    # No default here: `WatchWindowPolicy` is the only place a default lives.
+    window: WatchWindow
     line: float | None = None
     expires_at: datetime | None = None
     status: WatchStatus = WatchStatus.ACTIVE
+    # Set only on an expired watch.
+    expired_reason: ExpiredReason | None = None
     created_at: datetime | None = None
 
     def is_expired_at(self, now: datetime) -> bool:
@@ -217,7 +247,8 @@ class WatchIntent(DomainModel):
         if status is self.status:
             return self
 
-        return self.model_copy(update={"status": status})
+        # Only a passed TTL changes status on read; lifecycle expiry is stored.
+        return self.model_copy(update={"status": status, "expired_reason": ExpiredReason.TTL})
 
 
 class MatchingQuote(DomainModel):
@@ -246,6 +277,8 @@ class Opportunity(DomainModel):
     best_price: int
     matching_quotes: list[MatchingQuote]
     line: float | None = None
+    # The phase of the best book's line: a live opportunity is a different bet.
+    phase: LinePhase = LinePhase.PRE_GAME
     created_at: datetime | None = None
 
 
