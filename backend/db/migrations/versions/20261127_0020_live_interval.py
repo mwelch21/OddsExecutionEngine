@@ -1,16 +1,14 @@
 """Auto-Refresh live interval (#128, ADR-016)
 
 `auto_refresh_settings.live_interval_minutes` is the cooldown of a sport with a
-candidate watch on a live event. It defaults to 5, the same as the upcoming
-interval, so nothing refreshes faster until the operator asks. The existing
-row, if any, gets 5 through the server default. Held to 1-60 like
-`interval_minutes`.
+candidate watch on a live event. It defaults to 5. The existing row, if any,
+gets 5 through the server default. Held to 1-60 like `interval_minutes`.
 
 Rollout effect: an install whose upcoming interval is above 5 gets a live
-interval of 5 straight away, so a sport with a watch on a live event refreshes
-faster than before the upgrade (for example every 5 minutes instead of every
-15) until the operator moves the Live slider. Deliberate: the default stays a
-fixed 5, not a copy of the upcoming interval.
+interval of 5 straight away. A sport with a watch on a live event then has a
+5-minute cooldown, shorter than the configured upcoming cooldown (for example
+5 minutes against an upcoming 15), until the operator moves the Live slider.
+Deliberate: the default stays a fixed 5, not a copy of the upcoming interval.
 """
 
 import sqlalchemy as sa
