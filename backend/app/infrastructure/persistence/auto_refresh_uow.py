@@ -63,6 +63,7 @@ class SqlAlchemyAutoRefreshUnitOfWork:
             interval_minutes=row["interval_minutes"],
             live_interval_minutes=row["live_interval_minutes"],
             quota_floor=row["quota_floor"],
+            sport_focus=tuple(row["sport_focus"] or ()),
         )
 
     def save_settings(self, settings: AutoRefreshSettings) -> AutoRefreshSettings:
@@ -75,6 +76,7 @@ class SqlAlchemyAutoRefreshUnitOfWork:
                 "interval_minutes": settings.interval_minutes,
                 "live_interval_minutes": settings.live_interval_minutes,
                 "quota_floor": settings.quota_floor,
+                "sport_focus": list(settings.sport_focus),
                 "updated_at": datetime.now(UTC),
             },
             key_columns=["id"],

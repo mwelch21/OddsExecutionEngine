@@ -178,6 +178,8 @@ export type SportRefreshResult = {
 export type EventQuery = {
   league?: string | null;
   sport?: string | null;
+  /** Catalog sport keys (#132); an event in any of them matches. Empty: no filter. */
+  sportKeys?: string[];
   status?: EventListStatus;
   page?: number;
   pageSize?: number;
@@ -188,6 +190,7 @@ export async function listEvents(query: EventQuery = {}) {
   const params = new URLSearchParams();
   if (query.league) params.set("league", query.league);
   if (query.sport) params.set("sport", query.sport);
+  for (const key of query.sportKeys ?? []) params.append("sport_key", key);
   if (query.status) params.set("status", query.status);
   params.set("page", String(query.page ?? 1));
   params.set("page_size", String(query.pageSize ?? 25));

@@ -5,8 +5,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import insert, update
+from sqlalchemy import insert, text, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.application.auto_refresh_service import AutoRefreshService
@@ -19,7 +20,13 @@ from backend.app.domain.auto_refresh import (
     RefreshOutcomeStatus,
     WatchedEvent,
 )
-from backend.app.domain.models import EventStatus, ProviderFetchReport, Quote, WatchWindow
+from backend.app.domain.models import (
+    EventStatus,
+    ProviderFetchReport,
+    Quote,
+    SupportedSport,
+    WatchWindow,
+)
 from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
 from backend.app.engines.auto_refresh_candidate_engine import AutoRefreshCandidateEngine
@@ -30,6 +37,7 @@ from backend.app.infrastructure.persistence.auto_refresh_uow import (
     SqlAlchemyAutoRefreshUnitOfWork,
 )
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
+from backend.app.infrastructure.persistence.migrations import _build_alembic_config
 from backend.app.infrastructure.persistence.quota_uow import SqlAlchemyQuotaUnitOfWork
 from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
@@ -227,6 +235,8 @@ class CountingProvider(InMemoryQuoteProvider):
         self.quota_recorder: QuotaService | None = None
         self.credits = 500
         self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        # Catalog keys beyond the fixture's one sport, for a focus to name (#132).
+        self.extra_sports: list[str] = []
 
     def list_quotes_for_sport(
         self, sport: str
@@ -260,7 +270,8 @@ class CountingProvider(InMemoryQuoteProvider):
 
     def list_supported_sports(self):  # type: ignore[no-untyped-def]
         self.catalog_reads += 1
-        return super().list_supported_sports()
+        extra = [SupportedSport(key=key, sport=key, league=None) for key in self.extra_sports]
+        return [*super().list_supported_sports(), *extra]
 
 
 class Clock:
@@ -633,6 +644,9 @@ def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: st
         "interval_minutes": 5,
         "live_interval_minutes": 5,
         "quota_floor": None,
+        "sport_focus": [],
+        "candidate_sports": [],
+        "excluded_sports": [],
         "last_outcome": None,
         "paused": False,
         "out_of_credits": False,
@@ -836,3 +850,173 @@ def test_postgres_advisory_lock_admits_one_cycle_at_a_time() -> None:
     finally:
         other_factory.engine.dispose()
         session_factory.engine.dispose()
+
+
+# --- sport focus (#132) ------------------------------------------------------
+
+
+def test_an_empty_focus_keeps_every_candidate() -> None:
+    result = AutoRefreshCandidateEngine().focus(["soccer_epl", "basketball_nba"], ())
+
+    assert result.kept == ["basketball_nba", "soccer_epl"]
+    assert result.excluded == []
+
+
+def test_a_focus_drops_candidates_outside_it_even_with_qualifying_watches() -> None:
+    result = AutoRefreshCandidateEngine().focus(
+        ["basketball_nba", "soccer_epl", "icehockey_nhl"], ("basketball_nba", "icehockey_nhl")
+    )
+
+    assert result.kept == ["basketball_nba", "icehockey_nhl"]
+    assert result.excluded == ["soccer_epl"]
+
+
+def test_a_focus_never_adds_a_sport_without_a_qualifying_watch() -> None:
+    result = AutoRefreshCandidateEngine().focus(["basketball_nba"], ("americanfootball_nfl",))
+
+    assert result.kept == []
+    assert result.excluded == ["basketball_nba"]
+
+
+def test_the_stored_focus_is_sorted_and_de_duplicated() -> None:
+    settings = AutoRefreshSettings(sport_focus=("soccer_epl", "basketball_nba", "soccer_epl"))
+
+    assert settings.sport_focus == ("basketball_nba", "soccer_epl")
+
+
+def test_a_focus_outside_the_watched_sport_stops_its_auto_refresh(harness: Harness) -> None:
+    # Any catalog key other than the watched one; the fixture catalog has one sport.
+    harness.provider.extra_sports = ["soccer_epl"]
+    harness.service.update_settings(AutoRefreshSettings(enabled=True, sport_focus=("soccer_epl",)))
+    harness.add_watch()
+
+    report = harness.service.run_cycle()
+
+    assert report.candidate_sports == []
+    assert report.excluded_sports == [FIXTURE_SPORT_KEY]
+    assert report.refreshed == []
+    assert harness.provider.sport_fetches == []
+
+
+def test_a_focus_naming_the_watched_sport_still_refreshes_it(harness: Harness) -> None:
+    harness.service.update_settings(
+        AutoRefreshSettings(enabled=True, sport_focus=(FIXTURE_SPORT_KEY,))
+    )
+    harness.add_watch()
+
+    report = harness.service.run_cycle()
+
+    assert report.candidate_sports == [FIXTURE_SPORT_KEY]
+    assert [outcome.sport for outcome in report.refreshed] == [FIXTURE_SPORT_KEY]
+
+
+def test_status_reports_candidates_the_focus_excludes_without_calling_the_provider(
+    harness: Harness,
+) -> None:
+    harness.provider.extra_sports = ["soccer_epl"]
+    harness.service.update_settings(AutoRefreshSettings(enabled=True, sport_focus=("soccer_epl",)))
+    harness.add_watch()
+
+    status = harness.service.get_status()
+
+    assert status.candidate_sports == [FIXTURE_SPORT_KEY]
+    assert status.excluded_sports == [FIXTURE_SPORT_KEY]
+    assert harness.provider.sport_fetches == []
+    assert harness.provider.balance_checks == 0
+
+
+def test_a_focus_does_not_limit_a_manual_refresh(harness: Harness) -> None:
+    harness.provider.extra_sports = ["soccer_epl"]
+    harness.service.update_settings(AutoRefreshSettings(enabled=True, sport_focus=("soccer_epl",)))
+
+    refreshed = harness.ingestion.refresh_sport(FIXTURE_SPORT_KEY)
+
+    assert refreshed.summaries
+
+
+def test_sport_focus_round_trips_sorted_and_an_omitted_focus_is_empty(
+    sqlite_database_url: str,
+) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=True)
+    client = _client(sqlite_database_url)
+
+    put = client.put(
+        "/api/v1/admin/auto-refresh",
+        json={
+            "enabled": False,
+            "interval_minutes": 5,
+            "sport_focus": [FIXTURE_SPORT_KEY, FIXTURE_SPORT_KEY],
+        },
+    )
+    reread = client.get("/api/v1/admin/auto-refresh").json()
+    cleared = client.put(
+        "/api/v1/admin/auto-refresh", json={"enabled": False, "interval_minutes": 5}
+    ).json()
+
+    assert put.status_code == 200
+    assert reread["sport_focus"] == [FIXTURE_SPORT_KEY]
+    assert cleared["sport_focus"] == []
+
+
+def test_a_focus_key_outside_the_catalog_is_rejected_and_nothing_is_saved(
+    sqlite_database_url: str,
+) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=True)
+    client = _client(sqlite_database_url)
+
+    response = client.put(
+        "/api/v1/admin/auto-refresh",
+        json={"enabled": True, "interval_minutes": 5, "sport_focus": ["curling_wcf"]},
+    )
+
+    assert response.status_code == 422
+    assert "curling_wcf" in response.json()["detail"]
+    body = client.get("/api/v1/admin/auto-refresh").json()
+    assert (body["enabled"], body["sport_focus"]) == (False, [])
+
+
+def test_postgres_sport_focus_migration_keeps_old_settings_and_defaults_empty() -> None:
+    database_url = _postgres_url()
+    prepare_test_database(database_url, seed_demo=False, drop_existing=True).engine.dispose()
+    config = _build_alembic_config(database_url)
+    # A settings row as stored before 0021, with nothing left at its default.
+    command.downgrade(config, "20261127_0020")
+    session_factory = DatabaseSessionFactory(database_url)
+    try:
+        with session_factory.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO auto_refresh_settings "
+                    "(id, enabled, interval_minutes, live_interval_minutes, quota_floor) "
+                    "VALUES (1, true, 15, 2, 40)"
+                )
+            )
+
+        command.upgrade(config, "head")
+
+        with SqlAlchemyAutoRefreshUnitOfWork(session_factory) as uow:
+            assert uow.get_settings() == AutoRefreshSettings(
+                enabled=True,
+                interval_minutes=15,
+                live_interval_minutes=2,
+                quota_floor=40,
+                sport_focus=(),
+            )
+    finally:
+        session_factory.engine.dispose()
+
+
+def test_postgres_sport_focus_round_trips_sorted_and_de_duplicated() -> None:
+    built = Harness(_postgres_url(), drop_existing=True)
+    try:
+        built.provider.extra_sports = ["soccer_epl"]
+        built.service.update_settings(
+            AutoRefreshSettings(
+                enabled=True, sport_focus=("soccer_epl", FIXTURE_SPORT_KEY, "soccer_epl")
+            )
+        )
+
+        with SqlAlchemyAutoRefreshUnitOfWork(built.session_factory) as uow:
+            assert uow.get_settings().sport_focus == (FIXTURE_SPORT_KEY, "soccer_epl")
+    finally:
+        built.close()

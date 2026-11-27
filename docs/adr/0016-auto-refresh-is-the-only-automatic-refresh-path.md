@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-10-11
 - Amended: 2026-11-27 (#128): the candidate rule follows event status and watch window, and live sports get a second interval
+- Amended: 2026-11-27 (#132): an operator-set sport focus narrows the candidates
 
 ## Context
 
@@ -22,6 +23,7 @@ Until now refresh has been manual only: no scheduler, no timer, no background jo
 
     An `ended` event never counts. The rule reads the stored event status (ADR-019) and the watch window (ADR-017), not the start time as a live signal. The start time matters in one case only, the evaluator's own: a `pre_game` window closes once the stored start has passed, even on an event still stored `upcoming`, so it is not a candidate. A `full_game` watch on such an event stays one, because the pull is what observes kickoff.
   - **Two intervals, both operator-set** (amended 2026-11-27, #128). A candidate sport with any candidate watch on a `live` event is due on `live_interval_minutes`; every other one on `interval_minutes` (the upcoming interval). Both are global: one live interval covers every live game.
+  - **Sport focus narrows the candidates** (amended 2026-11-27, #132). The settings row holds `sport_focus`, a set of catalog sport keys (`GET /api/v1/sports`), stored sorted and de-duplicated. With a non-empty focus, a candidate sport outside it is dropped, even when it has qualifying watches. The focus never adds a sport: a focused sport with no qualifying watch is still not refreshed. An empty focus, the default, narrows nothing. `AutoRefreshCandidateEngine.focus` holds the rule. A key outside the catalog is rejected (422) when the settings are saved. Manual refresh ignores the focus. The status reports `candidate_sports` (before the focus) and `excluded_sports` (dropped by it), both from stored watches and the local catalog, never from the provider.
   - It refreshes each candidate sport whose `last_refreshed_at + its interval <= now`.
   - `last_refreshed_at` is stored per sport and updated by every sport-wide pull, manual or automatic. A per-event manual refresh does not update it, because it covered one event.
   - There is no stored `next_due_at`, no catch-up queue, and no overlapping refreshes.
@@ -49,10 +51,12 @@ Until now refresh has been manual only: no scheduler, no timer, no background jo
 - **A fixed sweep that skips recently pulled sports:** worst-case gap of nearly two intervals.
 - **Turning the switch off on a credit floor or at zero:** the operator chose a warning, not an automatic stop.
 - **Keeping `starts_at > now` as the candidate rule:** every sport whose only watched event had started dropped out at kickoff, so a live watch could fire only on a manual refresh (#128).
+- **A sport focus that adds sports, or a separate focus per surface** (#132): a pick that adds a sport without a qualifying watch spends credits nothing can use. One stored focus drives both Auto-Refresh and the events view's default filter, so the operator sets it once; the events view can still show all sports without changing it.
 - **Automatic live speed-up (game clock, elapsed time, per-game boost):** the free feed has no signal for it, and spend must stay the operator's choice. 1 minute live costs 180 credits per sport per hour; 5 minutes costs 36.
 
 ## Consequences
 
 - The "refresh is manual" rule becomes "manual, plus Auto-Refresh when the operator turns it on". CLAUDE.md and `conventions.md` are updated to match.
-- New persisted state: the Auto-Refresh settings row, `last_refreshed_at` per sport, and the latest quota observation.
+- The sport focus caps automatic spend to the picked sports: about 3 credits per focused, watched sport per pull (#132).
+- New persisted state: the Auto-Refresh settings row (with its sport focus, #132), `last_refreshed_at` per sport, and the latest quota observation.
 - When multiple users arrive (#14), Auto-Refresh becomes always-on and the switch goes away. The cooldown and quota rules carry over unchanged.

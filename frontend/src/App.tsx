@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CheckCircle2, LineChart, RadioTower, ShieldCheck, TrendingUp } from "lucide-react";
 import {
   cancelWatch,
@@ -21,6 +21,7 @@ import {
   type WatchIntent,
   type WatchWindow
 } from "./lib/api";
+import { getAutoRefresh, onSportFocusSaved } from "./lib/adminApi";
 import {
   canonicalizeLocation,
   HOME,
@@ -70,6 +71,15 @@ export function App() {
   // All is upcoming plus live; ended events never list (#38).
   const [eventStatus, setEventStatus] = useState<EventListStatus>("all");
   const [page, setPage] = useState(1);
+  // The stored sport focus (#132), and whether the operator cleared it in this view.
+  // Null until the one read on mount settles, so the list does not flash every
+  // sport first. Clearing here changes only this view, never the stored focus.
+  const [sportFocus, setSportFocus] = useState<{ stored: string[]; cleared: boolean } | null>(
+    null
+  );
+  // Each events read takes a number; only the newest one may write the page, so a
+  // slow, superseded response never overwrites a newer one.
+  const eventsRequest = useRef(0);
   const [eventPage, setEventPage] = useState<EventPage | null>(null);
 
   const [board, setBoard] = useState<LineBoardData | null>(null);
@@ -112,18 +122,56 @@ export function App() {
     };
   }, []);
 
+  // Read once: settings only, from the database. If it fails, show every sport.
+  // A focus saved in Admin arrives through `onSportFocusSaved`, no polling; it
+  // keeps a clear the operator made here, and wins over a mount read still out.
+  useEffect(() => {
+    let cancelled = false;
+    let saved = false;
+    const unsubscribe = onSportFocusSaved((stored) => {
+      saved = true;
+      setSportFocus((current) =>
+        // An interval or switch save repeats the same focus: keep the state, no reload.
+        current && current.stored.join(",") === stored.join(",")
+          ? current
+          : { stored, cleared: current?.cleared ?? false }
+      );
+    });
+    getAutoRefresh()
+      .then((response) => {
+        if (!cancelled && !saved) setSportFocus({ stored: response.sport_focus, cleared: false });
+      })
+      .catch(() => {
+        if (!cancelled && !saved) setSportFocus({ stored: [], cleared: false });
+      });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const focusApplied = sportFocus !== null && sportFocus.stored.length > 0 && !sportFocus.cleared;
+  const sportKeys = useMemo(
+    () => (sportFocus === null ? null : focusApplied ? sportFocus.stored : []),
+    [sportFocus, focusApplied]
+  );
+
   const loadEvents = useCallback(async () => {
+    if (sportKeys === null) return;
+    const request = ++eventsRequest.current;
     setLoadState("loading");
     try {
-      const response = await listEvents({ league, status: eventStatus, page });
+      const response = await listEvents({ league, sportKeys, status: eventStatus, page });
+      if (request !== eventsRequest.current) return;
       setEventPage(response);
       setLoadState("ready");
       setMessage(`${response.total_events} events stored`);
     } catch (error) {
+      if (request !== eventsRequest.current) return;
       setLoadState("error");
       setMessage(error instanceof Error ? error.message : "Unable to load events");
     }
-  }, [league, eventStatus, page]);
+  }, [league, sportKeys, eventStatus, page]);
 
   // Navigation only. Nothing here contacts the provider, and there is no timer.
   useEffect(() => {
@@ -409,6 +457,8 @@ export function App() {
                 sports={sports}
                 league={league}
                 status={eventStatus}
+                sportFocus={sportFocus?.stored ?? []}
+                focusApplied={focusApplied}
                 refreshSport={refreshSportKey}
                 loading={loadState === "loading"}
                 refreshing={refreshing}
@@ -419,6 +469,14 @@ export function App() {
                 }}
                 onStatusChange={(value) => {
                   setEventStatus(value);
+                  setPage(1);
+                }}
+                onClearFocus={() => {
+                  setSportFocus((current) => current && { ...current, cleared: true });
+                  setPage(1);
+                }}
+                onApplyFocus={() => {
+                  setSportFocus((current) => current && { ...current, cleared: false });
                   setPage(1);
                 }}
                 onRefreshSportChange={setRefreshSportKey}

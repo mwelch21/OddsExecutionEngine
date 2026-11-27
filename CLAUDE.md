@@ -211,7 +211,7 @@ Ingestion:
 
 Browse:
 
-- `GET /api/v1/events` (optional `league`, `sport` and `status` = `upcoming` | `live` | `all` filters, default `all` = upcoming plus live, ended never listed; `include_started` is a deprecated alias, `true` = `all`, `false` = `upcoming`; page-based `page` / `page_size`)
+- `GET /api/v1/events` (optional `league`, `sport` and `status` = `upcoming` | `live` | `all` filters, default `all` = upcoming plus live, ended never listed; `include_started` is a deprecated alias, `true` = `all`, `false` = `upcoming`; repeatable `sport_key` = catalog sport keys, an event in any of them matches, mapped through the catalog's (sport, league), an unknown key matches nothing; filters combine; page-based `page` / `page_size`)
 - `GET /api/v1/events/{event_id}/quotes` (one event's line board, grouped by market, ranked best-first; unpaged)
 
 Monitoring:
@@ -234,8 +234,8 @@ Notifications:
 
 Admin (operator routes under `/api/v1/admin`, all behind the `require_operator` hook, a no-op until auth #14; each feature is its own module in `backend/app/api/admin/`):
 
-- `GET /api/v1/admin/auto-refresh` (switch, upcoming `interval_minutes`, `live_interval_minutes` for sports with a watch on a live event, quota floor, last refresh outcome read from the newest auto refresh record, `paused`, `out_of_credits`, latest `quota` with the floor in force; defaults to off, 5 minutes)
-- `PUT /api/v1/admin/auto-refresh` (full replacement; each interval 1-60 else 422, an omitted `live_interval_minutes` is 5; never refreshes itself, the worker's next poll does)
+- `GET /api/v1/admin/auto-refresh` (switch, upcoming `interval_minutes`, `live_interval_minutes` for sports with a watch on a live event, quota floor, `sport_focus` (catalog sport keys, sorted; empty = no focus), `candidate_sports` and the `excluded_sports` the focus drops (both from stored watches, no upstream call), last refresh outcome read from the newest auto refresh record, `paused`, `out_of_credits`, latest `quota` with the floor in force; defaults to off, 5 minutes, no focus)
+- `PUT /api/v1/admin/auto-refresh` (full replacement; each interval 1-60 else 422, an omitted `live_interval_minutes` is 5; an omitted `sport_focus` is empty, a key not in the catalog is 422; a non-empty focus narrows Auto-Refresh candidates, never manual refresh; never refreshes itself, the worker's next poll does)
 - `GET /api/v1/admin/refreshes` (refresh log, newest first; optional `sport`, `trigger`, `outcome`, `error_code` filters; `error_code` is a closed set: `UPSTREAM_HTTP`, `UPSTREAM_TIMEOUT`, `OUT_OF_USAGE_CREDITS`, `INVALID_RESPONSE`, `INTERNAL`; page-based `page` / `page_size`, default 50, max 200; each row's `credits_spent` is read through its linked upstream call, null when it made none)
 - `GET /api/v1/admin/quota-history` (`days` 1-30, default 30; last remaining credits per UTC hour, at most 720 points, unpaged)
 - `GET /api/v1/admin/credit-burn` (`month=YYYY-MM`, UTC, default this month; credits and calls per sport and per call kind, counted per upstream call so coalesced refreshes count once)
@@ -306,7 +306,7 @@ See `docs/flows/_index.md` for full flow documentation.
 | QuotaEngine | `engines/quota_engine.py` | Header/local-fallback observation (kind, sport, event, credits spent), derived floor, crossing rule, paused state |
 | CreditHistoryEngine | `engines/credit_history_engine.py` | Hourly last-balance buckets, UTC month windows, burn per sport and call kind |
 | AutoRefreshCadenceEngine | `engines/auto_refresh_cadence_engine.py` | Derived per-sport cooldown on the upcoming or live interval: which candidate sports are due |
-| AutoRefreshCandidateEngine | `engines/auto_refresh_candidate_engine.py` | Which sports a refresh can serve: event status x watch window, and which of those are live (#128) |
+| AutoRefreshCandidateEngine | `engines/auto_refresh_candidate_engine.py` | Which sports a refresh can serve: event status x watch window, and which of those are live (#128); the sport focus narrows them (#132) |
 | auto-refresh worker | `auto_refresh_worker.py` (`odds-auto-refresh`) | Polls every 30s under a Postgres advisory lock; the only automatic refresh path |
 | notifier (Go) | `services/notifier/` | Public outbox -> deliveries -> Web Push (ADR-013, ADR-015) |
 | TheOddsApiProvider | `infrastructure/odds_api_provider.py` | Live sportsbook quote provider (The Odds API) |

@@ -73,6 +73,7 @@
 - While Auto-Refresh is paused for credits, its only upstream call is the free `GET /v4/sports` balance check, at most once per upcoming interval and only when a watched sport is due.
 - Auto-Refresh candidates follow the evaluator, not the clock (#128). `AutoRefreshCandidateEngine` alone decides whether a watch makes its sport a candidate, from the stored event status and the watch window; a UoW query may pre-filter but never decides. Never use `starts_at` as a live signal.
 - Auto-Refresh has two operator-set intervals, upcoming and live, both global and 1-60 minutes. Nothing changes an interval automatically: no game-clock, elapsed-time or per-game speed-up.
+- The sport focus (#132) only narrows: with a non-empty `sport_focus`, Auto-Refresh drops candidate sports outside it and never adds one without a qualifying watch. Empty means no focus. The rule lives in `AutoRefreshCandidateEngine.focus`. Manual refresh never reads the focus. A sport key maps to stored events through the sport catalog's (sport, league) pair, the one mapping Auto-Refresh and `GET /api/v1/events?sport_key=` share; never parse a key a second way.
 
 ## Decisions log policy
 

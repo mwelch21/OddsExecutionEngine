@@ -17,6 +17,7 @@ from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
 from backend.app.config import Settings
+from backend.app.domain.models import SupportedSport
 from backend.app.infrastructure.persistence.database import DatabaseSessionFactory
 from backend.app.infrastructure.persistence.market_identity import build_line_key
 from backend.app.infrastructure.persistence.schema import (
@@ -25,6 +26,7 @@ from backend.app.infrastructure.persistence.schema import (
     market_quotes_latest_table,
     markets_table,
 )
+from backend.app.infrastructure.quote_provider import InMemoryQuoteProvider
 from backend.app.main import create_app
 from backend.tests.db_helpers import prepare_test_database
 
@@ -443,3 +445,62 @@ def _assert_same_instant(reported: str, expected: datetime) -> None:
     parsed = datetime.fromisoformat(reported)
     assert parsed.tzinfo is not None, reported
     assert abs(parsed - expected) < timedelta(seconds=1), reported
+
+
+# --- sport-key filter (#132) -------------------------------------------------
+
+# A catalog over the seeded events. NCAAF shares the NFL's stored sport, so a key
+# that matched on sport alone would wrongly list NFL games under it.
+_CATALOG = [
+    SupportedSport(key="americanfootball_ncaaf", sport="americanfootball", league="NCAAF"),
+    SupportedSport(key="americanfootball_nfl", sport="americanfootball", league="NFL"),
+    SupportedSport(key="baseball_mlb", sport="baseball", league="MLB"),
+]
+
+
+@pytest.fixture
+def seeded_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(InMemoryQuoteProvider, "list_supported_sports", lambda self: _CATALOG)
+
+
+def _assert_sport_key_filter(client: TestClient) -> None:
+    def ids(**params: Any) -> list[str]:
+        response = client.get("/api/v1/events", params=params)
+        assert response.status_code == 200
+        return _ids(response.json())
+
+    everything = ids()
+    assert ids(sport_key=["americanfootball_nfl"]) == ["nfl-jets-dolphins", "nfl-chiefs-bills"]
+    # Repeated keys: an event in any of them matches.
+    assert ids(sport_key=["americanfootball_nfl", "baseball_mlb"]) == everything
+    # Mapped to (sport, league), not sport alone.
+    assert ids(sport_key=["americanfootball_ncaaf"]) == []
+    # A key outside the catalog matches nothing, as an unknown league does.
+    assert ids(sport_key=["curling_wcf"]) == []
+    # Combines with the existing filters and paging.
+    assert ids(sport_key=["americanfootball_nfl", "baseball_mlb"], league="MLB") == [
+        "mlb-yankees-redsox"
+    ]
+    paged = client.get(
+        "/api/v1/events",
+        params={"sport_key": ["americanfootball_nfl"], "page": 2, "page_size": 1},
+    ).json()
+    assert (_ids(paged), paged["total_events"]) == (["nfl-chiefs-bills"], 2)
+
+
+@pytest.mark.usefixtures("seeded_catalog")
+def test_sport_key_filter_lists_events_in_any_named_catalog_sport(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_app(sqlite_database_url)) as client:
+        _assert_sport_key_filter(client)
+
+
+@pytest.mark.usefixtures("seeded_catalog")
+def test_postgres_sport_key_filter_lists_events_in_any_named_catalog_sport() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    with TestClient(_build_app(database_url, drop_existing=True)) as client:
+        _assert_sport_key_filter(client)

@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from time import perf_counter
 
-from backend.app.application.ports import EventReadUnitOfWorkFactory
+from backend.app.application.ports import EventReadUnitOfWorkFactory, SportCatalog
 from backend.app.domain.models import (
     EventFilter,
     EventPage,
@@ -27,18 +27,31 @@ class EventQueryService:
         self,
         unit_of_work_factory: EventReadUnitOfWorkFactory,
         recommendation_engine: RecommendationEngine,
+        sport_catalog: SportCatalog,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._recommendation_engine = recommendation_engine
+        self._sport_catalog = sport_catalog
 
     def list_events(
         self,
         event_filter: EventFilter,
         page: int = 1,
         page_size: int = 25,
+        sport_keys: list[str] | None = None,
     ) -> EventPage:
+        """`sport_keys` narrows to events in any of those catalog sports (#132).
+
+        A key maps to its stored (sport, league) through the catalog, the same
+        pairing Auto-Refresh uses. A key outside the catalog matches no event,
+        as an unknown league does. None or empty: no sport-key filter.
+        """
         started_at = perf_counter()
         now = datetime.now(UTC)
+        if sport_keys:
+            event_filter = event_filter.model_copy(
+                update={"sport_leagues": self._sport_leagues_for(sport_keys)}
+            )
 
         try:
             with self._unit_of_work_factory() as uow:
@@ -58,6 +71,7 @@ class EventQueryService:
                     "path": "/api/v1/events",
                     "league": event_filter.league,
                     "sport": event_filter.sport,
+                    "sport_keys": sport_keys,
                     "page": page,
                     "page_size": page_size,
                     "duration_ms": round((perf_counter() - started_at) * 1000, 2),
@@ -71,6 +85,7 @@ class EventQueryService:
                 "path": "/api/v1/events",
                 "league": event_filter.league,
                 "sport": event_filter.sport,
+                "sport_keys": sport_keys,
                 "status": event_filter.status.value,
                 "page": page,
                 "page_size": page_size,
@@ -84,6 +99,19 @@ class EventQueryService:
             page=page,
             page_size=page_size,
             total_events=total_events,
+        )
+
+    def _sport_leagues_for(self, sport_keys: list[str]) -> tuple[tuple[str, str | None], ...]:
+        wanted = set(sport_keys)
+        return tuple(
+            sorted(
+                {
+                    (entry.sport, entry.league)
+                    for entry in self._sport_catalog.list_supported_sports()
+                    if entry.key in wanted
+                },
+                key=lambda pair: (pair[0], pair[1] or ""),
+            )
         )
 
     def get_line_board(self, event_id: str) -> LineBoard | None:

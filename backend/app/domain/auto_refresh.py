@@ -9,11 +9,15 @@ and the cadence engine says which of those are due.
 A sport with a candidate watch on a live event runs on the live interval, every
 other candidate sport on the upcoming one (#128). Both are set by the operator;
 nothing changes an interval by itself.
+
+The sport focus (#132) is the operator's pick of catalog sport keys. A non-empty
+focus narrows the candidates to the picked sports; it never adds one. An empty
+focus narrows nothing.
 """
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from backend.app.domain.base import DomainModel
 from backend.app.domain.models import EventStatus, WatchWindow
@@ -49,6 +53,33 @@ class AutoRefreshSettings(DomainModel):
         le=MAX_INTERVAL_MINUTES,
     )
     quota_floor: int | None = Field(default=None, ge=0)
+    # Catalog sport keys (`GET /api/v1/sports`), sorted and de-duplicated. Empty
+    # means no focus: every candidate sport is refreshed (#132).
+    sport_focus: tuple[str, ...] = ()
+
+    @field_validator("sport_focus", mode="after")
+    @classmethod
+    def _sorted_unique(cls, keys: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(keys)))
+
+
+class UnknownSportKeysError(Exception):
+    """A sport focus named keys the sport catalog does not have."""
+
+    def __init__(self, unknown: list[str], supported: list[str]) -> None:
+        self.unknown = unknown
+        self.supported = supported
+        super().__init__(
+            f"Unknown sport keys {', '.join(unknown)}. Supported: {', '.join(supported)}"
+        )
+
+
+class SportFocusResult(DomainModel):
+    """Candidate sport keys split by the focus: `kept` are refreshed when due,
+    `excluded` have a qualifying watch but sit outside a non-empty focus."""
+
+    kept: list[str] = []
+    excluded: list[str] = []
 
 
 class WatchedEvent(DomainModel):
@@ -91,7 +122,13 @@ class AutoRefreshOutcome(DomainModel):
 
 
 class AutoRefreshStatus(DomainModel):
+    """`candidate_sports` are the catalog keys with a qualifying watch now, before
+    the focus; `excluded_sports` are those the focus drops. Both are read from
+    stored watches and the local catalog, never from the provider."""
+
     settings: AutoRefreshSettings
+    candidate_sports: list[str] = []
+    excluded_sports: list[str] = []
     last_outcome: AutoRefreshOutcome | None = None
     quota: QuotaStatus | None = None
 
@@ -109,4 +146,7 @@ class AutoRefreshCycleReport(DomainModel):
     candidate_sports: list[str] = []
     # The candidate sports on the live interval; a subset of `candidate_sports`.
     live_sports: list[str] = []
+    # Sports with a qualifying watch that the sport focus dropped (#132). Not in
+    # `candidate_sports`.
+    excluded_sports: list[str] = []
     refreshed: list[AutoRefreshOutcome] = []
