@@ -258,7 +258,7 @@ class TheOddsApiProvider:
     def _fetch_cached(
         self,
         key: str,
-        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota, int | None]],
+        fetch: Callable[[], tuple[ProviderPayload, UpstreamQuota, int | None, datetime]],
         *,
         live: bool,
     ) -> tuple[ProviderPayload, ProviderFetchReport]:
@@ -271,15 +271,16 @@ class TheOddsApiProvider:
 
         The observation id is stored beside the payload instead: it names the call
         the data came from, so callers coalesced onto that call all link to it.
-        So is the time the response arrived, which orders status writes (#38): a
-        reused response keeps the time of the call that produced it.
+        So is `answered_at`, stamped by the fetch the moment the HTTP response
+        arrived, before validation or quota recording; it orders status writes
+        (#38), and a reused response keeps the time of the call that produced it.
         """
         quota: UpstreamQuota | None = None
 
         def load() -> tuple[ProviderPayload, int | None, datetime]:
             nonlocal quota
-            payload, quota, observation_id = fetch()
-            return payload, observation_id, datetime.now(UTC)
+            payload, quota, observation_id, answered_at = fetch()
+            return payload, observation_id, answered_at
 
         cached = self._response_cache.fetch(key, load, live=live)
         payload, observation_id, answered_at = cached.payload
@@ -294,7 +295,7 @@ class TheOddsApiProvider:
 
     def _fetch_sport_odds(
         self, sport: str
-    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None, datetime]:
         """GET /v4/sports/{sport}/odds from The Odds API."""
         response = self._get(f"{ODDS_API_BASE}/{sport}/odds", UpstreamCallKind.SPORT, sport)
         answered_at = datetime.now(UTC)
@@ -308,11 +309,11 @@ class TheOddsApiProvider:
         )
         _raise_unusable(unusable, observation_id)
         body = _checked_json(response, observation_id)
-        return cast(list[dict[str, Any]], body), quota, observation_id
+        return cast(list[dict[str, Any]], body), quota, observation_id, answered_at
 
     def _fetch_event_odds(
         self, sport: str, event_id: str
-    ) -> tuple[ProviderPayload, UpstreamQuota, int | None]:
+    ) -> tuple[ProviderPayload, UpstreamQuota, int | None, datetime]:
         """GET /v4/sports/{sport}/events/{eventId}/odds from The Odds API.
 
         Costs [markets returned] x [regions], independent of how many events the
@@ -343,9 +344,9 @@ class TheOddsApiProvider:
                 "odds_api.event_not_offered",
                 extra={"sport": sport, "event_id": event_id},
             )
-            return [], quota, observation_id
+            return [], quota, observation_id, answered_at
         body = _checked_json(response, observation_id)
-        return [cast(dict[str, Any], body)], quota, observation_id
+        return [cast(dict[str, Any], body)], quota, observation_id, answered_at
 
     def check_quota(self) -> None:
         """GET /v4/sports: free, and it still carries the quota headers.

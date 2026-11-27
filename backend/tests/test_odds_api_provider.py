@@ -1,4 +1,5 @@
 import json
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -6,7 +7,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from backend.app.domain.models import MarketType, Quote, UpstreamQuota
+from backend.app.domain.models import MarketType, ProviderFetchReport, Quote, UpstreamQuota
+from backend.app.domain.quota import QuotaReading
 from backend.app.infrastructure.caching.in_process_cache import InProcessProviderCache
 from backend.app.infrastructure.odds_api_provider import TheOddsApiProvider
 
@@ -88,18 +90,27 @@ SAMPLE_API_RESPONSE = [
     },
 ]
 
-SAMPLE_FETCH = (SAMPLE_API_RESPONSE, NO_QUOTA, None)
-EMPTY_FETCH: tuple[list[dict], UpstreamQuota, int | None] = ([], NO_QUOTA, None)
+ANSWERED_AT = datetime(2026, 11, 27, 20, 0, tzinfo=UTC)
+SAMPLE_FETCH = (SAMPLE_API_RESPONSE, NO_QUOTA, None, ANSWERED_AT)
+EMPTY_FETCH: tuple[list[dict], UpstreamQuota, int | None, datetime] = (
+    [],
+    NO_QUOTA,
+    None,
+    ANSWERED_AT,
+)
 SPORT_KEY = "icehockey_nhl"
 
 
 def _serve_events(
     response: list[dict],
-) -> Callable[[str, str], tuple[list[dict], UpstreamQuota, int | None]]:
+) -> Callable[[str, str], tuple[list[dict], UpstreamQuota, int | None, datetime]]:
     """Stand in for the single-event endpoint: answer with just the named event."""
 
-    def fetch(sport: str, event_id: str) -> tuple[list[dict], UpstreamQuota, int | None]:
-        return [event for event in response if event["id"] == event_id], NO_QUOTA, None
+    def fetch(
+        sport: str, event_id: str
+    ) -> tuple[list[dict], UpstreamQuota, int | None, datetime]:
+        events = [event for event in response if event["id"] == event_id]
+        return events, NO_QUOTA, None, datetime.now(UTC)
 
     return fetch
 
@@ -295,6 +306,7 @@ class TestEdgeCases:
             ],
             NO_QUOTA,
             None,
+            ANSWERED_AT,
         ),
     )
     def test_event_with_no_bookmakers(self, mock_fetch: MagicMock) -> None:
@@ -465,3 +477,46 @@ class TestSingleEventAbsence:
         assert quotes == []
         assert report.event_offered is True
         assert len(seen) == 1
+
+
+def test_an_earlier_response_that_finishes_processing_later_is_still_ordered_first() -> None:
+    """`answered_at` is stamped when the HTTP response arrives, not after the
+    validation and quota recording that follow it (#38)."""
+    first_recording = threading.Event()
+    release_first = threading.Event()
+
+    class SlowFirstRecorder:
+        def record(self, reading: QuotaReading) -> int | None:
+            if reading.event_id == "first":
+                first_recording.set()
+                assert release_first.wait(timeout=5)
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        event_id = request.url.path.split("/")[-2]
+        body = {**SAMPLE_API_RESPONSE[0], "id": event_id}
+        return httpx.Response(200, json=body)
+
+    provider = TheOddsApiProvider(
+        api_key="test-key",
+        regions=["us"],
+        markets=["h2h"],
+        response_cache=InProcessProviderCache(ttl_seconds=0),
+        quota_recorder=SlowFirstRecorder(),
+    )
+    provider._client = httpx.Client(transport=httpx.MockTransport(handler))
+    reports: dict[str, ProviderFetchReport] = {}
+
+    def refresh(event_id: str) -> None:
+        reports[event_id] = provider.list_quotes(event_id, SPORT_KEY)[1]
+
+    earlier = threading.Thread(target=refresh, args=("first",))
+    earlier.start()
+    assert first_recording.wait(timeout=5)
+    refresh("second")  # answered and fully processed while "first" is held
+    release_first.set()
+    earlier.join(timeout=5)
+
+    first_at, second_at = reports["first"].answered_at, reports["second"].answered_at
+    assert first_at is not None and second_at is not None
+    assert first_at < second_at
