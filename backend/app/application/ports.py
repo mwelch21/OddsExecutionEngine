@@ -270,7 +270,9 @@ class WatchIntentUnitOfWork(Protocol):
         """
         ...
 
-    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]: ...
+    def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
+        """Move each still-active watch to `triggered`; return only those moved."""
+        ...
 
     def expire_watch_intents(self, reasons: dict[str, ExpiredReason]) -> list[WatchIntent]:
         """Expire each still-active watch with its reason; return the ones expired."""

@@ -7,6 +7,7 @@ from backend.app.api.watch_intent_schemas import (
     WatchIntentResponse,
 )
 from backend.app.application.watch_intent_service import (
+    WatchEventNotFoundError,
     WatchIntentAlreadyExpiredError,
     WatchIntentAlreadyTriggeredError,
     WatchIntentService,
@@ -39,6 +40,8 @@ def create_watch_intent_router(service: WatchIntentService) -> APIRouter:
                 expires_at=request.expires_at,
                 window=request.window,
             )
+        except WatchEventNotFoundError as err:
+            raise HTTPException(status_code=404, detail="Event not found") from err
         except WatchWindowNotAllowedError as err:
             raise HTTPException(
                 status_code=409,

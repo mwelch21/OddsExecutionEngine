@@ -12,9 +12,8 @@ TTL could expire a watch, so every stored expired watch is backfilled `ttl`. A
 check constraint holds the reason to expired watches only.
 
 `opportunities.phase` is the phase of the best book's line when the
-opportunity was identified. Existing rows are backfilled with the rule 0018
-used for quotes: an opportunity created at or after its event's start filled
-on a live line.
+opportunity was identified. Every existing row is `pre_game`: before #38 a
+started event could never fill, and #38 has not run anywhere with live data.
 """
 
 import sqlalchemy as sa
@@ -58,11 +57,6 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "ck_opportunities_phase", "phase IN ('pre_game', 'live')"
         )
-    op.execute(
-        "UPDATE opportunities SET phase = 'live' WHERE created_at >= ("
-        "SELECT events.starts_at FROM events"
-        " WHERE events.external_id = opportunities.event_external_id)"
-    )
 
 
 def downgrade() -> None:

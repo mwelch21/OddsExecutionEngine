@@ -194,21 +194,30 @@ class SqlAlchemyWatchIntentUnitOfWork:
         return expire_watch_intents(self._require_session(), reasons)
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
-        """Retire watches that produced an opportunity. Terminal: they never re-arm."""
+        """Retire watches that produced an opportunity. Terminal: they never re-arm.
+
+        Moves only a still-active watch, in one statement, and returns the ones it
+        moved. A watch a concurrent DELETE or expiry already retired is left as
+        it is and not returned, so it never gets an opportunity.
+        """
         if not watch_intent_ids:
             return []
-
         session = self._require_session()
-        session.execute(
+        moved = session.execute(
             update(watch_intents_table)
-            .where(watch_intents_table.c.id.in_(watch_intent_ids))
+            .where(
+                watch_intents_table.c.id.in_(watch_intent_ids),
+                watch_intents_table.c.status == WatchStatus.ACTIVE.value,
+            )
             .values(status=WatchStatus.TRIGGERED.value)
+            .returning(watch_intents_table.c.id)
         )
+        moved_ids = [str(watch_id) for watch_id in moved.scalars()]
+        if not moved_ids:
+            return []
         rows = (
             session.execute(
-                select(watch_intents_table).where(
-                    watch_intents_table.c.id.in_(watch_intent_ids)
-                )
+                select(watch_intents_table).where(watch_intents_table.c.id.in_(moved_ids))
             )
             .mappings()
             .all()

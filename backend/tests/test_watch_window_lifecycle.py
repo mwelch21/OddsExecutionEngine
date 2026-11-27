@@ -14,6 +14,7 @@ from sqlalchemy import insert, select, update
 
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.application.watch_intent_service import (
+    WatchEventNotFoundError,
     WatchIntentAlreadyExpiredError,
 )
 from backend.app.config import Settings
@@ -601,3 +602,97 @@ def test_postgres_a_status_write_waits_for_a_watch_being_created() -> None:
 
     assert harness.status(EVENT_ID) is EventStatus.LIVE
     assert harness.stored(watch_id) == (WatchStatus.EXPIRED, ExpiredReason.EVENT_STARTED)
+
+
+# --- Review round 2 -------------------------------------------------------------
+
+
+def test_a_stale_answer_runs_no_evaluation_so_its_backstop_expires_nothing(
+    harness: WindowHarness,
+) -> None:
+    harness.provider.answered_at = NOW
+    harness.pre_game(110)
+    watch = harness.ttl_due_watch()
+
+    # The full ingestion path, with its post-commit evaluation: an older answer
+    # is rejected, and evaluation does not run for it.
+    harness.provider.answered_at = NOW - timedelta(minutes=10)
+    harness.provider.offer(EVENT_ID, STARTED, [_quote(EVENT_ID, "FanDuel", 110, MOVED_LIVE)])
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    harness.ingestion.refresh_quotes(EVENT_ID)
+
+    assert harness.status(EVENT_ID) is EventStatus.UPCOMING
+    assert harness.stored(watch.id) == (WatchStatus.ACTIVE, None)
+    assert harness.expired_events() == []
+
+    # A fresh answer does evaluate, and the due TTL then expires the watch.
+    harness.provider.answered_at = NOW + timedelta(seconds=1)
+    harness.pre_game(110)
+    assert harness.stored(watch.id) == (WatchStatus.EXPIRED, ExpiredReason.TTL)
+
+
+def test_no_watch_can_be_made_on_an_event_that_is_not_stored(harness: WindowHarness) -> None:
+    with pytest.raises(WatchEventNotFoundError):
+        harness.watch(400, event_id="never-pulled")
+    with harness.session_factory.create_session() as session:
+        assert session.execute(select(watch_intents_table.c.id)).first() is None
+
+
+def test_the_api_answers_404_for_a_watch_on_an_event_that_is_not_stored(
+    sqlite_database_url: str,
+) -> None:
+    with _client(sqlite_database_url) as client:
+        response = client.post("/api/v1/watch-intents", json=_payload(event_id="never-pulled"))
+
+    assert response.status_code == 404
+
+
+def test_postgres_a_cancel_committed_during_evaluation_wins_over_the_trigger() -> None:
+    """Review round 2: evaluation read the watch active, then a DELETE committed.
+
+    The trigger is active-only, so it moves nothing; no opportunity is inserted
+    and nothing is staged or notified.
+    """
+    harness = _postgres_harness()
+    harness.pre_game(150)
+    watch = harness.watch(400)
+    # Now within reach, so the next evaluation would fill it.
+    with harness.session_factory.create_session() as session:
+        session.execute(
+            update(watch_intents_table)
+            .where(watch_intents_table.c.id == watch.id)
+            .values(target_price=140)
+        )
+        session.commit()
+
+    filled: list[object] = []
+    errors: list[BaseException] = []
+
+    def evaluate() -> None:
+        try:
+            filled.extend(harness.watches.evaluate_for_event(EVENT_ID))
+        except BaseException as error:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(error)
+
+    with harness.session_factory.create_session() as cancelling:
+        # A DELETE in flight: the watch row is locked and cancelled, not committed.
+        cancelling.execute(
+            update(watch_intents_table)
+            .where(watch_intents_table.c.id == watch.id)
+            .values(status=WatchStatus.CANCELLED.value)
+        )
+        evaluator = threading.Thread(target=evaluate)
+        evaluator.start()
+        evaluator.join(timeout=1.0)
+        assert evaluator.is_alive(), "the trigger did not wait for the cancel"
+        cancelling.commit()
+    evaluator.join(timeout=10.0)
+
+    assert errors == []
+    assert filled == []
+    assert harness.stored(watch.id) == (WatchStatus.CANCELLED, None)
+    assert harness.watches.list_opportunities(EVENT_ID) == []
+    assert harness.public_event_types() == []
+    with harness.session_factory.create_session() as session:
+        staged = set(session.execute(select(workflow_events_table.c.event_type)).scalars())
+    assert not {"OpportunityIdentified", "WatchIntentTriggered"} & staged

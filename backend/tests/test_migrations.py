@@ -450,7 +450,8 @@ def _assert_watch_window_migration(
         phases = dict(
             session.execute(text("SELECT id, phase FROM opportunities")).tuples().all()
         )
-        assert phases == {"opp-pre": "pre_game", "opp-live": "live"}
+        # No opportunity could fill on a live line before #38: all pre_game.
+        assert phases == {"opp-pre": "pre_game", "opp-live": "pre_game"}
 
         # The policy is the only default: an insert must name its window.
         with pytest.raises(IntegrityError):

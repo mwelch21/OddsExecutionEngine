@@ -235,8 +235,11 @@ class QuoteIngestionService:
             emitted_event_types=emitted_event_types,
         )
 
-        # Evaluate active watch intents after successful ingestion
-        if self._watch_intent_service is not None:
+        # Evaluate active watch intents after successful ingestion. A stale answer
+        # whose status write was rejected changed nothing a watch depends on, and
+        # its evaluation's backstop must not expire watches on its behalf.
+        stale = observation is not None and not persistence_result.status_written
+        if self._watch_intent_service is not None and not stale:
             try:
                 self._watch_intent_service.evaluate_for_event(event_id)  # type: ignore[attr-defined]
             except Exception:

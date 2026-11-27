@@ -36,7 +36,8 @@ class RecordingWatchIntentUnitOfWork:
         created_intent: WatchIntent,
         active_intents: list[WatchIntent] | None = None,
         inserted_opportunities: list[Opportunity] | None = None,
-        event_status: EventStatus | None = None,
+        # A stored event unless a test says otherwise: creation refuses unstored ones.
+        event_status: EventStatus | None = EventStatus.UPCOMING,
     ) -> None:
         self._created_intent = created_intent
         self._active_intents = active_intents or [created_intent]
@@ -51,6 +52,8 @@ class RecordingWatchIntentUnitOfWork:
         self.expired_ids: list[str] = []
         self.quote_reads = 0
         self.triggered_ids: list[str] = []
+        # Simulates a concurrent DELETE or expiry committing before the trigger.
+        self.retire_before_trigger = False
 
     def __enter__(self) -> "RecordingWatchIntentUnitOfWork":
         self._staged_events = []
@@ -107,6 +110,8 @@ class RecordingWatchIntentUnitOfWork:
 
     def trigger_watch_intents(self, watch_intent_ids: list[str]) -> list[WatchIntent]:
         self.triggered_ids.extend(watch_intent_ids)
+        if self.retire_before_trigger:
+            return []
         wanted = set(watch_intent_ids)
         triggered = [
             intent.model_copy(update={"status": WatchStatus.TRIGGERED})
@@ -383,8 +388,34 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
     assert result == []
     assert publisher.published_events == []
     assert uow.committed_public_events == ()
-    assert uow.triggered_ids == []
+    # The trigger runs first and is active-only; a rejected insert then notifies
+    # nothing. Only a winner that already triggered the watch can reject it.
+    assert uow.triggered_ids == ["wi-1"]
     assert [opp.id for opp in uow.created_batches[0]] == ["opp-1"]
+
+
+def test_evaluation_gives_no_opportunity_to_a_watch_retired_meanwhile() -> None:
+    """A concurrent DELETE or expiry won: the active-only trigger moves nothing."""
+    intent = _watch()
+    candidate = _make_opportunity("opp-1", intent.id, "DraftKings")
+    uow = RecordingWatchIntentUnitOfWork(
+        created_intent=intent, active_intents=[intent], event_status=EventStatus.UPCOMING
+    )
+    uow.retire_before_trigger = True
+    publisher = InMemoryWorkflowEventPublisher()
+
+    result = WatchIntentService(
+        unit_of_work_factory=lambda: uow,
+        workflow_event_publisher=publisher,
+        watch_evaluation_engine=StubWatchEvaluationEngine([candidate]),
+        opportunity_validity_engine=OpportunityValidityEngine(),
+        opportunity_ttl_minutes=5,
+    ).evaluate_for_event("event-1")
+
+    assert result == []
+    assert uow.created_batches == []
+    assert publisher.published_events == []
+    assert uow.committed_public_events == ()
 
 
 def _make_opportunity(
