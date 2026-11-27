@@ -2,7 +2,11 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol, Self
 
-from backend.app.domain.auto_refresh import AutoRefreshOutcome, AutoRefreshSettings
+from backend.app.domain.auto_refresh import (
+    AutoRefreshOutcome,
+    AutoRefreshSettings,
+    WatchedEvent,
+)
 from backend.app.domain.base import DomainModel
 from backend.app.domain.credits import BurnRow, RemainingReading
 from backend.app.domain.deliveries import DeliveryFilter, DeliveryStatus, StoredDelivery
@@ -224,7 +228,10 @@ class AutoRefreshUnitOfWork(Protocol):
         """The newest Auto-Refresh refresh record, in the status endpoint's shape."""
         ...
 
-    def list_watched_event_sports(self, now: datetime) -> list[EventSport]: ...
+    def list_watched_events(self, now: datetime) -> list[WatchedEvent]:
+        """Active, unexpired watches on events with a stored sport that has not
+        ended. A pre-filter; the candidate engine decides."""
+        ...
 
     def get_sport_refresh_times(self) -> dict[str, datetime]: ...
 

@@ -3,12 +3,17 @@ import { getAutoRefresh, putAutoRefresh, type AutoRefresh, type AutoRefreshSetti
 import { invalidateSystemStatus } from "../systems/systemStatus";
 import { ageLabel } from "../../../lib/format";
 import { AdminPanel } from "../AdminPanel";
+import { IntervalSlider } from "./IntervalSlider";
 
 const MIN_INTERVAL = 1;
 const MAX_INTERVAL = 60;
 
 /**
- * The Auto-Refresh switch, interval and warn-below floor (ADR-016).
+ * The Auto-Refresh switch, its two intervals and warn-below floor (ADR-016).
+ *
+ * Upcoming paces sports whose watches are all pre-game; Live paces any sport with
+ * a watch on a game in play (#128). Both are the operator's: nothing speeds up
+ * or slows down by itself.
  *
  * It drives `GET/PUT /api/v1/admin/auto-refresh` only. Nothing here refreshes or
  * polls: the worker does, and only while the switch is on and a watch needs fresh
@@ -54,6 +59,7 @@ export function AutoRefreshSection() {
         const next = await putAutoRefresh({
           enabled: current.enabled,
           interval_minutes: current.interval_minutes,
+          live_interval_minutes: current.live_interval_minutes,
           quota_floor: current.quota_floor,
           ...(typeof change === "function" ? change(current) : change)
         });
@@ -103,7 +109,7 @@ export function AutoRefreshSection() {
     >
       <p className="admin-muted">
         {enabled
-          ? "Refreshes each sport with an active watch about once per interval. Idle when nothing is watched."
+          ? "Refreshes each sport with an active watch about once per interval: Live when a watched game is in play, Upcoming otherwise. Idle when nothing is watched."
           : "Off. Nothing refreshes on its own; manual refresh still works."}
       </p>
       {enabled && paused && (
@@ -112,18 +118,27 @@ export function AutoRefreshSection() {
         </p>
       )}
 
-      <div className="admin-form">
-        <NumberField
-          label="Every"
-          unit="min"
+      <div className="admin-sliders">
+        <IntervalSlider
+          label="Upcoming"
           value={status?.interval_minutes ?? null}
           min={MIN_INTERVAL}
           max={MAX_INTERVAL}
-          required
           disabled={!loaded}
-          onCommit={(value) => save({ interval_minutes: value ?? MIN_INTERVAL })}
-          onInvalid={() => setError(`Interval must be ${MIN_INTERVAL}-${MAX_INTERVAL} minutes`)}
+          onCommit={(value) => save({ interval_minutes: value })}
         />
+        <IntervalSlider
+          label="Live"
+          value={status?.live_interval_minutes ?? null}
+          min={MIN_INTERVAL}
+          max={MAX_INTERVAL}
+          disabled={!loaded}
+          onCommit={(value) => save({ live_interval_minutes: value })}
+        />
+      </div>
+      <p className="admin-muted">Drag, then press Enter or Save. Nothing changes until you do.</p>
+
+      <div className="admin-form">
         <NumberField
           label="Warn below"
           unit="credits"

@@ -7,15 +7,22 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import insert, update
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.application.auto_refresh_service import AutoRefreshService
 from backend.app.application.quota_service import QuotaService
 from backend.app.application.quote_ingestion_service import QuoteIngestionService
 from backend.app.config import Settings
-from backend.app.domain.auto_refresh import AutoRefreshSettings, RefreshOutcomeStatus
-from backend.app.domain.models import ProviderFetchReport, Quote
+from backend.app.domain.auto_refresh import (
+    AutoRefreshSettings,
+    CandidateSport,
+    RefreshOutcomeStatus,
+    WatchedEvent,
+)
+from backend.app.domain.models import EventStatus, ProviderFetchReport, Quote, WatchWindow
 from backend.app.domain.quota import OutOfUsageCreditsError, QuotaReading
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
+from backend.app.engines.auto_refresh_candidate_engine import AutoRefreshCandidateEngine
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.quota_engine import QuotaEngine
 from backend.app.infrastructure.persistence.auto_refresh_uow import (
@@ -28,7 +35,11 @@ from backend.app.infrastructure.persistence.quote_ingestion_uow import (
     SqlAlchemyQuoteIngestionUnitOfWork,
 )
 from backend.app.infrastructure.persistence.refresh_records import SqlAlchemyRefreshRecorder
-from backend.app.infrastructure.persistence.schema import events_table, watch_intents_table
+from backend.app.infrastructure.persistence.schema import (
+    auto_refresh_settings_table,
+    events_table,
+    watch_intents_table,
+)
 from backend.app.infrastructure.publishers.in_memory_publisher import (
     InMemoryWorkflowEventPublisher,
 )
@@ -45,7 +56,7 @@ T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 
 
 def test_a_sport_never_pulled_sport_wide_is_due() -> None:
-    due = AutoRefreshCadenceEngine().due_sports(["basketball"], {}, 5, T0)
+    due = AutoRefreshCadenceEngine().due_sports(["basketball"], [], {}, 5, 5, T0)
 
     assert due == ["basketball"]
 
@@ -54,8 +65,11 @@ def test_a_sport_is_due_once_a_full_interval_has_passed_and_not_before() -> None
     engine = AutoRefreshCadenceEngine()
     last = {"basketball": T0}
 
-    assert engine.due_sports(["basketball"], last, 5, T0 + timedelta(minutes=4, seconds=59)) == []
-    assert engine.due_sports(["basketball"], last, 5, T0 + timedelta(minutes=5)) == [
+    assert (
+        engine.due_sports(["basketball"], [], last, 5, 5, T0 + timedelta(minutes=4, seconds=59))
+        == []
+    )
+    assert engine.due_sports(["basketball"], [], last, 5, 5, T0 + timedelta(minutes=5)) == [
         "basketball"
     ]
 
@@ -64,13 +78,137 @@ def test_each_sport_runs_on_its_own_cooldown() -> None:
     last = {"basketball": T0, "icehockey_nhl": T0 - timedelta(minutes=10)}
 
     due = AutoRefreshCadenceEngine().due_sports(
-        ["icehockey_nhl", "basketball", "icehockey_nhl"], last, 5, T0 + timedelta(minutes=1)
+        ["icehockey_nhl", "basketball", "icehockey_nhl"],
+        [],
+        last,
+        5,
+        5,
+        T0 + timedelta(minutes=1),
     )
 
     assert due == ["icehockey_nhl"]
 
 
-# --- worker cycle against a migrated database ----------------------------------
+def test_a_live_sport_is_due_on_the_live_interval_and_others_on_the_upcoming_one() -> None:
+    engine = AutoRefreshCadenceEngine()
+    last = {"basketball": T0, "icehockey_nhl": T0}
+    two_minutes_on = T0 + timedelta(minutes=2)
+
+    due = engine.due_sports(
+        ["basketball", "icehockey_nhl"], ["basketball"], last, 15, 2, two_minutes_on
+    )
+
+    assert due == ["basketball"]
+    assert engine.interval_minutes_for("basketball", ["basketball"], 15, 2) == 2
+    assert engine.interval_minutes_for("icehockey_nhl", ["basketball"], 15, 2) == 15
+
+
+def test_a_live_interval_slower_than_the_upcoming_one_is_honoured() -> None:
+    last = {"basketball": T0}
+
+    due = AutoRefreshCadenceEngine().due_sports(
+        ["basketball"], ["basketball"], last, 1, 30, T0 + timedelta(minutes=10)
+    )
+
+    assert due == []
+
+
+def test_a_live_sport_that_is_not_a_candidate_is_never_due() -> None:
+    due = AutoRefreshCadenceEngine().due_sports([], ["basketball"], {}, 5, 1, T0)
+
+    assert due == []
+
+
+# --- candidate rule (pure) ---------------------------------------------------
+
+
+def _watched(
+    status: EventStatus,
+    window: WatchWindow,
+    *,
+    sport: str = "basketball",
+    starts_at: datetime | None = None,
+) -> WatchedEvent:
+    return WatchedEvent(
+        sport=sport, league="NBA", status=status, window=window, starts_at=starts_at
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "window", "acts"),
+    [
+        (EventStatus.UPCOMING, WatchWindow.PRE_GAME, True),
+        (EventStatus.UPCOMING, WatchWindow.FULL_GAME, True),
+        # A live watch ignores pre-game lines, so an upcoming event gives it nothing.
+        (EventStatus.UPCOMING, WatchWindow.LIVE, False),
+        (EventStatus.LIVE, WatchWindow.LIVE, True),
+        (EventStatus.LIVE, WatchWindow.FULL_GAME, True),
+        # A pre-game watch's window closed at kickoff.
+        (EventStatus.LIVE, WatchWindow.PRE_GAME, False),
+        (EventStatus.ENDED, WatchWindow.PRE_GAME, False),
+        (EventStatus.ENDED, WatchWindow.LIVE, False),
+        (EventStatus.ENDED, WatchWindow.FULL_GAME, False),
+    ],
+)
+def test_a_watch_makes_its_sport_a_candidate_only_when_evaluation_acts_on_it(
+    status: EventStatus, window: WatchWindow, acts: bool
+) -> None:
+    engine = AutoRefreshCandidateEngine()
+
+    assert engine.acts_on(_watched(status, window), T0) is acts
+
+
+def test_a_pre_game_watch_past_its_start_time_is_not_a_candidate() -> None:
+    """Stored upcoming but not observed since kickoff: the evaluator closes a
+    pre-game window on the stored start time (ADR-017), so a pull buys it nothing.
+    """
+    started = T0 - timedelta(minutes=1)
+    engine = AutoRefreshCandidateEngine()
+
+    assert (
+        engine.acts_on(_watched(EventStatus.UPCOMING, WatchWindow.PRE_GAME, starts_at=started), T0)
+        is False
+    )
+    assert (
+        engine.acts_on(
+            _watched(
+                EventStatus.UPCOMING, WatchWindow.PRE_GAME, starts_at=T0 + timedelta(minutes=1)
+            ),
+            T0,
+        )
+        is True
+    )
+
+
+def test_a_full_game_watch_past_its_start_time_stays_a_candidate_so_the_pull_observes_kickoff() -> (
+    None
+):
+    started = T0 - timedelta(minutes=1)
+
+    watched = _watched(EventStatus.UPCOMING, WatchWindow.FULL_GAME, starts_at=started)
+
+    assert AutoRefreshCandidateEngine().candidates([watched], T0) == [
+        CandidateSport(sport="basketball", league="NBA", live=False)
+    ]
+
+
+def test_a_sport_is_live_when_any_of_its_candidate_watches_is_on_a_live_event() -> None:
+    candidates = AutoRefreshCandidateEngine().candidates(
+        [
+            _watched(EventStatus.UPCOMING, WatchWindow.PRE_GAME),
+            _watched(EventStatus.LIVE, WatchWindow.FULL_GAME),
+            _watched(EventStatus.UPCOMING, WatchWindow.PRE_GAME, sport="icehockey"),
+            # Not a candidate, so it never makes hockey live.
+            _watched(EventStatus.LIVE, WatchWindow.PRE_GAME, sport="icehockey"),
+            _watched(EventStatus.ENDED, WatchWindow.FULL_GAME, sport="baseball"),
+        ],
+        T0,
+    )
+
+    assert candidates == [
+        CandidateSport(sport="basketball", league="NBA", live=True),
+        CandidateSport(sport="icehockey", league="NBA", live=False),
+    ]
 
 
 class CountingProvider(InMemoryQuoteProvider):
@@ -154,9 +292,7 @@ class Harness:
         self.clock = Clock(datetime.now(UTC))
         self.provider.clock = self.clock
         self.ingestion = QuoteIngestionService(
-            unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(
-                self.session_factory
-            ),
+            unit_of_work_factory=lambda: SqlAlchemyQuoteIngestionUnitOfWork(self.session_factory),
             quote_provider=self.provider,
             normalization_engine=NormalizationEngine(),
             workflow_event_publisher=InMemoryWorkflowEventPublisher(),
@@ -170,16 +306,23 @@ class Harness:
             cycle_lock=lock,  # type: ignore[arg-type]
             quote_ingestion_service=self.ingestion,
             cadence_engine=AutoRefreshCadenceEngine(),
+            candidate_engine=AutoRefreshCandidateEngine(),
             quota_service=self.quota,
             clock=self.clock,
         )
 
-    def switch(self, enabled: bool, interval_minutes: int = 5) -> None:
+    def switch(
+        self, enabled: bool, interval_minutes: int = 5, live_interval_minutes: int = 5
+    ) -> None:
         self.service.update_settings(
-            AutoRefreshSettings(enabled=enabled, interval_minutes=interval_minutes)
+            AutoRefreshSettings(
+                enabled=enabled,
+                interval_minutes=interval_minutes,
+                live_interval_minutes=live_interval_minutes,
+            )
         )
 
-    def add_watch(self, *, expires_at: datetime | None = None) -> None:
+    def add_watch(self, *, expires_at: datetime | None = None, window: str = "pre_game") -> None:
         with self.session_factory.create_session() as session:
             session.execute(
                 insert(watch_intents_table).values(
@@ -192,7 +335,7 @@ class Harness:
                     target_price=900,
                     expires_at=expires_at,
                     status="active",
-                    watch_window="pre_game",
+                    watch_window=window,
                 )
             )
             session.commit()
@@ -203,6 +346,21 @@ class Harness:
                 update(events_table)
                 .where(events_table.c.external_id == FIXTURE_EVENT_ID)
                 .values(starts_at=self.clock.now - timedelta(minutes=1))
+            )
+            session.commit()
+
+    def set_status(self, status: str) -> None:
+        """Store the fixture event as observed `status`, started a minute ago.
+
+        The fixture feed always reports kickoff three days out, so a pull writes
+        the event back to upcoming; tests that need it live after a pull call
+        this again, standing in for a feed that still offers it in play.
+        """
+        with self.session_factory.create_session() as session:
+            session.execute(
+                update(events_table)
+                .where(events_table.c.external_id == FIXTURE_EVENT_ID)
+                .values(status=status, starts_at=self.clock.now - timedelta(minutes=1))
             )
             session.commit()
 
@@ -247,6 +405,83 @@ def test_watches_the_evaluator_would_skip_do_not_qualify(harness: Harness) -> No
 
     assert harness.service.run_cycle().candidate_sports == []
     assert harness.provider.sport_fetches == []
+
+
+@pytest.mark.parametrize("window", ["live", "full_game"])
+def test_a_live_or_full_game_watch_on_a_live_event_is_refreshed_on_the_live_interval(
+    harness: Harness, window: str
+) -> None:
+    harness.switch(True, interval_minutes=30, live_interval_minutes=2)
+    harness.add_watch(window=window)
+    harness.set_status("live")
+
+    first = harness.service.run_cycle()
+    harness.set_status("live")
+    harness.clock.now += timedelta(minutes=1)
+    second = harness.service.run_cycle()
+    harness.set_status("live")
+    harness.clock.now += timedelta(minutes=2)
+    third = harness.service.run_cycle()
+
+    assert first.live_sports == [FIXTURE_SPORT_KEY]
+    assert [len(r.refreshed) for r in (first, second, third)] == [1, 0, 1]
+    assert harness.provider.sport_fetches == [FIXTURE_SPORT_KEY, FIXTURE_SPORT_KEY]
+
+
+def test_a_sport_with_only_pre_game_candidates_stays_on_the_upcoming_interval(
+    harness: Harness,
+) -> None:
+    harness.switch(True, interval_minutes=30, live_interval_minutes=1)
+    harness.add_watch(window="full_game")
+
+    first = harness.service.run_cycle()
+    harness.clock.now += timedelta(minutes=5)
+    second = harness.service.run_cycle()
+
+    assert (first.candidate_sports, first.live_sports) == ([FIXTURE_SPORT_KEY], [])
+    assert [len(r.refreshed) for r in (first, second)] == [1, 0]
+
+
+def test_a_sport_whose_only_watched_event_has_ended_is_not_refreshed(harness: Harness) -> None:
+    harness.switch(True)
+    harness.add_watch(window="full_game")
+    harness.add_watch(window="live")
+    harness.set_status("ended")
+
+    report = harness.service.run_cycle()
+
+    assert report.candidate_sports == []
+    assert harness.provider.sport_fetches == []
+    assert harness.provider.catalog_reads == 0
+
+
+def test_a_pre_game_watch_on_a_live_event_does_not_make_its_sport_a_candidate(
+    harness: Harness,
+) -> None:
+    harness.switch(True)
+    harness.add_watch(window="pre_game")
+    harness.set_status("live")
+
+    report = harness.service.run_cycle()
+
+    assert report.candidate_sports == []
+    assert harness.provider.sport_fetches == []
+
+
+def test_a_changed_live_interval_applies_on_the_next_poll(harness: Harness) -> None:
+    harness.switch(True, interval_minutes=30, live_interval_minutes=30)
+    harness.add_watch(window="live")
+    harness.set_status("live")
+    harness.service.run_cycle()
+    harness.set_status("live")
+    harness.clock.now += timedelta(minutes=2)
+
+    before = harness.service.run_cycle()
+    # The same service instance: no restart between the change and the poll.
+    harness.switch(True, interval_minutes=30, live_interval_minutes=1)
+    after = harness.service.run_cycle()
+
+    assert (len(before.refreshed), len(after.refreshed)) == (0, 1)
 
 
 def test_a_watched_sport_refreshes_once_per_interval(harness: Harness) -> None:
@@ -396,6 +631,7 @@ def test_auto_refresh_defaults_to_off_every_five_minutes(sqlite_database_url: st
     assert response.json() == {
         "enabled": False,
         "interval_minutes": 5,
+        "live_interval_minutes": 5,
         "quota_floor": None,
         "last_outcome": None,
         "paused": False,
@@ -411,11 +647,7 @@ def test_status_shows_remaining_credits_the_floor_and_the_pause(
     QuotaService(
         unit_of_work_factory=lambda: SqlAlchemyQuotaUnitOfWork(session_factory),
         quota_engine=QuotaEngine(),
-    ).record(
-        QuotaReading(
-            credits_remaining=47, credits_used=453, estimated_cost=3, observed_at=T0
-        )
-    )
+    ).record(QuotaReading(credits_remaining=47, credits_used=453, estimated_cost=3, observed_at=T0))
 
     body = _client(sqlite_database_url).get("/api/v1/admin/auto-refresh").json()
 
@@ -462,10 +694,39 @@ def test_settings_survive_a_restart(sqlite_database_url: str) -> None:
     assert reread.json()["interval_minutes"] == 15
 
 
-@pytest.mark.parametrize("interval", [0, 61])
-def test_interval_outside_one_to_sixty_is_rejected(
-    sqlite_database_url: str, interval: int
+def test_live_interval_round_trips_through_get_and_put(sqlite_database_url: str) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=False)
+    client = _client(sqlite_database_url)
+
+    put = client.put(
+        "/api/v1/admin/auto-refresh",
+        json={"enabled": True, "interval_minutes": 15, "live_interval_minutes": 1},
+    )
+
+    assert put.status_code == 200
+    assert put.json()["live_interval_minutes"] == 1
+    body = client.get("/api/v1/admin/auto-refresh").json()
+    assert (body["interval_minutes"], body["live_interval_minutes"]) == (15, 1)
+
+
+@pytest.mark.parametrize("live_interval", [0, 61])
+def test_live_interval_outside_one_to_sixty_is_rejected(
+    sqlite_database_url: str, live_interval: int
 ) -> None:
+    prepare_test_database(sqlite_database_url, seed_demo=False)
+    client = _client(sqlite_database_url)
+
+    response = client.put(
+        "/api/v1/admin/auto-refresh",
+        json={"enabled": True, "interval_minutes": 5, "live_interval_minutes": live_interval},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/v1/admin/auto-refresh").json()["live_interval_minutes"] == 5
+
+
+@pytest.mark.parametrize("interval", [0, 61])
+def test_interval_outside_one_to_sixty_is_rejected(sqlite_database_url: str, interval: int) -> None:
     prepare_test_database(sqlite_database_url, seed_demo=False)
     client = _client(sqlite_database_url)
 
@@ -513,6 +774,49 @@ def test_postgres_cooldown_rule_and_persisted_settings() -> None:
         with SqlAlchemyAutoRefreshUnitOfWork(built.session_factory) as uow:
             assert uow.get_settings().enabled is True
             assert FIXTURE_SPORT_KEY in uow.get_sport_refresh_times()
+    finally:
+        built.close()
+
+
+def test_postgres_live_interval_defaults_and_is_held_to_one_to_sixty() -> None:
+    built = Harness(_postgres_url(), drop_existing=True)
+    try:
+        with built.session_factory.create_session() as session:
+            # A row written without the column, as one stored before 0020 was.
+            session.execute(insert(auto_refresh_settings_table).values(id=1, enabled=False))
+            session.commit()
+        with SqlAlchemyAutoRefreshUnitOfWork(built.session_factory) as uow:
+            assert uow.get_settings().live_interval_minutes == 5
+        with built.session_factory.create_session() as session:
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    update(auto_refresh_settings_table).values(live_interval_minutes=61)
+                )
+                session.commit()
+    finally:
+        built.close()
+
+
+def test_postgres_live_watch_is_refreshed_on_the_live_interval() -> None:
+    built = Harness(_postgres_url(), drop_existing=True)
+    try:
+        built.switch(True, interval_minutes=30, live_interval_minutes=2)
+        built.add_watch(window="live")
+        built.add_watch(window="pre_game")
+        built.set_status("live")
+
+        first = built.service.run_cycle()
+        built.set_status("live")
+        # Past the interval, not on it: ingestion stamps the real clock.
+        built.clock.now += timedelta(minutes=3)
+        second = built.service.run_cycle()
+        built.set_status("ended")
+        built.clock.now += timedelta(minutes=3)
+        third = built.service.run_cycle()
+
+        assert first.live_sports == [FIXTURE_SPORT_KEY]
+        assert [len(r.refreshed) for r in (first, second, third)] == [1, 1, 0]
+        assert third.candidate_sports == []
     finally:
         built.close()
 

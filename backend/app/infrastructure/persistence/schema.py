@@ -248,11 +248,17 @@ auto_refresh_settings_table = Table(
     Column("id", Integer, primary_key=True),
     Column("enabled", Boolean, nullable=False, server_default="false"),
     Column("interval_minutes", Integer, nullable=False, server_default="5"),
+    # The cooldown of a sport with a candidate watch on a live event (#128).
+    Column("live_interval_minutes", Integer, nullable=False, server_default="5"),
     Column("quota_floor", Integer, nullable=True),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("id = 1", name="ck_auto_refresh_settings_single_row"),
     CheckConstraint(
         "interval_minutes BETWEEN 1 AND 60", name="ck_auto_refresh_settings_interval"
+    ),
+    CheckConstraint(
+        "live_interval_minutes BETWEEN 1 AND 60",
+        name="ck_auto_refresh_settings_live_interval",
     ),
 )
 
