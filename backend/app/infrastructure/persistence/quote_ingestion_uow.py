@@ -10,6 +10,8 @@ from backend.app.application.ports import QuoteIngestionUnitOfWork
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventSport,
+    EventStatus,
+    LinePhase,
     PersistedQuote,
     Quote,
     QuoteRefreshPersistenceResult,
@@ -78,14 +80,19 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
+        status: EventStatus | None = None,
     ) -> QuoteRefreshPersistenceResult:
         session = self._require_session()
         ingested_at = datetime.now(UTC)
-        event_row_id = self._ensure_event(event_id, event_metadata)
+        metadata = dict(event_metadata) if event_metadata else {}
+        if status is not None:
+            metadata["status"] = status.value
+        event_row_id = self._ensure_event(event_id, metadata or None)
         persisted_quotes: list[PersistedQuote] = []
         created_market_count = 0
 
         for quote in quotes:
+            phase = quote.phase or LinePhase.PRE_GAME
             market_id, market_created = self._ensure_market(event_row_id, quote)
             if market_created:
                 created_market_count += 1
@@ -103,6 +110,7 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                     price=quote.price,
                     ingested_at=ingested_at,
                     quoted_at=quote.quoted_at,
+                    phase=phase.value,
                 )
             )
             session.execute(
@@ -113,11 +121,14 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                     price=quote.price,
                     ingested_at=ingested_at,
                     quoted_at=quote.quoted_at,
+                    phase=phase.value,
                 )
             )
             persisted_quotes.append(
                 PersistedQuote(
-                    quote=quote.model_copy(update={"ingested_at": ingested_at}),
+                    quote=quote.model_copy(
+                        update={"ingested_at": ingested_at, "phase": phase}
+                    ),
                     market_id=market_id,
                     market_created=market_created,
                 )
@@ -158,6 +169,37 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
         if row is None:
             return None
         return EventSport(sport=row["sport"], league=row["league"])
+
+    def get_event_starts_at(self, event_id: str) -> datetime | None:
+        value = (
+            self._require_session()
+            .execute(select(events_table.c.starts_at).where(events_table.c.external_id == event_id))
+            .scalar_one_or_none()
+        )
+        return _as_utc(value)
+
+    def list_unended_event_starts(
+        self, sport: str, league: str | None
+    ) -> dict[str, datetime | None]:
+        rows = self._require_session().execute(
+            select(events_table.c.external_id, events_table.c.starts_at).where(
+                events_table.c.sport == sport,
+                events_table.c.league.is_(None)
+                if league is None
+                else events_table.c.league == league,
+                events_table.c.status != EventStatus.ENDED.value,
+            )
+        )
+        return {str(row.external_id): _as_utc(row.starts_at) for row in rows}
+
+    def set_event_status(self, event_ids: list[str], status: EventStatus) -> None:
+        if not event_ids:
+            return
+        self._require_session().execute(
+            update(events_table)
+            .where(events_table.c.external_id.in_(event_ids))
+            .values(status=status.value)
+        )
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         """Stamp a sport-wide pull; the Auto-Refresh cooldown runs from here."""
@@ -280,6 +322,13 @@ class SqlAlchemyQuoteIngestionUnitOfWork(QuoteIngestionUnitOfWork):
                 for event in self._staged_events
             ],
         )
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; every time this system stores is UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _row_value(row: Row[tuple[object]] | RowMapping | tuple[str], key: str) -> str:

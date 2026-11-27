@@ -6,9 +6,11 @@ from backend.app.domain.models import (
     EventPage,
     EventParticipant,
     EventQuoteFreshness,
+    EventStatus,
     EventSummary,
     LineBoard,
     LineBoardMarket,
+    LinePhase,
     MarketType,
     Quote,
 )
@@ -61,10 +63,17 @@ class EventQuoteFreshnessResponse(BaseModel):
 
 
 class EventResponse(BaseModel):
+    """One event. `status` is as last observed from the provider (#38).
+
+    `upcoming` while offered before its start, `live` while offered after it,
+    `ended` once a pull no longer offers it. An event stored `upcoming` whose
+    `starts_at` has passed has not been observed since kickoff.
+    """
+
     id: str
     sport: str | None
     league: str | None
-    status: str
+    status: EventStatus
     starts_at: datetime | None
     participants: list[EventParticipantResponse]
     quotes: EventQuoteFreshnessResponse
@@ -93,6 +102,10 @@ class LineBoardQuoteResponse(BaseModel):
     three days old, and the board has to be able to show that. `quoted_at` is
     null when the provider exposes no line-movement time, which `line_age_known`
     states outright so an unknown age is never read as freshly moved.
+
+    `phase` says whether the line was pulled pre-game or while the event was
+    live (#38). A live event can still hold a pre-game row from a book that
+    stopped quoting at kickoff; only its live rows can fill.
     """
 
     sportsbook: str
@@ -100,6 +113,7 @@ class LineBoardQuoteResponse(BaseModel):
     quoted_at: datetime | None
     ingested_at: datetime | None
     line_age_known: bool
+    phase: LinePhase | None
 
     @classmethod
     def from_domain(cls, quote: Quote) -> "LineBoardQuoteResponse":
@@ -109,6 +123,7 @@ class LineBoardQuoteResponse(BaseModel):
             quoted_at=quote.quoted_at,
             ingested_at=quote.ingested_at,
             line_age_known=quote.line_age_known,
+            phase=quote.phase,
         )
 
 

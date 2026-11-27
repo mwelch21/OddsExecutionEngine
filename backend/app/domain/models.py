@@ -10,6 +10,46 @@ class MarketType(StrEnum):
     TOTAL = "total"
 
 
+class EventStatus(StrEnum):
+    """Where an event is in its life, as last observed from the provider (#38).
+
+    Written at ingest, never inferred from `starts_at` alone: an event past its
+    start time is `live` only while the provider still offers it, and `ended`
+    once a pull no longer does.
+    """
+
+    UPCOMING = "upcoming"
+    LIVE = "live"
+    ENDED = "ended"
+
+
+class LinePhase(StrEnum):
+    """Whether a stored line was pulled before kickoff or while the event was live.
+
+    Stamped on each quote at ingest from the event's observed status, so a reader
+    never has to guess which kind of line it is looking at.
+    """
+
+    PRE_GAME = "pre_game"
+    LIVE = "live"
+
+
+class EventListStatus(StrEnum):
+    """Which events a browse request lists. `all` is upcoming plus live.
+
+    Ended events are never listed: nothing on them can fill.
+    """
+
+    UPCOMING = "upcoming"
+    LIVE = "live"
+    ALL = "all"
+
+    @classmethod
+    def from_include_started(cls, include_started: bool) -> "EventListStatus":
+        """The deprecated `include_started` flag, read as the filter it stands for."""
+        return cls.ALL if include_started else cls.UPCOMING
+
+
 class OrderIntent(DomainModel):
     event_id: str
     market_type: MarketType
@@ -36,6 +76,8 @@ class Quote(DomainModel):
     line: float | None = None
     quoted_at: datetime | None = None
     ingested_at: datetime | None = None
+    # Set once the quote is stored; None on a quote fresh from a provider.
+    phase: LinePhase | None = None
 
     @property
     def line_age_known(self) -> bool:
@@ -46,6 +88,14 @@ class Quote(DomainModel):
     def effective_quoted_at(self) -> datetime | None:
         """Best available age reference: the book's time, else the ingest time."""
         return self.quoted_at if self.quoted_at is not None else self.ingested_at
+
+
+class FillableQuotes(DomainModel):
+    """The stored quotes a watch may fill on, and why there are none if so."""
+
+    quotes: list[Quote]
+    # Set only when the event itself rules every quote out, e.g. `event_ended`.
+    skipped_reason: str | None = None
 
 
 class PersistedQuote(DomainModel):
@@ -187,7 +237,6 @@ class EventInfo(DomainModel):
     id: str
     sport: str
     league: str | None = None
-    status: str = "upcoming"
     participants: list[EventParticipant] = []
     commence_time: datetime | None = None
 
@@ -223,6 +272,9 @@ class ProviderFetchReport(DomainModel):
     # The quota observation of the call that produced the data. Callers coalesced
     # onto one call get the same id, so their refreshes link to one call (#104).
     observation_id: int | None = None
+    # Per-event fetch only: did the provider still offer the event? False on a 404
+    # or an empty answer; None when the provider does not say (#38).
+    event_offered: bool | None = None
 
 
 class EventSport(DomainModel):
@@ -293,7 +345,7 @@ class EventSummary(DomainModel):
     id: str
     sport: str | None = None
     league: str | None = None
-    status: str = "upcoming"
+    status: EventStatus = EventStatus.UPCOMING
     starts_at: datetime | None = None
     participants: list[EventParticipant] = []
     quotes: EventQuoteFreshness = EventQuoteFreshness()
@@ -368,14 +420,13 @@ class LineBoard(DomainModel):
 class EventFilter(DomainModel):
     """What a browse request is asking for.
 
-    League and sport narrow independently and combine; `include_started` opens up
-    events already under way, which are excluded by default because a started
-    event can no longer produce an opportunity.
+    League and sport narrow independently and combine. `status` picks upcoming,
+    live, or both (the default); ended events are never listed (#38).
     """
 
     league: str | None = None
     sport: str | None = None
-    include_started: bool = False
+    status: EventListStatus = EventListStatus.ALL
 
 
 class EventPage(DomainModel):

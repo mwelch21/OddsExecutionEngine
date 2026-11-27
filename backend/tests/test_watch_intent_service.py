@@ -1,9 +1,10 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventStatus,
     MarketType,
     MatchingQuote,
     Opportunity,
@@ -32,12 +33,12 @@ class RecordingWatchIntentUnitOfWork:
         created_intent: WatchIntent,
         active_intents: list[WatchIntent] | None = None,
         inserted_opportunities: list[Opportunity] | None = None,
-        starts_at: datetime | None = None,
+        event_status: EventStatus | None = None,
     ) -> None:
         self._created_intent = created_intent
         self._active_intents = active_intents or [created_intent]
         self._inserted_opportunities = inserted_opportunities or []
-        self._starts_at = starts_at
+        self._event_status = event_status
         self._staged_events: list[WorkflowEvent] = []
         self._committed_events: tuple[WorkflowEvent, ...] = ()
         self._staged_public_events: list[PublicEvent[DomainModel]] = []
@@ -165,8 +166,8 @@ class RecordingWatchIntentUnitOfWork:
     ) -> list[tuple[Opportunity, datetime | None]]:
         raise NotImplementedError
 
-    def get_event_starts_at(self, event_external_id: str) -> datetime | None:
-        return self._starts_at
+    def get_event_status(self, event_external_id: str) -> EventStatus | None:
+        return self._event_status
 
     def get_opportunity_event_context(
         self, opportunity: Opportunity
@@ -271,7 +272,7 @@ def test_evaluate_for_event_notifies_once_however_many_books_matched() -> None:
         created_intent=intent,
         active_intents=[intent],
         inserted_opportunities=[opportunity],
-        starts_at=datetime.now(UTC) + timedelta(days=1),
+        event_status=EventStatus.UPCOMING,
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
@@ -313,7 +314,7 @@ def test_evaluate_for_event_does_not_re_evaluate_a_triggered_watch() -> None:
         created_intent=intent,
         active_intents=[intent],
         inserted_opportunities=[opportunity],
-        starts_at=datetime.now(UTC) + timedelta(days=1),
+        event_status=EventStatus.UPCOMING,
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(
@@ -348,7 +349,7 @@ def test_evaluate_for_event_skips_events_and_triggers_when_the_db_rejects_the_in
         created_intent=intent,
         active_intents=[intent],
         inserted_opportunities=[],
-        starts_at=datetime.now(UTC) + timedelta(days=1),
+        event_status=EventStatus.UPCOMING,
     )
     publisher = InMemoryWorkflowEventPublisher()
     service = WatchIntentService(

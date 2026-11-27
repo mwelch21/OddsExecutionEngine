@@ -14,9 +14,12 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from backend.app.domain.models import (
     EventFilter,
+    EventListStatus,
     EventParticipant,
     EventQuoteFreshness,
+    EventStatus,
     EventSummary,
+    LinePhase,
     MarketQuotes,
     MarketType,
     Quote,
@@ -90,9 +93,8 @@ class SqlAlchemyEventReadUnitOfWork:
     def get_event(self, event_id: str) -> EventSummary | None:
         """One event by its external id, carrying the same header the list shows.
 
-        No started-event filter: the browse list hides started events because
-        they cannot be filled, but asking for one by id is a different question
-        and its board still renders.
+        No status filter: the browse list hides ended events, but asking for one
+        by id is a different question and its board still renders.
         """
         session = self._require_session()
         rows = (
@@ -124,6 +126,7 @@ class SqlAlchemyEventReadUnitOfWork:
                     market_quotes_latest_table.c.price,
                     market_quotes_latest_table.c.quoted_at,
                     market_quotes_latest_table.c.ingested_at,
+                    market_quotes_latest_table.c.phase,
                 )
                 .select_from(
                     markets_table.join(
@@ -169,6 +172,7 @@ class SqlAlchemyEventReadUnitOfWork:
                     line=market.line,
                     quoted_at=_as_utc(row["quoted_at"]),
                     ingested_at=_as_utc(row["ingested_at"]),
+                    phase=LinePhase(row["phase"]),
                 )
             )
         return list(markets.values())
@@ -188,7 +192,7 @@ class SqlAlchemyEventReadUnitOfWork:
                 id=str(row["external_id"]),
                 sport=row["sport"],
                 league=row["league"],
-                status=row["status"],
+                status=EventStatus(row["status"]),
                 starts_at=_as_utc(row["starts_at"]),
                 participants=participants.get(str(row["id"]), []),
                 quotes=freshness.get(str(row["id"]), EventQuoteFreshness()),
@@ -308,13 +312,26 @@ def _apply_filter(
         query = query.where(events_table.c.league == event_filter.league)
     if event_filter.sport is not None:
         query = query.where(events_table.c.sport == event_filter.sport)
-    if not event_filter.include_started:
-        # An event with no known start time has not started, matching the rule the
-        # watch paths already apply.
-        query = query.where(
-            (events_table.c.starts_at.is_(None)) | (events_table.c.starts_at > now)
-        )
-    return query
+    return query.where(_status_condition(event_filter.status, now))
+
+
+def _status_condition(status: EventListStatus, now: datetime) -> ColumnElement[bool]:
+    """The observed status a listed event must have (#38). Ended is never listed.
+
+    Upcoming also requires the start to be ahead: an event stored `upcoming`
+    whose start has passed has not been observed since kickoff, so it is neither
+    known to be upcoming nor known to be live, and is listed as neither until a
+    refresh settles it. No known start time has not started.
+    """
+    upcoming = (events_table.c.status == EventStatus.UPCOMING.value) & (
+        events_table.c.starts_at.is_(None) | (events_table.c.starts_at > now)
+    )
+    live = events_table.c.status == EventStatus.LIVE.value
+    if status is EventListStatus.UPCOMING:
+        return upcoming
+    if status is EventListStatus.LIVE:
+        return live
+    return upcoming | live
 
 
 def _row_to_freshness(row: RowMapping) -> EventQuoteFreshness:

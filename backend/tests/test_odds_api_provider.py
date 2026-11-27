@@ -140,9 +140,19 @@ class TestListQuotes:
     )
     def test_returns_empty_for_unknown_event(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
-        quotes, _ = provider.list_quotes("nonexistent", SPORT_KEY)
+        quotes, report = provider.list_quotes("nonexistent", SPORT_KEY)
 
         assert quotes == []
+        # A 404 is an empty answer: upstream no longer offers the event (#38).
+        assert report.event_offered is False
+
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
+    def test_reports_an_answered_event_as_offered(self, mock_fetch: MagicMock) -> None:
+        _, report = _create_provider().list_quotes("abc123", SPORT_KEY)
+
+        assert report.event_offered is True
 
     @patch.object(
         TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)

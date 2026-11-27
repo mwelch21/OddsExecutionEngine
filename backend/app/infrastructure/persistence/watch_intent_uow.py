@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.domain.base import DomainModel
 from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
+    EventStatus,
     MarketType,
     MatchingQuote,
     Opportunity,
@@ -322,12 +323,13 @@ class SqlAlchemyWatchIntentUnitOfWork:
             result.append((opp, row))
         return result
 
-    def get_event_starts_at(self, event_external_id: str) -> datetime | None:
-        return self._require_session().execute(
-            select(events_table.c.starts_at).where(
+    def get_event_status(self, event_external_id: str) -> EventStatus | None:
+        value = self._require_session().execute(
+            select(events_table.c.status).where(
                 events_table.c.external_id == event_external_id
             )
         ).scalar_one_or_none()
+        return None if value is None else EventStatus(value)
 
     def get_opportunity_event_context(
         self, opportunity: Opportunity

@@ -189,7 +189,8 @@ class TheOddsApiProvider:
             # The call was billed before its body proved unusable.
             link_observation(error, report.observation_id)
             raise
-        return quotes, report
+        # A 404 comes back as no events: upstream no longer offers it (#38).
+        return quotes, report.model_copy(update={"event_offered": bool(raw_events)})
 
     def list_events_for_sport(self, sport: str) -> list[EventInfo]:
         """Fetch all upcoming events for a sport. Returns event metadata."""

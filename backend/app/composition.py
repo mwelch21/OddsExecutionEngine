@@ -16,6 +16,7 @@ from backend.app.application.quote_ingestion_service import QuoteIngestionServic
 from backend.app.application.watch_intent_service import WatchIntentService
 from backend.app.config import Settings
 from backend.app.engines.auto_refresh_cadence_engine import AutoRefreshCadenceEngine
+from backend.app.engines.event_status_engine import EventStatusEngine
 from backend.app.engines.normalization_engine import NormalizationEngine
 from backend.app.engines.opportunity_validity_engine import OpportunityValidityEngine
 from backend.app.engines.price_comparison_engine import PriceComparisonService
@@ -83,6 +84,7 @@ def build_watch_intent_service(
             recommendation_engine,
         ),
         opportunity_validity_engine=OpportunityValidityEngine(),
+        event_status_engine=EventStatusEngine(),
         opportunity_ttl_minutes=settings.opportunity_ttl_minutes,
     )
 
@@ -103,6 +105,7 @@ def build_quote_ingestion_service(
         # Every refresh, manual or automatic, leaves a refresh record (#96).
         refresh_recorder=SqlAlchemyRefreshRecorder(session_factory),
         error_classifier=classify_provider_error,
+        event_status_engine=EventStatusEngine(),
     )
 
 

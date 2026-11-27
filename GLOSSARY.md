@@ -36,7 +36,11 @@ _Avoid_: Client, front end, app (when you mean this surface specifically)
 
 **Event status**:
 Where a sporting event is in its life: upcoming, live, or ended.
-_Avoid_: Phase (for the event; `phase` is only a field on a live or pre-game opportunity), state
+_Avoid_: Phase (for the event; `phase` is only a field on a live or pre-game quote or opportunity), state
+
+**Line phase**:
+Whether a stored line was pulled before kickoff (`pre_game`) or while the event was live (`live`). A field on a quote, never on the event.
+_Avoid_: Line status
 
 **Watch window**:
 The part of an event's life in which a watch may fire: pre-game only, live only, or the full game. Every watch has one; the same target price means a different bet before and during a game.

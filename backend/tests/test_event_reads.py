@@ -44,6 +44,7 @@ def _insert_event(
     league: str,
     starts_at: datetime,
     participants: list[tuple[str, str]],
+    status: str = "upcoming",
 ) -> str:
     event_row_id = str(uuid4())
     session.execute(
@@ -53,6 +54,7 @@ def _insert_event(
             starts_at=starts_at,
             sport=sport,
             league=league,
+            status=status,
         )
     )
     for order, (name, side) in enumerate(participants, start=1):
@@ -105,7 +107,11 @@ def _insert_quote(
 
 
 def _seed_events(session_factory: DatabaseSessionFactory) -> None:
-    """Three upcoming events across two leagues, plus one that has already started."""
+    """Three upcoming events across two leagues, plus one that has already started.
+
+    The started one is still stored `upcoming`: nothing has observed it since
+    kickoff, so it is neither known upcoming nor known live, and no list shows it.
+    """
     with session_factory.create_session() as session:
         # Three books quoting both sides, the way real ingestion stores them: a
         # book is not a row. Caesars reports no line-movement time on either
@@ -182,11 +188,39 @@ def _seed_events(session_factory: DatabaseSessionFactory) -> None:
         session.commit()
 
 
-def _build_app(database_url: str, *, drop_existing: bool = False) -> FastAPI:
+def _seed_lifecycle(session_factory: DatabaseSessionFactory) -> None:
+    """One live event and one ended event, as ingestion observed them (#38)."""
+    with session_factory.create_session() as session:
+        _insert_event(
+            session,
+            external_id="nfl-in-play",
+            sport="americanfootball",
+            league="NFL",
+            starts_at=NOW - timedelta(hours=2),
+            participants=[("Ravens", "home"), ("Steelers", "away")],
+            status="live",
+        )
+        _insert_event(
+            session,
+            external_id="nfl-finished",
+            sport="americanfootball",
+            league="NFL",
+            starts_at=NOW - timedelta(hours=5),
+            participants=[("Packers", "home"), ("Bears", "away")],
+            status="ended",
+        )
+        session.commit()
+
+
+def _build_app(
+    database_url: str, *, drop_existing: bool = False, lifecycle: bool = False
+) -> FastAPI:
     session_factory = prepare_test_database(
         database_url, seed_demo=False, drop_existing=drop_existing
     )
     _seed_events(session_factory)
+    if lifecycle:
+        _seed_lifecycle(session_factory)
     return create_app(Settings(database_url_override=database_url))
 
 
@@ -221,17 +255,64 @@ def test_lists_upcoming_events_with_participants_and_start_time(
     assert [p["side"] for p in chiefs_bills["participants"]] == ["home", "away"]
 
 
-def test_events_that_have_started_are_excluded_by_default(
+UPCOMING = ["nfl-jets-dolphins", "nfl-chiefs-bills", "mlb-yankees-redsox"]
+
+
+def _assert_status_filters(client: TestClient) -> None:
+    default = client.get("/api/v1/events").json()
+    every = client.get("/api/v1/events", params={"status": "all"}).json()
+    upcoming = client.get("/api/v1/events", params={"status": "upcoming"}).json()
+    live = client.get("/api/v1/events", params={"status": "live"}).json()
+
+    # Default is all: upcoming plus live, soonest first, so the live game leads.
+    assert _ids(default) == ["nfl-in-play", *UPCOMING]
+    assert default["total_events"] == 4
+    assert every == default
+    assert _ids(upcoming) == UPCOMING
+    assert upcoming["total_events"] == 3
+    assert _ids(live) == ["nfl-in-play"]
+    assert _by_id(live, "nfl-in-play")["status"] == "live"
+    # Ended, and started-but-unobserved, are on no list.
+    for payload in (default, upcoming, live):
+        assert "nfl-finished" not in _ids(payload)
+        assert "nfl-already-kicked-off" not in _ids(payload)
+
+
+def test_status_filter_lists_upcoming_live_or_both_and_never_ended(
     sqlite_database_url: str,
 ) -> None:
-    with TestClient(_build_app(sqlite_database_url)) as client:
-        default = client.get("/api/v1/events").json()
-        included = client.get("/api/v1/events", params={"include_started": True}).json()
+    with TestClient(_build_app(sqlite_database_url, lifecycle=True)) as client:
+        _assert_status_filters(client)
 
-    assert "nfl-already-kicked-off" not in _ids(default)
-    assert default["total_events"] == 3
-    assert "nfl-already-kicked-off" in _ids(included)
-    assert included["total_events"] == 4
+
+def test_include_started_is_a_deprecated_alias_for_status(
+    sqlite_database_url: str,
+) -> None:
+    with TestClient(_build_app(sqlite_database_url, lifecycle=True)) as client:
+        started = client.get("/api/v1/events", params={"include_started": True}).json()
+        not_started = client.get("/api/v1/events", params={"include_started": False}).json()
+        both = client.get(
+            "/api/v1/events", params={"include_started": False, "status": "live"}
+        ).json()
+
+    assert _ids(started) == ["nfl-in-play", *UPCOMING]
+    assert _ids(not_started) == UPCOMING
+    # An explicit status wins over the alias.
+    assert _ids(both) == ["nfl-in-play"]
+
+
+def test_unknown_status_is_rejected(sqlite_database_url: str) -> None:
+    with TestClient(_build_app(sqlite_database_url)) as client:
+        assert client.get("/api/v1/events", params={"status": "ended"}).status_code == 422
+
+
+def test_postgres_status_filter_lists_upcoming_live_or_both_and_never_ended() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    with TestClient(_build_app(database_url, drop_existing=True, lifecycle=True)) as client:
+        _assert_status_filters(client)
 
 
 def test_filters_by_league_and_by_sport_independently(

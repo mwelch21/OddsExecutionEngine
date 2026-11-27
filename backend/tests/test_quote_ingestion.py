@@ -11,6 +11,7 @@ from backend.app.domain.events import WorkflowEvent
 from backend.app.domain.models import (
     EventInfo,
     EventSport,
+    EventStatus,
     MarketType,
     PersistedQuote,
     ProviderFetchReport,
@@ -94,6 +95,7 @@ class RecordingQuoteIngestionUnitOfWork:
         event_id: str,
         quotes: list[Quote],
         event_metadata: dict[str, object] | None = None,
+        status: EventStatus | None = None,
     ) -> QuoteRefreshPersistenceResult:
         if self._fail_on_persist:
             raise RuntimeError("quote persistence failed")
@@ -101,6 +103,17 @@ class RecordingQuoteIngestionUnitOfWork:
 
     def get_event_sport(self, event_id: str) -> EventSport | None:
         return self._event_sport
+
+    def get_event_starts_at(self, event_id: str) -> datetime | None:
+        return None
+
+    def list_unended_event_starts(
+        self, sport: str, league: str | None
+    ) -> dict[str, datetime | None]:
+        return {}
+
+    def set_event_status(self, event_ids: list[str], status: EventStatus) -> None:
+        pass
 
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         self.sport_refreshes.append(sport_key)

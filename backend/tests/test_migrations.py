@@ -327,3 +327,69 @@ def test_postgres_call_outcome_migration_keeps_stored_calls_unknown() -> None:
         pytest.skip("Postgres integration environment is not configured.")
 
     _assert_call_outcome_migration(database_url, _reset_postgres(database_url))
+
+
+def _assert_event_status_line_phase_migration(
+    database_url: str, session_factory: DatabaseSessionFactory
+) -> None:
+    config = _build_alembic_config(database_url)
+    command.upgrade(config, "20261109_0017")
+    kickoff = datetime(2026, 11, 20, 20, 0, tzinfo=UTC)
+    with session_factory.create_session() as session:
+        _seed_market_and_watch(session, kickoff - timedelta(days=1))
+        for table in ("market_quotes_latest", "market_quotes_history"):
+            for sportsbook, pulled_at in (
+                ("DraftKings", kickoff - timedelta(hours=1)),
+                ("FanDuel", kickoff + timedelta(minutes=30)),
+            ):
+                id_column = "id, " if table == "market_quotes_history" else ""
+                id_value = f"'{table}-{sportsbook}', " if id_column else ""
+                session.execute(
+                    text(
+                        f"INSERT INTO {table} ({id_column}market_id, sportsbook, price,"  # noqa: S608
+                        f" ingested_at) VALUES ({id_value}'market-1', :book, 120, :at)"
+                    ),
+                    {"book": sportsbook, "at": pulled_at},
+                )
+        session.commit()
+
+    command.upgrade(config, "20261127_0018")
+
+    with session_factory.create_session() as session:
+        for table in ("market_quotes_latest", "market_quotes_history"):
+            rows = session.execute(
+                text(f"SELECT sportsbook, phase FROM {table}")  # noqa: S608
+            ).all()
+            phases = {str(row[0]): str(row[1]) for row in rows}
+            # Pulled after kickoff from a feed that still offered it: live.
+            assert phases == {"DraftKings": "pre_game", "FanDuel": "live"}, table
+        # Whether the stored event is live or ended was never observed: unchanged.
+        assert session.execute(text("SELECT status FROM events")).scalar_one() == "upcoming"
+        with pytest.raises(IntegrityError):
+            session.execute(text("UPDATE events SET status = 'halftime'"))
+        session.rollback()
+        with pytest.raises(IntegrityError):
+            session.execute(text("UPDATE market_quotes_latest SET phase = 'overtime'"))
+        session.rollback()
+
+    command.downgrade(config, "20261109_0017")
+    for table in ("market_quotes_latest", "market_quotes_history"):
+        columns = {c["name"] for c in inspect(session_factory.engine).get_columns(table)}
+        assert "phase" not in columns, table
+    command.upgrade(config, "head")
+
+
+def test_event_status_line_phase_migration_backfills_phase_from_kickoff(
+    sqlite_database_url: str,
+) -> None:
+    _assert_event_status_line_phase_migration(
+        sqlite_database_url, DatabaseSessionFactory(sqlite_database_url)
+    )
+
+
+def test_postgres_event_status_line_phase_migration_backfills_phase_from_kickoff() -> None:
+    database_url = os.environ.get("STAGE2_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Postgres integration environment is not configured.")
+
+    _assert_event_status_line_phase_migration(database_url, _reset_postgres(database_url))
