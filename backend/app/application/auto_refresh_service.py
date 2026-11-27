@@ -98,7 +98,9 @@ class AutoRefreshService:
             watched = uow.list_watched_events(now)
             refresh_times = uow.get_sport_refresh_times()
 
-        candidates, live = self._sport_keys_for(self._candidate_engine.candidates(watched, now))
+        live_by_key = self._sport_keys_for(self._candidate_engine.candidates(watched, now))
+        candidates = set(live_by_key)
+        live = {key for key, is_live in live_by_key.items() if is_live}
         due = self._cadence_engine.due_sports(
             candidates,
             live,
@@ -145,27 +147,22 @@ class AutoRefreshService:
         self._logger.info("auto_refresh.balance_checked", extra={"paused": still_paused})
         return still_paused
 
-    def _sport_keys_for(self, candidates: list[CandidateSport]) -> tuple[set[str], set[str]]:
-        """Provider keys for stored (sport, league) pairs; never a guessed key.
+    def _sport_keys_for(self, candidates: list[CandidateSport]) -> dict[str, bool]:
+        """Each candidate's provider key, True when it runs on the live interval.
 
-        Returns every candidate key, and the keys on the live interval.
+        Keys come from stored (sport, league) pairs; never a guessed key.
         """
         if not candidates:
             # No watch to serve: skip even the catalog lookup.
-            return set(), set()
+            return {}
         live_by_pair = {
             (candidate.sport, candidate.league): candidate.live for candidate in candidates
         }
-        keys: set[str] = set()
-        live: set[str] = set()
-        for entry in self._quote_ingestion_service.list_supported_sports():
-            pair = (entry.sport, entry.league)
-            if pair not in live_by_pair:
-                continue
-            keys.add(entry.key)
-            if live_by_pair[pair]:
-                live.add(entry.key)
-        return keys, live
+        return {
+            entry.key: live_by_pair[(entry.sport, entry.league)]
+            for entry in self._quote_ingestion_service.list_supported_sports()
+            if (entry.sport, entry.league) in live_by_pair
+        }
 
     def _refresh(self, sport: str) -> tuple[AutoRefreshOutcome, bool]:
         started_at = perf_counter()

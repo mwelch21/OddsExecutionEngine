@@ -14,7 +14,9 @@ export function creditsPerHour(minutes: number) {
  *
  * Dragging moves the draft and its credits projection, nothing else: no request
  * is sent until the operator presses Enter on the slider or clicks Save. While a
- * draft is unsaved, a server value arriving never replaces it.
+ * draft is unsaved, a server value arriving never replaces it. While its save is
+ * in flight the slider is locked, so the draft cannot move away from what was
+ * sent and the acknowledgement always matches the value on screen.
  */
 export function IntervalSlider({
   label,
@@ -63,6 +65,7 @@ export function IntervalSlider({
       <label htmlFor={id} className="admin-slider-label">
         <span>{label}</span>
         <strong>{value == null ? "…" : `${draft} min`}</strong>
+        {changed && <span className="admin-muted">(saved {held} min)</span>}
         <span className="admin-muted">~{creditsPerHour(draft)} credits/hr per sport</span>
       </label>
       <div className="admin-slider-row">
@@ -73,7 +76,7 @@ export function IntervalSlider({
           max={max}
           step={1}
           value={draft}
-          disabled={disabled}
+          disabled={disabled || saving}
           aria-valuetext={`${draft} minutes, about ${creditsPerHour(draft)} credits per hour`}
           onChange={(event) => {
             dirty.current = true;

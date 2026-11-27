@@ -109,7 +109,7 @@ export function AutoRefreshSection() {
     >
       <p className="admin-muted">
         {enabled
-          ? "Refreshes each sport with an active watch about once per interval: Live when a watched game is in play, Upcoming otherwise. Idle when nothing is watched."
+          ? "Refreshes each sport with a watch that can fire now: a pre-game or full-game watch on an upcoming game, or a live or full-game watch on a game in play. Live paces a sport when one of those watches is on a game in play, Upcoming otherwise. Idle when no watch qualifies."
           : "Off. Nothing refreshes on its own; manual refresh still works."}
       </p>
       {enabled && paused && (

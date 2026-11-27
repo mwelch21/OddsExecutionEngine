@@ -25,7 +25,7 @@ Until now refresh has been manual only: no scheduler, no timer, no background jo
   - It refreshes each candidate sport whose `last_refreshed_at + its interval <= now`.
   - `last_refreshed_at` is stored per sport and updated by every sport-wide pull, manual or automatic. A per-event manual refresh does not update it, because it covered one event.
   - There is no stored `next_due_at`, no catch-up queue, and no overlapping refreshes.
-  - Each interval defaults to 5 minutes and the operator can set it from 1 to 60. The live default matches the upcoming one, so nothing speeds up until the operator asks. An interval is a freshness target, not an SLA: upstream failures, slow calls or worker downtime can stretch the gap.
+  - Each interval defaults to 5 minutes and the operator can set it from 1 to 60. The live default matches the upcoming one, so nothing speeds up until the operator asks. One rollout effect: the migration gives an existing settings row a live interval of 5 whatever its upcoming interval, so an install whose upcoming interval is above 5 refreshes live sports faster right after the upgrade, until the operator moves the Live slider. An interval is a freshness target, not an SLA: upstream failures, slow calls or worker downtime can stretch the gap.
   - Settings are read on every poll, so a changed interval applies from the next poll with no restart.
 - **Speed-up is manual** (#128). The free feed carries no game clock or period, so the system never changes an interval by itself. The operator speeds live refresh up, and back down, by moving the Live slider. A per-game boost or an elapsed-time rule is out of scope.
 - **Status follows the pull** (#128). A sport-wide pull is what moves an event from `live` to `ended` (ADR-019), which expires its watches (ADR-017). So the last live pull of a game also stops further pulls for it.
@@ -44,13 +44,12 @@ Until now refresh has been manual only: no scheduler, no timer, no background jo
 
 ## Rejected alternatives
 
-- **Keeping `starts_at > now` as the candidate rule:** every sport whose only watched event had started dropped out at kickoff, so a live watch could fire only on a manual refresh (#128).
-- **Automatic live speed-up (game clock, elapsed time, per-game boost):** the free feed has no signal for it, and spend must stay the operator's choice. 1 minute live costs 180 credits per sport per hour; 5 minutes costs 36.
-
 - **A thread in the API process:** every API worker would tick, spending credits twice over unless it is fenced off separately.
 - **Ticking from the Go notifier:** outside its delivery-only scope (ADR-013), and it would need an HTTP hop back into Python.
 - **A fixed sweep that skips recently pulled sports:** worst-case gap of nearly two intervals.
 - **Turning the switch off on a credit floor or at zero:** the operator chose a warning, not an automatic stop.
+- **Keeping `starts_at > now` as the candidate rule:** every sport whose only watched event had started dropped out at kickoff, so a live watch could fire only on a manual refresh (#128).
+- **Automatic live speed-up (game clock, elapsed time, per-game boost):** the free feed has no signal for it, and spend must stay the operator's choice. 1 minute live costs 180 credits per sport per hour; 5 minutes costs 36.
 
 ## Consequences
 
