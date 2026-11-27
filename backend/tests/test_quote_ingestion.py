@@ -108,7 +108,7 @@ class RecordingQuoteIngestionUnitOfWork:
     def get_event_starts_at(self, event_id: str) -> datetime | None:
         return None
 
-    def list_unended_event_starts(
+    def list_event_starts(
         self, sport: str, league: str | None
     ) -> dict[str, datetime | None]:
         return {}

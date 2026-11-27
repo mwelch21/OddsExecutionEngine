@@ -271,21 +271,24 @@ class TheOddsApiProvider:
 
         The observation id is stored beside the payload instead: it names the call
         the data came from, so callers coalesced onto that call all link to it.
+        So is the time the response arrived, which orders status writes (#38): a
+        reused response keeps the time of the call that produced it.
         """
         quota: UpstreamQuota | None = None
 
-        def load() -> tuple[ProviderPayload, int | None]:
+        def load() -> tuple[ProviderPayload, int | None, datetime]:
             nonlocal quota
             payload, quota, observation_id = fetch()
-            return payload, observation_id
+            return payload, observation_id, datetime.now(UTC)
 
         cached = self._response_cache.fetch(key, load, live=live)
-        payload, observation_id = cached.payload
+        payload, observation_id, answered_at = cached.payload
         report = ProviderFetchReport(
             upstream_contacted=cached.upstream_contacted,
             data_age_seconds=cached.age_seconds,
             quota=quota if cached.upstream_contacted else None,
             observation_id=observation_id,
+            answered_at=answered_at,
         )
         return payload, report
 

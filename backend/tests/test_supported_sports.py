@@ -68,7 +68,7 @@ class SportStampOnlyUnitOfWork:
     def record_sport_refreshed(self, sport_key: str, refreshed_at: datetime) -> None:
         self.stamped.append(sport_key)
 
-    def list_unended_event_starts(
+    def list_event_starts(
         self, sport: str, league: str | None
     ) -> dict[str, datetime | None]:
         # Status bookkeeping, not a quote write: nothing stored, so nothing to end.

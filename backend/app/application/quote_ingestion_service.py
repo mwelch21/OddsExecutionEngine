@@ -399,7 +399,11 @@ class QuoteIngestionService:
         return EventObservation(status=status, observed_at=observed_at, starts_at=observed_start)
 
     def _observed_at(self, fetch_report: ProviderFetchReport) -> datetime:
-        """When the answer's data was current: a reused response is as old as it is."""
+        """When the provider's response arrived, so processing delay cannot reorder
+        two answers. A provider that does not say falls back to the ingestion
+        clock less the data's age."""
+        if fetch_report.answered_at is not None:
+            return fetch_report.answered_at
         return self._clock() - timedelta(seconds=fetch_report.data_age_seconds)
 
     def _stored_starts_at(self, event_id: str) -> datetime | None:
@@ -418,7 +422,7 @@ class QuoteIngestionService:
         entry = catalog.get(sport_key)
         if entry is None:
             return
-        stored = unit_of_work.list_unended_event_starts(entry.sport, entry.league)
+        stored = unit_of_work.list_event_starts(entry.sport, entry.league)
         ended = sorted(
             event_id
             for event_id, starts_at in stored.items()

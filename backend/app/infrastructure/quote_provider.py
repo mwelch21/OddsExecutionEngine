@@ -26,7 +26,10 @@ class InMemoryQuoteProvider:
         # offers an event until it 404s.
         offered = event_id in self._events or bool(quotes)
         return quotes, ProviderFetchReport(
-            upstream_contacted=True, data_age_seconds=0.0, event_offered=offered
+            upstream_contacted=True,
+            data_age_seconds=0.0,
+            event_offered=offered,
+            answered_at=datetime.now(UTC),
         )
 
     def list_quotes_for_sport(
@@ -39,7 +42,9 @@ class InMemoryQuoteProvider:
                 result.setdefault(quote.event_id, []).append(quote)
         # Fixtures are built in memory, so there is no upstream and nothing to
         # bill. Reporting contact with an age of zero keeps the shape honest.
-        return result, ProviderFetchReport(upstream_contacted=True, data_age_seconds=0.0)
+        return result, ProviderFetchReport(
+            upstream_contacted=True, data_age_seconds=0.0, answered_at=datetime.now(UTC)
+        )
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
         return self._events.get(event_id)

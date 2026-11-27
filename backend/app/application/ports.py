@@ -164,10 +164,11 @@ class QuoteIngestionUnitOfWork(Protocol):
 
     def get_event_starts_at(self, event_id: str) -> datetime | None: ...
 
-    def list_unended_event_starts(
+    def list_event_starts(
         self, sport: str, league: str | None
     ) -> dict[str, datetime | None]:
-        """Start time of each stored, not-ended event of one sport, by external id."""
+        """Start time of each stored event of one sport, by external id. Ended ones
+        are included, so a newer absence still advances their observation time."""
         ...
 
     def set_event_status(

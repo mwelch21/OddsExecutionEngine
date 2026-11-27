@@ -22,7 +22,7 @@ This ADR reverses the "started events can never fill" rule.
   - A started, stored, not-ended event of that sport that the pull did not offer becomes `ended`. An unstarted event that is missing stays as stored: absence before kickoff proves nothing.
   - A per-event refresh that the provider answers with a 404, or a 200 with `[]` or `null`, writes `ended`. An event object with no bookmakers is still offered. One that finds the event writes `upcoming` or `live` from its start time.
   - The observed start time is written with the status, so a moved kickoff (a postponement) is stored with the status it decided.
-- **Observations are ordered.** `events.status_observed_at` holds when the provider data behind `status` was current (answer time less the data's age). A status write older than the stored one is skipped on both paths, so a slow sport-wide pull cannot end an event that a newer per-event refresh saw live. #10 expires watches on `ended`, so this is load-bearing.
+- **Observations are ordered.** `events.status_observed_at` holds when the provider response behind `status` arrived, carried through the response cache. That time orders writes and classifies kickoff. A status write older than the stored one is skipped on both paths, so a slow sport-wide pull cannot end an event that a newer per-event refresh saw live. A stale answer's quotes go to history only, never to latest. A newer absence advances the time of an already-ended event, so an older presence cannot revive it. #10 expires watches on `ended`, so this is load-bearing.
   - No `/scores` call. Moving to `/scores` on a paid plan is #127.
 - **The start time alone never sets status.** An event stored `upcoming` whose start has passed has not been observed since kickoff. It is listed as neither upcoming nor live until a refresh settles it.
 - **Line phase.** Each stored quote (`market_quotes_latest`, `market_quotes_history`) carries `phase`: `pre_game` or `live`, from the event status when it was pulled. The two clocks (`quoted_at`, `ingested_at`) keep their meaning; phase is not a clock.
@@ -30,7 +30,7 @@ This ADR reverses the "started events can never fill" rule.
   - `ended`: nothing. Evaluation logs `watch_evaluation.skipped` with `reason=event_ended`.
   - `live`: live lines only. A pre-game row that a book left behind at kickoff is a price nobody can take.
   - `upcoming` but past its start: nothing (`reason=event_status_unobserved`). Nothing has observed it since kickoff, so its pre-game lines may be gone. Its watches stay listed: the next refresh may find it live.
-  - `upcoming`: every stored line.
+  - `upcoming`: pre-game lines only. A live row left from before a postponement is not a price for the rescheduled game.
 - **Browse filter.** `GET /api/v1/events` takes `status` = `upcoming` | `live` | `all` (`all` is upcoming plus live; the default). Ended events are never listed. `include_started` stays as a deprecated alias (`true` reads as `all`, `false` as `upcoming`), so v1 stays additive (ADR-018). An explicit `status` wins over the alias.
 
 ## Rejected alternatives

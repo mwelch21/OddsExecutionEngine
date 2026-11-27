@@ -73,7 +73,7 @@ class EventStatusEngine:
         Ended: none. Live: live lines only, because a pre-game row a book left
         behind at kickoff is a price nobody can take any more. Upcoming but past
         its start: none, because nothing has observed it since kickoff. Upcoming,
-        or an event never stored: every quote.
+        or an event never stored: every line that is not live.
         """
         skipped = self.skip_reason(lifecycle, now)
         if skipped is not None:
@@ -82,4 +82,8 @@ class EventStatusEngine:
             return FillableQuotes(
                 quotes=[quote for quote in quotes if quote.phase is LinePhase.LIVE]
             )
-        return FillableQuotes(quotes=quotes)
+        # Upcoming: pre-game lines only. A live row left from before a postponement
+        # is not a price for the rescheduled game.
+        return FillableQuotes(
+            quotes=[quote for quote in quotes if quote.phase is not LinePhase.LIVE]
+        )

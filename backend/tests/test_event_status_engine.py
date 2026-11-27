@@ -149,3 +149,15 @@ def test_list_status_resolves_the_deprecated_alias_only_when_status_is_absent(
     status: EventListStatus | None, include_started: bool | None, expected: EventListStatus
 ) -> None:
     assert EventListStatus.resolve(status, include_started) is expected
+
+
+def test_an_upcoming_event_never_fills_on_a_live_line_left_from_before() -> None:
+    # Postponed after kickoff: one book's live row survives, the other re-quoted.
+    pre_game = _quote("DraftKings", LinePhase.PRE_GAME)
+    left_over_live = _quote("FanDuel", LinePhase.LIVE)
+
+    gate = engine.fillable_quotes(
+        _at(EventStatus.UPCOMING, NOW + timedelta(days=1)), [pre_game, left_over_live], NOW
+    )
+
+    assert gate.quotes == [pre_game]

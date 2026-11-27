@@ -316,6 +316,9 @@ class ProviderFetchReport(DomainModel):
     # Per-event fetch only: did the provider still offer the event? False on a 404
     # or an empty answer; None when the provider does not say (#38).
     event_offered: bool | None = None
+    # When the provider's response arrived. Orders status writes and classifies
+    # kickoff; a reused response keeps its original time. None when unknown.
+    answered_at: datetime | None = None
 
 
 class EventSport(DomainModel):

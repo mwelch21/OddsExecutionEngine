@@ -159,6 +159,16 @@ class TestListQuotes:
     @patch.object(
         TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
     )
+    def test_reports_when_the_response_arrived(self, mock_fetch: MagicMock) -> None:
+        before = datetime.now(UTC)
+        _, report = _create_provider().list_quotes("abc123", SPORT_KEY)
+
+        assert report.answered_at is not None
+        assert before <= report.answered_at <= datetime.now(UTC)
+
+    @patch.object(
+        TheOddsApiProvider, "_fetch_event_odds", side_effect=_serve_events(SAMPLE_API_RESPONSE)
+    )
     def test_maps_h2h_to_moneyline(self, mock_fetch: MagicMock) -> None:
         provider = _create_provider()
         quotes, _ = provider.list_quotes("abc123", SPORT_KEY)

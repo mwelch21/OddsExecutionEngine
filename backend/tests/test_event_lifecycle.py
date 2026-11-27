@@ -61,6 +61,8 @@ class ControlledFeedProvider:
     def __init__(self) -> None:
         self.events: dict[str, EventInfo] = {}
         self.quotes: dict[str, list[Quote]] = {}
+        # When set, reported as the time the response arrived.
+        self.answered_at: datetime | None = None
 
     def offer(self, event_id: str, starts_at: datetime, quotes: list[Quote]) -> None:
         self.events[event_id] = EventInfo(
@@ -83,14 +85,17 @@ class ControlledFeedProvider:
     ) -> tuple[list[Quote], ProviderFetchReport]:
         offered = event_id in self.quotes
         return self.quotes.get(event_id, []), ProviderFetchReport(
-            upstream_contacted=True, data_age_seconds=0.0, event_offered=offered
+            upstream_contacted=True,
+            data_age_seconds=0.0,
+            event_offered=offered,
+            answered_at=self.answered_at,
         )
 
     def list_quotes_for_sport(
         self, sport: str
     ) -> tuple[dict[str, list[Quote]], ProviderFetchReport]:
         return dict(self.quotes), ProviderFetchReport(
-            upstream_contacted=True, data_age_seconds=0.0
+            upstream_contacted=True, data_age_seconds=0.0, answered_at=self.answered_at
         )
 
     def get_event_info(self, event_id: str) -> EventInfo | None:
@@ -404,3 +409,91 @@ def test_an_older_event_answer_landing_late_cannot_overwrite_status_or_start(
 
     assert harness.status(event_id) is EventStatus.LIVE
     assert harness.starts_at(event_id) == starts
+    # The stale answer reaches history only: the newer live line stays latest.
+    board = harness.board_quotes(event_id)
+    assert board["FanDuel"].price == 130
+    assert board["FanDuel"].phase is LinePhase.LIVE
+    with harness.session_factory.create_session() as session:
+        prices = sorted(
+            session.execute(select(market_quotes_history_table.c.price)).scalars()
+        )
+    assert prices == [120, 130]
+
+
+def test_status_is_ordered_and_classified_by_when_the_response_arrived(
+    harness: Harness,
+) -> None:
+    event_id = "slow-ingest"
+    kickoff = NOW + timedelta(minutes=1)
+    harness.provider.offer(event_id, kickoff, [_quote(event_id, "FanDuel", 130, None)])
+    # The answer arrived before kickoff; ingestion ran after it.
+    harness.provider.answered_at = NOW
+    harness.now = NOW + timedelta(minutes=5)
+
+    harness.ingestion.refresh_sport(SPORT_KEY)
+
+    assert harness.status(event_id) is EventStatus.UPCOMING
+    assert harness.board_phases(event_id) == {"FanDuel": LinePhase.PRE_GAME}
+    with harness.session_factory.create_session() as session:
+        observed = session.execute(
+            select(events_table.c.status_observed_at).where(
+                events_table.c.external_id == event_id
+            )
+        ).scalar_one()
+    assert (observed if observed.tzinfo else observed.replace(tzinfo=UTC)) == NOW
+
+
+def test_a_newer_absence_keeps_an_ended_event_from_an_older_revival(
+    harness: Harness,
+) -> None:
+    event_id = "stays-ended"
+    harness.provider.offer(
+        event_id, NOW - timedelta(hours=2), [_quote(event_id, "FanDuel", 130, None)]
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    harness.provider.withdraw(event_id)
+    harness.now = NOW + timedelta(minutes=1)
+    harness.ingestion.refresh_sport(SPORT_KEY)  # ended
+    harness.now = NOW + timedelta(minutes=10)
+    harness.ingestion.refresh_sport(SPORT_KEY)  # newer absence, still ended
+
+    # An in-flight answer from minute 5 that still offered it lands last.
+    harness.now = NOW + timedelta(minutes=5)
+    harness.provider.offer(
+        event_id, NOW - timedelta(hours=2), [_quote(event_id, "FanDuel", 140, None)]
+    )
+    harness.ingestion.refresh_quotes(event_id)
+
+    assert harness.status(event_id) is EventStatus.ENDED
+
+
+def test_a_postponed_event_does_not_fill_on_a_live_line_left_from_before(
+    harness: Harness,
+) -> None:
+    event_id = "postponed-two-books"
+    harness.provider.offer(
+        event_id,
+        NOW - timedelta(minutes=10),
+        [
+            _quote(event_id, "FanDuel", 150, MOVED_LIVE),
+            _quote(event_id, "DraftKings", 120, MOVED_LIVE),
+        ],
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+
+    # Postponed: only DraftKings quotes the rescheduled game.
+    harness.provider.offer(
+        event_id, NOW + timedelta(days=1), [_quote(event_id, "DraftKings", 125, None)]
+    )
+    harness.ingestion.refresh_sport(SPORT_KEY)
+    assert harness.status(event_id) is EventStatus.UPCOMING
+    assert harness.board_phases(event_id) == {
+        "FanDuel": LinePhase.LIVE,
+        "DraftKings": LinePhase.PRE_GAME,
+    }
+
+    # +140 is met only by FanDuel's left-over live +150.
+    created = harness.watches.create_watch_intent(
+        event_id=event_id, market_type=MarketType.MONEYLINE, selection="knicks", target_price=140
+    )
+    assert created.opportunity is None
